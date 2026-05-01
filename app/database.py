@@ -4,6 +4,10 @@ import os
 # Define the path to our database file
 DB_PATH = os.path.join('data', 'ledger.db')
 
+def get_connection():
+    """Establishing a reusable connection to the database."""
+    return sqlite3.connect(DB_PATH)
+
 def initialize_db():
     # 1. Connect to the database (it creates the file if it doesn't exist)
     conn = sqlite3.connect(DB_PATH)
