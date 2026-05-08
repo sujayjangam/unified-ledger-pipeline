@@ -1,3 +1,6 @@
+import truststore #ensure that this will work with NextDNS
+truststore.inject_into_ssl()
+
 import os
 from dotenv import load_dotenv
 from telegram import Update
