@@ -1,2 +1,11 @@
+# Python environment
 ledger-env/
 __pycache__/
+*.pyc
+
+# Local Data (Crucial for privacy!)
+data/ledger.db
+*.db
+
+# OS files
+.DS_Store
