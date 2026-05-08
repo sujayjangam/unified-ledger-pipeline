@@ -7,5 +7,8 @@ __pycache__/
 data/ledger.db
 *.db
 
+# API key for telegram and other env variables
+.env
+
 # OS files
 .DS_Store
