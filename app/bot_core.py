@@ -5,10 +5,14 @@ import os
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+import tempfile
+from openai import AsyncOpenAI
 
 # Load and Parse Secrets
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+# Initialize OpenAI client (it automatically looks for OPENAI_API_KEY in your environment)
+openai_client = AsyncOpenAI()
 
 raw_allowed_ids = os.getenv("ALLOWED_TG_IDS", "")
 ALLOWED_IDS = [int(i.strip()) for i in raw_allowed_ids.split(",") if i.strip()]
@@ -35,14 +39,35 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Hello {username}! Your ID is authorized by admin. Send me a voice note to get started.")
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Logic that triggers when a voice note is received."""
+    """Downloads the voice note, transcribes it, and cleans up."""
     if not await is_authorized(update): return 
     
-    await update.message.reply_text("Voice note received! Extracting expense... ⏳")
-    
-    # 📝 FUTURE STEP: Download the file and send to Whisper
+    status_msg = await update.message.reply_text("Voice note received! Transcribing... 🎙️")
     voice_file = await context.bot.get_file(update.message.voice.file_id)
-    print(f"File ID received: {update.message.voice.file_id}")
+    
+    # 1. Create a temp file and IMMEDIATELY close it to release the Windows lock
+    temp_audio = tempfile.NamedTemporaryFile(suffix=".ogg", delete=False)
+    temp_filepath = temp_audio.name
+    temp_audio.close() # 🔓 Unlocks the file for Telegram to use
+    
+    try:
+        # 2. Telegram downloads and writes to the unlocked file
+        await voice_file.download_to_drive(custom_path=temp_filepath)
+        
+        # 3. Open the file to send to OpenAI Whisper
+        with open(temp_filepath, "rb") as audio_stream:
+            transcript = await openai_client.audio.transcriptions.create(
+                model="whisper-1", 
+                file=audio_stream
+            )
+            
+        # 4. Show the result to the user
+        await status_msg.edit_text(f"📝 *Transcription:*\n{transcript.text}", parse_mode="Markdown")
+        
+    finally:
+        # 5. Clean up manually since we used delete=False
+        if os.path.exists(temp_filepath):
+            os.remove(temp_filepath)
 
 # Engine Factory
 def get_application():
