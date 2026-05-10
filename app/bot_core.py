@@ -1,12 +1,13 @@
 import truststore
-truststore.inject_into_ssl()
-
 import os
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 import tempfile
 from openai import AsyncOpenAI
+from services.transcription import transcribe_audio
+
+truststore.inject_into_ssl()
 
 # Load and Parse Secrets
 load_dotenv()
@@ -45,27 +46,26 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_msg = await update.message.reply_text("Voice note received! Transcribing... 🎙️")
     voice_file = await context.bot.get_file(update.message.voice.file_id)
     
-    # 1. Create a temp file and IMMEDIATELY close it to release the Windows lock
+    # Create a temp file and IMMEDIATELY close it to release the Windows lock
     temp_audio = tempfile.NamedTemporaryFile(suffix=".ogg", delete=False)
     temp_filepath = temp_audio.name
     temp_audio.close() # 🔓 Unlocks the file for Telegram to use
     
     try:
-        # 2. Telegram downloads and writes to the unlocked file
+        # Telegram downloads and writes to the unlocked file
         await voice_file.download_to_drive(custom_path=temp_filepath)
         
-        # 3. Open the file to send to OpenAI Whisper
-        with open(temp_filepath, "rb") as audio_stream:
-            transcript = await openai_client.audio.transcriptions.create(
-                model="whisper-1", 
-                file=audio_stream
-            )
+        # Transcribe using our new reusable service (Replacing the hardcoded Whisper block)
+        transcript_text = await transcribe_audio(temp_filepath)
             
-        # 4. Show the result to the user
-        await status_msg.edit_text(f"📝 *Transcription:*\n{transcript.text}", parse_mode="Markdown")
-        
+        # Show the result to the user (with basic error handling)
+        if transcript_text.startswith("ERROR:"):
+            await status_msg.edit_text(f"⚠️ {transcript_text}")
+        else:
+            await status_msg.edit_text(f"📝 *Transcription:*\n{transcript_text}", parse_mode="Markdown")
+    
     finally:
-        # 5. Clean up manually since we used delete=False
+        # Clean up manually since we used delete=False
         if os.path.exists(temp_filepath):
             os.remove(temp_filepath)
 
