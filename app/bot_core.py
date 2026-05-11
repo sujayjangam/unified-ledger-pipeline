@@ -1,8 +1,8 @@
 import truststore
 import os
 from dotenv import load_dotenv
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 import tempfile
 from openai import AsyncOpenAI
 import json
@@ -15,9 +15,7 @@ load_dotenv()
 
 # NOW it is safe to import your custom services because the environment is ready
 from services.transcription import transcribe_audio
-from services.extraction import extract_transaction
-
-
+from services.extraction import extract_transactions
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 # Initialize OpenAI client (it automatically looks for OPENAI_API_KEY in your environment)
@@ -75,25 +73,75 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_msg.edit_text(f"📝 *Transcript:* {transcript_text}\n\n🧠 Extracting data...", parse_mode="Markdown")
         
         # Extract structured data from the transcript
-        structured_data = await extract_transaction(transcript_text)
+        structured_data = await extract_transactions(transcript_text)
         
-        if not structured_data:
+        # CHANGED: Check if data exists AND if the 'transactions' list is present
+        if not structured_data or not structured_data.get("transactions"):
             await status_msg.edit_text("❌ Failed to extract structured data from the transcript.")
             return
             
-        # Display the final structured JSON back to Telegram
-        formatted_json = json.dumps(structured_data, indent=2)
-        final_message = (
-            f"✅ **Data Extracted!**\n\n"
-            f"```json\n{formatted_json}\n```\n"
-            f"*(Ready to be saved to database)*"
+        # NEW: Extract the actual list from the wrapper
+        transactions_list = structured_data["transactions"]
+        
+        # NEW: The V1 Gatekeeper to politely reject multiple expenses
+        if len(transactions_list) > 1:
+            await status_msg.edit_text(
+                "⚠️ **Hold on!** I detected multiple expenses.\n\n"
+                "To keep the ledger perfectly accurate for V1, please record just **one expense per voice note**. 🎙️", 
+                parse_mode="Markdown"
+            )
+            return
+            
+        # NEW: Isolate the single approved transaction
+        single_transaction = transactions_list[0]
+        
+        # CHANGED: Store the isolated transaction in memory, not the whole wrapper
+        context.user_data['pending_transaction'] = single_transaction
+        
+        # CHANGED: Reference 'single_transaction' instead of 'structured_data' for the UI text
+        summary_message = (
+            f"Please confirm your expense:\n\n"
+            f"💰 **Amount:** {single_transaction.get('amount')} {single_transaction.get('currency')}\n"
+            f"🏷️ **Category:** {single_transaction.get('category')}\n"
+            f"📝 **Notes:** {single_transaction.get('description', 'None')}\n"
+            f"📅 **Date:** {single_transaction.get('date')}\n"
         )
-        await status_msg.edit_text(final_message, parse_mode="Markdown")
+        
+        # NEW: Create the interactive buttons
+        keyboard = [
+            [
+                InlineKeyboardButton("✅ Confirm", callback_data="confirm_save"),
+                InlineKeyboardButton("❌ Cancel", callback_data="cancel_save")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        # CHANGED: Send the clean summary with the buttons attached
+        await status_msg.edit_text(summary_message, reply_markup=reply_markup, parse_mode="Markdown")
             
     finally:
         # Clean up manually since we used delete=False
         if os.path.exists(temp_filepath):
             os.remove(temp_filepath)
+
+# buttons!
+async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Processes the Confirm or Cancel button presses."""
+    query = update.callback_query
+    await query.answer() 
+    
+    if query.data == "confirm_save":
+        transaction_to_save = context.user_data.get('pending_transaction')
+        
+        if transaction_to_save:
+            await query.edit_message_text("✅ **Confirmed!** Transaction ready for the database.", parse_mode="Markdown")
+            context.user_data.pop('pending_transaction', None)
+        else:
+            await query.edit_message_text("⚠️ Session expired or data lost. Please send the voice note again.")
+            
+    elif query.data == "cancel_save":
+        await query.edit_message_text("❌ **Cancelled.** Nothing was saved to the Ledger.", parse_mode="Markdown")
+        context.user_data.pop('pending_transaction', None)
 
 # Engine Factory
 def get_application():
@@ -106,5 +154,8 @@ def get_application():
     # Register handlers
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
+
+    # handler for buttons
+    app.add_handler(CallbackQueryHandler(handle_button_click))
     
     return app

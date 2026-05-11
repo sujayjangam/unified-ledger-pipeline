@@ -34,7 +34,7 @@ class TransactionList(BaseModel):
     transactions: List[TransactionSchema] = Field(description="A list of extracted expenses. If the user mentions multiple distinct expenses, create a separate object for each.")
 
 # 3. The Extraction Function
-async def extract_transaction(transcript_text: str) -> dict | None:
+async def extract_transactions(transcript_text: str) -> dict | None:
     """Takes raw text and safely extracts a structured JSON list of transactions."""
     today_str = datetime.now().strftime("%Y-%m-%d")
     
