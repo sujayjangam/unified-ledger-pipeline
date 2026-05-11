@@ -1,6 +1,6 @@
 import os
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from enum import Enum
 from pydantic import BaseModel, Field
 from openai import AsyncOpenAI
@@ -29,9 +29,13 @@ class TransactionSchema(BaseModel):
     # NEW: A flag for your future UI to know if it needs to ask the user for clarification
     needs_review: bool = Field(description="Set to true ONLY if amount is null or the transcript is highly confusing.")
 
+# creating TransactionList to make life easier in future ticket to handle multiple transactions in 1 voice note
+class TransactionList(BaseModel):
+    transactions: List[TransactionSchema] = Field(description="A list of extracted expenses. If the user mentions multiple distinct expenses, create a separate object for each.")
+
 # 3. The Extraction Function
 async def extract_transaction(transcript_text: str) -> dict | None:
-    """Takes raw text and safely extracts a structured JSON object, handling missing data."""
+    """Takes raw text and safely extracts a structured JSON list of transactions."""
     today_str = datetime.now().strftime("%Y-%m-%d")
     
     try:
@@ -45,7 +49,7 @@ async def extract_transaction(transcript_text: str) -> dict | None:
                 },
                 {"role": "user", "content": transcript_text}
             ],
-            response_format=TransactionSchema,
+            response_format=TransactionList,
         )
         
         return response.choices[0].message.parsed.model_dump()
