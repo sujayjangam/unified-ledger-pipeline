@@ -6,6 +6,8 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 import tempfile
 from openai import AsyncOpenAI
 from add_expense import add_expense
+from datetime import datetime, timedelta
+from services.ledger_queries import get_recent_entries, get_period_summary
 
 # use the local windows persmissions
 truststore.inject_into_ssl()
@@ -45,6 +47,73 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(f"Hello {username}! Your ID is authorized by admin. Send me a voice note to get started.")
 
+async def recent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Gets just the past 5 transactions added by any user and displays them to user who called this command"""
+    if not await is_authorized(update): return 
+    entries = get_recent_entries(limit=5)
+    
+    if not entries:
+        await update.message.reply_text("No transactions found. 📭")
+        return
+
+    lines = ["📊 **Recent Entries**\n"]
+    for date, desc, amount_cents, cat in entries:
+        lines.append(f"• `{date}`: {desc} (**${(amount_cents / 100.0):.2f}**)")
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Gets all transactions that have been recorded thus far today, and displays a summary of transactions"""
+    if not await is_authorized(update): return 
+    
+    today_dt = datetime.now().strftime('%Y-%m-%d')
+    entries, total = get_period_summary(today_dt, today_dt)
+    
+    lines = [f"📅 **Today's Summary** ({today_dt})\n"]
+    for date, desc, amount_cents, cat in entries:
+        lines.append(f"• {desc} (**${(amount_cents / 100.0):.2f}**)")
+    lines.append(f"\n💰 **Total Spend: ${total:.2f}**")
+    
+    await update.message.reply_text("\n".join(lines) if entries else "No spending today! 🎉", parse_mode="Markdown")
+
+async def week_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Gets all transactions that have been recorded thus far for this week (starts on Monday), and displays a summary of transactions"""
+    if not await is_authorized(update): return 
+    
+    today = datetime.now()
+    # Monday is 0, Sunday is 6. Subtract the weekday number to get back to Monday.
+    start_of_week = today - timedelta(days=today.weekday())
+    
+    start_dt = start_of_week.strftime('%Y-%m-%d')
+    end_dt = today.strftime('%Y-%m-%d')
+    
+    entries, total = get_period_summary(start_dt, end_dt)
+    
+    lines = [f"📆 **This Week** ({start_dt} to {end_dt})\n"]
+    lines.append(f"Total Transactions: {len(entries)}")
+    lines.append(f"💰 **Total Spend: ${total:.2f}**")
+    
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+async def month_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Gets all transactions that have been recorded thus far for this month (starts on 1st of any month), and displays a summary of transactions"""
+    if not await is_authorized(update): return 
+    
+    today = datetime.now()
+    # Force the day to the 1st of the current month
+    start_of_month = today.replace(day=1)
+    
+    start_dt = start_of_month.strftime('%Y-%m-%d')
+    end_dt = today.strftime('%Y-%m-%d')
+    
+    entries, total = get_period_summary(start_dt, end_dt)
+    
+    lines = [f"🗓️ **This Month** ({start_dt} to {end_dt})\n"]
+    lines.append(f"Total Transactions: {len(entries)}")
+    lines.append(f"💰 **Total Spend: ${total:.2f}**")
+    
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+# get voice message, transcribe, output summary and await confirmation to add to db
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Downloads the voice note, transcribes it, extracts structured data, and cleans up."""
     if not await is_authorized(update): return 
@@ -188,11 +257,21 @@ def get_application():
         
     app = ApplicationBuilder().token(TOKEN).build()
     
-    # Register handlers
+    # start handler
     app.add_handler(CommandHandler("start", start_command))
+
+    # queries handler
+    app.add_handler(CommandHandler("recent", recent_command))
+    app.add_handler(CommandHandler("today", today_command))
+    app.add_handler(CommandHandler("week", week_command))
+    app.add_handler(CommandHandler("month", month_command))
+
+    # voice handler
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
 
     # handler for buttons
     app.add_handler(CallbackQueryHandler(handle_button_click))
+
+
     
     return app
