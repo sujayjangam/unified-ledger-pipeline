@@ -95,13 +95,16 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Isolate the single approved transaction
         single_transaction = transactions_list[0]
         
+        # Inject the raw, unedited transcript directly as the description
+        single_transaction['description'] = transcript_text
+        
         # Store the isolated transaction in memory, not the whole wrapper
         context.user_data['pending_transaction'] = single_transaction
         
         # Reference 'single_transaction' instead of 'structured_data' for the UI text
         summary_message = (
             f"Please confirm your expense:\n\n"
-            f"💰 **Amount:** {single_transaction.get('amount')} {single_transaction.get('currency')}\n"
+            f"💰 **Amount:** {float(single_transaction.get('amount')):.2f}\n"
             f"🏷️ **Category:** {single_transaction.get('category')}\n"
             f"📝 **Notes:** {single_transaction.get('description', 'None')}\n"
             f"📅 **Date:** {single_transaction.get('date')}\n"
@@ -142,13 +145,31 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
                 description=transaction_to_save.get('description'),
                 amount_dollars=transaction_to_save.get('amount'),
                 category=transaction_to_save.get('category'),
+                currency=transaction_to_save.get('currency', 'SGD'),
                 source="Telegram Bot" # CHANGED: Tag it so you know where it came from
             )
 
             if save_success: 
-                await query.edit_message_text("✅ **Saved to Ledger!** Your expense has been recorded.", parse_mode="Markdown")
+                # Reconstruct the full summary message to keep it in the chat history
+                updated_summary = (
+                    f"✅ **Saved to Ledger!**\n\n"
+                    f"💰 **Amount:** {transaction_to_save.get('currency')} {float(transaction_to_save.get('amount')):.2f}\n"
+                    f"🏷️ **Category:** {transaction_to_save.get('category')}\n"
+                    f"📝 **Notes:** {transaction_to_save.get('description', 'None')}\n"
+                    f"📅 **Date:** {transaction_to_save.get('date')}\n"
+                )
+                # Editing the text. By omitting 'reply_markup', Telegram automatically removes the buttons.
+                await query.edit_message_text(updated_summary, parse_mode="Markdown")
             else:
-                await query.edit_message_text("❌ **Database Error.** I couldn't write to the ledger. Check the logs.", parse_mode="Markdown")
+                # CHANGED: Keep the summary visible even if the database fails, just change the header
+                error_summary = (
+                    f"❌ **Database Error! Could not save:**\n\n"
+                    f"💰 **Amount:** {transaction_to_save.get('currency')} {float(transaction_to_save.get('amount')):.2f}\n"
+                    f"🏷️ **Category:** {transaction_to_save.get('category')}\n"
+                    f"📝 **Notes:** {transaction_to_save.get('description', 'None')}\n"
+                    f"📅 **Date:** {transaction_to_save.get('date')}\n"
+                )
+                await query.edit_message_text(error_summary, parse_mode="Markdown")
             
             context.user_data.pop('pending_transaction', None)
             

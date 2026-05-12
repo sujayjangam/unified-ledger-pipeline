@@ -4,7 +4,7 @@ import datetime
 import sys
 from database import get_connection
 
-def add_expense(date_str, description, amount_dollars, currency='SGD', category, source="Manual CLI"):
+def add_expense(date_str, description, amount_dollars, category, currency='SGD', source="Manual CLI"):
     try:
         # 1. Validation: Convert to Integer Cents (Mathematical Precision)
         # We convert to float first, then multiply by 100, then cast to int.
