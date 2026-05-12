@@ -5,7 +5,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 import tempfile
 from openai import AsyncOpenAI
-import json
+from add_expense import add_expense
 
 # use the local windows persmissions
 truststore.inject_into_ssl()
@@ -75,15 +75,15 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Extract structured data from the transcript
         structured_data = await extract_transactions(transcript_text)
         
-        # CHANGED: Check if data exists AND if the 'transactions' list is present
+        # Check if data exists AND if the 'transactions' list is present
         if not structured_data or not structured_data.get("transactions"):
             await status_msg.edit_text("❌ Failed to extract structured data from the transcript.")
             return
             
-        # NEW: Extract the actual list from the wrapper
+        # Extract the actual list from the wrapper
         transactions_list = structured_data["transactions"]
         
-        # NEW: The V1 Gatekeeper to politely reject multiple expenses
+        # The V1 Gatekeeper to politely reject multiple expenses
         if len(transactions_list) > 1:
             await status_msg.edit_text(
                 "⚠️ **Hold on!** I detected multiple expenses.\n\n"
@@ -92,13 +92,13 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
             
-        # NEW: Isolate the single approved transaction
+        # Isolate the single approved transaction
         single_transaction = transactions_list[0]
         
-        # CHANGED: Store the isolated transaction in memory, not the whole wrapper
+        # Store the isolated transaction in memory, not the whole wrapper
         context.user_data['pending_transaction'] = single_transaction
         
-        # CHANGED: Reference 'single_transaction' instead of 'structured_data' for the UI text
+        # Reference 'single_transaction' instead of 'structured_data' for the UI text
         summary_message = (
             f"Please confirm your expense:\n\n"
             f"💰 **Amount:** {single_transaction.get('amount')} {single_transaction.get('currency')}\n"
@@ -107,7 +107,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📅 **Date:** {single_transaction.get('date')}\n"
         )
         
-        # NEW: Create the interactive buttons
+        # Create the interactive buttons
         keyboard = [
             [
                 InlineKeyboardButton("✅ Confirm", callback_data="confirm_save"),
@@ -116,7 +116,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        # CHANGED: Send the clean summary with the buttons attached
+        # Send the clean summary with the buttons attached
         await status_msg.edit_text(summary_message, reply_markup=reply_markup, parse_mode="Markdown")
             
     finally:
@@ -130,12 +130,28 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     await query.answer() 
     
+    # when the user clicks on the confirm button, we get the pending transaction and save it to our database
     if query.data == "confirm_save":
         transaction_to_save = context.user_data.get('pending_transaction')
         
         if transaction_to_save:
-            await query.edit_message_text("✅ **Confirmed!** Transaction ready for the database.", parse_mode="Markdown")
+            # await query.edit_message_text("✅ **Confirmed!** Transaction ready for the database.", parse_mode="Markdown")
+            # save success will return True if done, or False if failed
+            save_success = add_expense(
+                date_str=transaction_to_save.get('date'),
+                description=transaction_to_save.get('description'),
+                amount_dollars=transaction_to_save.get('amount'),
+                category=transaction_to_save.get('category'),
+                source="Telegram Bot" # CHANGED: Tag it so you know where it came from
+            )
+
+            if save_success: 
+                await query.edit_message_text("✅ **Saved to Ledger!** Your expense has been recorded.", parse_mode="Markdown")
+            else:
+                await query.edit_message_text("❌ **Database Error.** I couldn't write to the ledger. Check the logs.", parse_mode="Markdown")
+            
             context.user_data.pop('pending_transaction', None)
+            
         else:
             await query.edit_message_text("⚠️ Session expired or data lost. Please send the voice note again.")
             

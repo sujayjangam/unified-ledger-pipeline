@@ -22,11 +22,14 @@ class TransactionSchema(BaseModel):
     # Optional[] means the LLM is allowed to return 'null' if the user forgot to state the price
     amount: Optional[float] = Field(default=None, description="The numerical amount. If not explicitly stated in the text, this MUST be null.")
     currency: str = Field(default="SGD", description="3-letter currency code. Default to SGD if not stated.")
-    description: Optional[str] = Field(default=None, description="A clean description (e.g., 'Taxi', 'Lunch'). Null if unclear.")
+    description: Optional[str] = Field(default=None, description="""A detailed 1-line description preserving the original context.
+                                                                    If the voice note is too short, then just extract what is available. 
+                                                                    Do not add your own context. (e.g., 'Cab to the airport', 'Ate at lazy mondays burgers'). 
+                                                                    Do not over-summarize. Null if unclear.")""")
     category: ExpenseCategory = Field(description="Classify into one of the exact ExpenseCategory enums.")
     date: str = Field(description="YYYY-MM-DD format. Infer based on today's date.")
     
-    # NEW: A flag for your future UI to know if it needs to ask the user for clarification
+    # A flag for your future UI to know if it needs to ask the user for clarification
     needs_review: bool = Field(description="Set to true ONLY if amount is null or the transcript is highly confusing.")
 
 # creating TransactionList to make life easier in future ticket to handle multiple transactions in 1 voice note
@@ -52,7 +55,8 @@ async def extract_transactions(transcript_text: str) -> dict | None:
             response_format=TransactionList,
         )
         
-        return response.choices[0].message.parsed.model_dump()
+        # without mode='json' enums like 'Transport' was being passed as 'ExpenseCategory.Transport' instead
+        return response.choices[0].message.parsed.model_dump(mode='json')
         
     except Exception as e:
         print(f"❌ Extraction Error: {e}")
