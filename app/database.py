@@ -20,7 +20,7 @@ def initialize_db():
             date TEXT NOT NULL,
             description TEXT,
             amount INTEGER NOT NULL,
-            transaction_currency TEXT,
+            currency TEXT,
             base_amount INTEGER NOT NULL,
             account_owner TEXT,
             benefit_of TEXT,

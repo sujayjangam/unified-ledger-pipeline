@@ -1,14 +1,14 @@
 from database import get_connection
 
 def get_recent_entries(limit=5):
-    """Fetches just the latest X transactions."""
+    """Fetches the latest transactions, including both expenses and transfers."""
     try:
         conn = get_connection()
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT date, description, amount, category 
+            SELECT date, description, amount, currency, category 
             FROM transactions 
-            ORDER BY date DESC, id DESC 
+            ORDER BY date DESC, transaction_id DESC 
             LIMIT ?
         ''', (limit,))
         rows = cursor.fetchall()
@@ -19,31 +19,54 @@ def get_recent_entries(limit=5):
         return []
 
 def get_period_summary(start_date: str, end_date: str):
-    """Fetches all transactions and the total sum between two YYYY-MM-DD dates."""
+    """Fetches counts and totals grouped by currency, separating expenses and transfers."""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        # Get Expenses grouped by currency
+        cursor.execute('''
+            SELECT currency, COUNT(*), SUM(amount) 
+            FROM transactions 
+            WHERE date BETWEEN ? AND ? AND category != 'Transfer'
+            GROUP BY currency
+        ''', (start_date, end_date))
+        expenses = cursor.fetchall()
+        
+        # Get Transfers grouped by currency
+        cursor.execute('''
+            SELECT currency, COUNT(*), SUM(amount) 
+            FROM transactions 
+            WHERE date BETWEEN ? AND ? AND category = 'Transfer'
+            GROUP BY currency
+        ''', (start_date, end_date))
+        transfers = cursor.fetchall()
+        
+        conn.close()
+        return expenses, transfers
+        
+    except Exception as e:
+        print(f"❌ Query Error: {e}")
+        return [], []
+
+def get_category_summary(start_date: str, end_date: str):
+    """Fetches category statistics grouped by category AND currency, excluding transfers."""
     try:
         conn = get_connection()
         cursor = conn.cursor()
         
         cursor.execute('''
-            --SELECT date, description, amount, category 
-            SELECT DISTINCT category, COUNT(*) AS num_rows, SUM(amount) AS sum_amount
+            SELECT category, currency, COUNT(*), SUM(amount)
             FROM transactions 
-            WHERE date BETWEEN ? AND ?
-            GROUP BY 1
-            ORDER BY date DESC, id DESC
+            WHERE date BETWEEN ? AND ? AND category != 'Transfer'
+            GROUP BY category, currency
+            ORDER BY category, currency
         ''', (start_date, end_date))
+        
         rows = cursor.fetchall()
-        
-        cursor.execute('''
-            SELECT SUM(amount) 
-            FROM transactions 
-            WHERE date BETWEEN ? AND ?
-        ''', (start_date, end_date))
-        total_cents = cursor.fetchone()[0] or 0
-        
         conn.close()
-        return rows, total_cents / 100.0
+        return rows
         
     except Exception as e:
         print(f"❌ Query Error: {e}")
-        return [], 0.0
+        return []

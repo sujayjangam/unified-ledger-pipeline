@@ -6,7 +6,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 import tempfile
 from openai import AsyncOpenAI
 from add_expense import add_expense
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from services.ledger_queries import get_recent_entries, get_period_summary
 
 # use the local windows persmissions
@@ -15,7 +15,10 @@ truststore.inject_into_ssl()
 # Load the secrets into memory FIRST
 load_dotenv()
 
-# NOW it is safe to import your custom services because the environment is ready
+# 🌐 Define Singapore Timezone (UTC+8)
+SG_TZ = timezone(timedelta(hours=8))
+
+# NOW it is safe to import  custom services because the environment is ready (load_dotenv() already ran)
 from services.transcription import transcribe_audio
 from services.extraction import extract_transactions
 
@@ -47,71 +50,89 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(f"Hello {username}! Your ID is authorized by admin. Send me a voice note to get started.")
 
-async def recent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Gets just the past 5 transactions added by any user and displays them to user who called this command"""
-    if not await is_authorized(update): return 
-    entries = get_recent_entries(limit=5)
+def get_sgt_now():
+    """Returns the current timezone-aware datetime in Singapore."""
+    return datetime.now(SG_TZ)
+
+def format_period_summary(title: str, expenses: list, transfers: list) -> str:
+    """Helper function to build a mobile-readable summary for any date range."""
+    lines = [f"{title}\n"]
     
+    # 🛒 Calculate and format expenses
+    tx_count = sum(count for _, count, _ in expenses) if expenses else 0
+    lines.append(f"🛒 **Expenses:** {tx_count} transactions")
+    
+    if expenses:
+        for curr, count, total_cents in expenses:
+            lines.append(f"  • {curr}: **{total_cents / 100.0:.2f}**")
+    else:
+        lines.append("  • No expenses.")
+        
+    # 🔄 Format transfers separately
+    lines.append(f"\n🔄 **Transfers:**")
+    if transfers:
+        for curr, count, total_cents in transfers:
+            lines.append(f"  • {curr}: **{total_cents / 100.0:.2f}** ({count} tx)")
+    else:
+        lines.append("  • No transfers.")
+        
+    return "\n".join(lines)
+
+async def recent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_authorized(update): return 
+    
+    entries = get_recent_entries(limit=5)
     if not entries:
         await update.message.reply_text("No transactions found. 📭")
         return
 
     lines = ["📊 **Recent Entries**\n"]
-    for date, desc, amount_cents, cat in entries:
-        lines.append(f"• `{date}`: {desc} (**${(amount_cents / 100.0):.2f}**)")
+    for date, desc, amount_cents, currency, cat in entries:
+        amt = amount_cents / 100.0
+        # Clearly label transfers vs standard expenses
+        if cat == 'Transfer':
+            lines.append(f"• 🔄 `{date}`: {desc} (**{currency} {amt:.2f}**) [Transfer]")
+        else:
+            lines.append(f"• 🛒 `{date}`: {desc} (**{currency} {amt:.2f}**)")
+            
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Gets all transactions that have been recorded thus far today, and displays a summary of transactions"""
     if not await is_authorized(update): return 
     
-    today_dt = datetime.now().strftime('%Y-%m-%d')
-    entries, total = get_period_summary(today_dt, today_dt)
+    today_str = get_sgt_now().strftime('%Y-%m-%d')
+    expenses, transfers = get_period_summary(today_str, today_str)
     
-    lines = [f"📅 **Today's Summary** ({today_dt})\n"]
-    for date, desc, amount_cents, cat in entries:
-        lines.append(f"• {desc} (**${(amount_cents / 100.0):.2f}**)")
-    lines.append(f"\n💰 **Total Spend: ${total:.2f}**")
-    
-    await update.message.reply_text("\n".join(lines) if entries else "No spending today! 🎉", parse_mode="Markdown")
+    text = format_period_summary(f"📅 **Today's Summary** ({today_str})", expenses, transfers)
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 async def week_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Gets all transactions that have been recorded thus far for this week (starts on Monday), and displays a summary of transactions"""
     if not await is_authorized(update): return 
     
-    today = datetime.now()
-    # Monday is 0, Sunday is 6. Subtract the weekday number to get back to Monday.
+    today = get_sgt_now()
     start_of_week = today - timedelta(days=today.weekday())
     
-    start_dt = start_of_week.strftime('%Y-%m-%d')
-    end_dt = today.strftime('%Y-%m-%d')
+    start_str = start_of_week.strftime('%Y-%m-%d')
+    end_str = today.strftime('%Y-%m-%d')
     
-    entries, total = get_period_summary(start_dt, end_dt)
+    expenses, transfers = get_period_summary(start_str, end_str)
     
-    lines = [f"📆 **This Week** ({start_dt} to {end_dt})\n"]
-    lines.append(f"Total Transactions: {len(entries)}")
-    lines.append(f"💰 **Total Spend: ${total:.2f}**")
-    
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    text = format_period_summary(f"📆 **This Week** ({start_str} to {end_str})", expenses, transfers)
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 async def month_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Gets all transactions that have been recorded thus far for this month (starts on 1st of any month), and displays a summary of transactions"""
     if not await is_authorized(update): return 
     
-    today = datetime.now()
-    # Force the day to the 1st of the current month
+    today = get_sgt_now()
     start_of_month = today.replace(day=1)
     
-    start_dt = start_of_month.strftime('%Y-%m-%d')
-    end_dt = today.strftime('%Y-%m-%d')
+    start_str = start_of_month.strftime('%Y-%m-%d')
+    end_str = today.strftime('%Y-%m-%d')
     
-    entries, total = get_period_summary(start_dt, end_dt)
+    expenses, transfers = get_period_summary(start_str, end_str)
     
-    lines = [f"🗓️ **This Month** ({start_dt} to {end_dt})\n"]
-    lines.append(f"Total Transactions: {len(entries)}")
-    lines.append(f"💰 **Total Spend: ${total:.2f}**")
-    
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    text = format_period_summary(f"🗓️ **This Month** ({start_str} to {end_str})", expenses, transfers)
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 # get voice message, transcribe, output summary and await confirmation to add to db
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -272,6 +293,4 @@ def get_application():
     # handler for buttons
     app.add_handler(CallbackQueryHandler(handle_button_click))
 
-
-    
     return app
