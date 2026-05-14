@@ -7,7 +7,7 @@ import tempfile
 from openai import AsyncOpenAI
 from add_expense import add_expense
 from datetime import datetime, timedelta, timezone
-from services.ledger_queries import get_recent_entries, get_period_summary
+from services.ledger_queries import get_recent_entries, get_period_summary, get_category_summary
 
 # use the local windows persmissions
 truststore.inject_into_ssl()
@@ -78,6 +78,35 @@ def format_period_summary(title: str, expenses: list, transfers: list) -> str:
         
     return "\n".join(lines)
 
+def format_category_summary(title: str, category_data: list) -> str:
+    """Helper function to group category data by currency for mobile viewing."""
+    if not category_data:
+        return f"{title}\n\nNo expenses found for this period. 🎉"
+
+    # 1. Group the flat SQL data using a dictionary
+    # Structure: { 'Food': [('SGD', 3, 4500), ('MYR', 1, 1500)] }
+    grouped_data = {}
+    for cat, curr, count, total_cents in category_data:
+        if cat not in grouped_data:
+            grouped_data[cat] = []
+        grouped_data[cat].append((curr, count, total_cents))
+
+    lines = [f"{title}\n"]
+
+    # 2. Build the visual text block
+    for cat, currencies in grouped_data.items():
+        # Calculate the total number of transactions for the whole category
+        cat_tx_count = sum(c for _, c, _ in currencies)
+        lines.append(f"📁 **{cat}** ({cat_tx_count} tx)")
+
+        # List each currency total underneath the category header
+        for curr, count, total_cents in currencies:
+            lines.append(f"  • {curr}: **{total_cents / 100.0:.2f}**")
+            
+        lines.append("") # Blank line for readability
+
+    return "\n".join(lines).strip()
+
 async def recent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_authorized(update): return 
     
@@ -132,6 +161,43 @@ async def month_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     expenses, transfers = get_period_summary(start_str, end_str)
     
     text = format_period_summary(f"🗓️ **This Month** ({start_str} to {end_str})", expenses, transfers)
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+async def cat_today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_authorized(update): return 
+    
+    today_str = get_sgt_now().strftime('%Y-%m-%d')
+    cat_data = get_category_summary(today_str, today_str)
+    
+    text = format_category_summary(f"📊 **Today's Categories** ({today_str})", cat_data)
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+async def cat_week_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_authorized(update): return 
+    
+    today = get_sgt_now()
+    start_of_week = today - timedelta(days=today.weekday())
+    
+    start_str = start_of_week.strftime('%Y-%m-%d')
+    end_str = today.strftime('%Y-%m-%d')
+    
+    cat_data = get_category_summary(start_str, end_str)
+    
+    text = format_category_summary(f"📊 **This Week's Categories** ({start_str} to {end_str})", cat_data)
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+async def cat_month_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_authorized(update): return 
+    
+    today = get_sgt_now()
+    start_of_month = today.replace(day=1)
+    
+    start_str = start_of_month.strftime('%Y-%m-%d')
+    end_str = today.strftime('%Y-%m-%d')
+    
+    cat_data = get_category_summary(start_str, end_str)
+    
+    text = format_category_summary(f"📊 **This Month's Categories** ({start_str} to {end_str})", cat_data)
     await update.message.reply_text(text, parse_mode="Markdown")
 
 # get voice message, transcribe, output summary and await confirmation to add to db
@@ -286,6 +352,9 @@ def get_application():
     app.add_handler(CommandHandler("today", today_command))
     app.add_handler(CommandHandler("week", week_command))
     app.add_handler(CommandHandler("month", month_command))
+    app.add_handler(CommandHandler("cat_today", cat_today_command))
+    app.add_handler(CommandHandler("cat_week", cat_week_command))
+    app.add_handler(CommandHandler("cat_month", cat_month_command))
 
     # voice handler
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
