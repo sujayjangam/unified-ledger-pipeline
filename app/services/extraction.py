@@ -4,9 +4,12 @@ from typing import Optional, List
 from enum import Enum
 from pydantic import BaseModel, Field
 from openai import AsyncOpenAI
+from typing import Optional, Literal
+from services.utils import get_sgt_now
 
 # Initialize the OpenAI client
 openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+ALLOWED_ACCOUNTS = os.getenv("ALLOWED_ACCOUNTS", "YouTrip, OCBC Infinity, Cash")
 
 # 1. Define Strict Categories using an Enum (Prevents typos like "Foods" or "Transit")
 class ExpenseCategory(str, Enum):
@@ -15,6 +18,7 @@ class ExpenseCategory(str, Enum):
     ACCOMMODATION = "Accommodation"
     ENTERTAINMENT = "Entertainment"
     UTILITIES = "Utilities"
+    YOUTRIP_TOPUP = "YouTrip top-up"
     OTHER = "Other"
 
 # 2. Define the Upgraded Data Blueprint
@@ -22,11 +26,12 @@ class TransactionSchema(BaseModel):
     # Optional[] means the LLM is allowed to return 'null' if the user forgot to state the price
     amount: Optional[float] = Field(default=None, description="The numerical amount. If not explicitly stated in the text, this MUST be null.")
     currency: str = Field(default="SGD", description="3-letter currency code. Default to SGD if not stated.")
-    # remove this completely because AI trying to summarize our transcript is creating weird errors
-    # description: Optional[str] = Field(default=None, description="""A detailed 1-line description preserving the original context.
-    #                                                                 If the voice note is too short, then just extract what is available. 
-    #                                                                 Do not add your own context. (e.g., 'Cab to the airport', 'Ate at lazy mondays burgers'). 
-    #                                                                 Do not over-summarize. Null if unclear.)""")
+    # no description, because I want to store the raw transcript for better historical data
+    transaction_type: Literal['Expense', 'Transfer'] = Field(description="""Classify as 'Transfer' if the user is topping up a wallet (e.g., YouTrip),
+                                                              moving money between accounts, or paying a credit card bill. Otherwise, classify as 'Expense'.""")
+    # NEW: Capture the payment method or account
+    payment_method: Optional[str] = Field(default=None, description=f"""The card, account, or wallet used (Must be one of: 
+                                          {ALLOWED_ACCOUNTS}). Null if not mentioned. If topping up YouTrip, the payment method is ALWAYS 'OCBC Infinity'.""")
     category: ExpenseCategory = Field(description="Classify into one of the exact ExpenseCategory enums.")
     date: str = Field(description="YYYY-MM-DD format. Infer based on today's date.")
     
@@ -40,7 +45,7 @@ class TransactionList(BaseModel):
 # 3. The Extraction Function
 async def extract_transactions(transcript_text: str) -> dict | None:
     """Takes raw text and safely extracts a structured JSON list of transactions."""
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = get_sgt_now().strftime("%Y-%m-%d")
     
     try:
         response = await openai_client.beta.chat.completions.parse(

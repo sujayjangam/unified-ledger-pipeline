@@ -6,6 +6,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 import tempfile
 from openai import AsyncOpenAI
 from add_expense import add_expense
+from services.utils import get_sgt_now
 from datetime import datetime, timedelta, timezone
 from services.ledger_queries import get_recent_entries, get_period_summary, get_category_summary
 
@@ -15,8 +16,6 @@ truststore.inject_into_ssl()
 # Load the secrets into memory FIRST
 load_dotenv()
 
-# 🌐 Define Singapore Timezone (UTC+8)
-SG_TZ = timezone(timedelta(hours=8))
 
 # NOW it is safe to import  custom services because the environment is ready (load_dotenv() already ran)
 from services.transcription import transcribe_audio
@@ -49,10 +48,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print(f"DEBUG: Connection from {username} (ID: {user_id})")
     
     await update.message.reply_text(f"Hello {username}! Your ID is authorized by admin. Send me a voice note to get started.")
-
-def get_sgt_now():
-    """Returns the current timezone-aware datetime in Singapore."""
-    return datetime.now(SG_TZ)
 
 def format_period_summary(title: str, expenses: list, transfers: list) -> str:
     """Helper function to build a mobile-readable summary for any date range."""
@@ -253,15 +248,24 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Inject the raw, unedited transcript directly as the description
         single_transaction['description'] = transcript_text
+
+        # if the transaction is in non SGD currency, for now we automatically assume it's made with YouTrip, unless payment method already mentioned e.g. Cash
+        if single_transaction.get('currency', 'SGD') != 'SGD' and not single_transaction.get('payment_method'):
+            single_transaction['payment_method'] = 'YouTrip'
+
+        if single_transaction.get('category') == 'YouTrip top-up':
+            single_transaction['payment_method'] = 'OCBC Infinity'
+            single_transaction['transaction_type'] = 'Transfer'
         
         # Store the isolated transaction in memory, not the whole wrapper
         context.user_data['pending_transaction'] = single_transaction
         
-        # Reference 'single_transaction' instead of 'structured_data' for the UI text
+        # Reference 'single_transaction', in future this will read 'transactions' when support for multiple txn is added
         summary_message = (
-            f"Please confirm your expense:\n\n"
-            f"💰 **Amount:** {float(single_transaction.get('amount')):.2f}\n"
+            f"Please confirm your **{single_transaction.get('transaction_type', 'Expense')}**:\n\n"
+            f"💰 **Amount:** {single_transaction.get('currency')} {float(single_transaction.get('amount')):.2f}\n"
             f"🏷️ **Category:** {single_transaction.get('category')}\n"
+            f"💳 **Account:** {single_transaction.get('payment_method', 'Unspecified')}\n"
             f"📝 **Notes:** {single_transaction.get('description', 'None')}\n"
             f"📅 **Date:** {single_transaction.get('date')}\n"
         )
@@ -293,7 +297,7 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
     if query.data == "confirm_save":
         transaction_to_save = context.user_data.get('pending_transaction')
         
-        if transaction_to_save:
+        if transaction_to_save: # checks if transaction_to_save variable actually contains data. If empty, returns None (False)
             # await query.edit_message_text("✅ **Confirmed!** Transaction ready for the database.", parse_mode="Markdown")
             # save success will return True if done, or False if failed
             save_success = add_expense(
@@ -302,7 +306,9 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
                 amount_dollars=transaction_to_save.get('amount'),
                 category=transaction_to_save.get('category'),
                 currency=transaction_to_save.get('currency', 'SGD'),
-                source="Telegram Bot" # CHANGED: Tag it so you know where it came from
+                transaction_type=transaction_to_save.get('transaction_type', 'Expense'), # NEW
+                account_owner=transaction_to_save.get('payment_method'),                 # NEW
+                source="Telegram Bot"
             )
 
             if save_success: 

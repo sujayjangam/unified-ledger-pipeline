@@ -10,8 +10,8 @@ try:
     
     # Execute the rename command
     cursor.execute("""
-    UPDATE transactions 
-    SET currency = 'SGD' WHERE currency IS NULL;
+    ALTER TABLE transactions 
+    ADD COLUMN account_desc TEXT;
                    """)
     conn.commit()
     

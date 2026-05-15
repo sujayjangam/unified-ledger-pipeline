@@ -1,10 +1,10 @@
 import argparse
 import uuid
-import datetime
+from datetime import datetime, timedelta, timezone
 import sys
 from database import get_connection
 
-def add_expense(date_str, description, amount_dollars, category, currency='SGD', source="Manual CLI"):
+def add_expense(date_str, description, amount_dollars, category, currency="SGD", transaction_type="Expense", account_desc=None, account_owner=None, source="Manual CLI"):
     try:
         # 1. Validation: Convert to Integer Cents (Mathematical Precision)
         # We convert to float first, then multiply by 100, then cast to int.
@@ -14,26 +14,29 @@ def add_expense(date_str, description, amount_dollars, category, currency='SGD',
             print("❌ Error: Amount must be greater than zero.")
             return False # return False so caller knows it has failed
 
-        # 2. Validation: Ensure date matches YYYY-MM-DD
-        datetime.datetime.strptime(date_str, '%Y-%m-%d')
+        # 2. Validation: Ensure date matches YYYY-MM-DD, if not, ValueError is raised, stopping code at this line
+        datetime.strptime(date_str, '%Y-%m-%d')
         
         # 3. DB Insertion
         transaction_id = str(uuid.uuid4())
         conn = get_connection()
         cursor = conn.cursor()
         
+        # INSERT STATEMENT to add all the required fields from the transcript that is passed when add_expense() is called
         query = '''
             INSERT INTO transactions (
-                transaction_id, date, description, amount, 
-                base_amount, category, reconciliation_status, source
+                transaction_id, date, description, amount, currency,
+                base_amount, category, transaction_type, account_desc, account_owner,
+                reconciliation_status, source
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         '''
         
         # Note: source is 'Manual' for this tool
         cursor.execute(query, (
-            transaction_id, date_str, description, amount_cents, 
-            amount_cents, category, 'unsettled', source
+            transaction_id, date_str, description, amount_cents, currency,
+            amount_cents, category, transaction_type, account_desc, account_owner,
+            'unsettled', source
         ))
         
         conn.commit()
