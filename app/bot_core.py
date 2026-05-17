@@ -1,3 +1,4 @@
+import json
 import truststore
 import os
 from dotenv import load_dotenv
@@ -16,6 +17,13 @@ truststore.inject_into_ssl()
 # Load the secrets into memory FIRST
 load_dotenv()
 
+try: 
+    ALLOWED_TG_IDS = json.loads(os.getenv("ALLOWED_TG_IDS", {}))
+    ACCOUNT_OWNERS = json.loads(os.getenv("ACCOUNT_OWNERS", "{}"))
+except json.JSONDecodeError:
+    print("❌ Error: Invalid JSON format in .env file.")
+    TG_USERS, ACCOUNT_OWNERS = {}, {}
+
 
 # NOW it is safe to import  custom services because the environment is ready (load_dotenv() already ran)
 from services.transcription import transcribe_audio
@@ -26,12 +34,12 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 openai_client = AsyncOpenAI()
 
 raw_allowed_ids = os.getenv("ALLOWED_TG_IDS", "")
-ALLOWED_IDS = [int(i.strip()) for i in raw_allowed_ids.split(",") if i.strip()]
+ALLOWED_IDS = ALLOWED_TG_IDS.keys()
 
 # The Gatekeeper (Authorization Check)
 async def is_authorized(update: Update):
     """Check if the user is in our allowed list."""
-    user_id = update.effective_user.id
+    user_id = str(update.effective_user.id)
     if user_id not in ALLOWED_IDS:
         print(f"🚫 Unauthorized access attempt by ID: {user_id}")
         await update.message.reply_text("You are not authorized to use this ledger. 🛑")
@@ -231,8 +239,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await status_msg.edit_text("❌ Failed to extract structured data from the transcript.")
             return
             
-        # Extract the actual list from the wrapper
+        # Extract the actual list from the wrapper and the spender
         transactions_list = structured_data["transactions"]
+        user_id = str(update.effective_user.id)
+        spender_name = ALLOWED_TG_IDS.get(user_id, "Unknown")
         
         # The V1 Gatekeeper to politely reject multiple expenses
         if len(transactions_list) > 1:
@@ -250,13 +260,33 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         single_transaction['description'] = transcript_text
 
         # if the transaction is in non SGD currency, for now we automatically assume it's made with YouTrip, unless payment method already mentioned e.g. Cash
-        if single_transaction.get('currency', 'SGD') != 'SGD' and not single_transaction.get('payment_method'):
-            single_transaction['payment_method'] = 'YouTrip'
-
         if single_transaction.get('category') == 'YouTrip top-up':
             single_transaction['payment_method'] = 'OCBC Infinity'
             single_transaction['transaction_type'] = 'Transfer'
+            
+        elif not single_transaction.get('payment_method'):
+            # If no method was extracted, apply currency/user defaults
+            if single_transaction.get('currency', 'SGD') != 'SGD':
+                single_transaction['payment_method'] = 'YouTrip'
+            else:
+                # Dynamically pull the user's default card (Index 0)
+                # Fallback to ["Cash"] if the user isn't in the dictionary
+                user_accounts = ACCOUNT_OWNERS.get(spender_name, ["Cash"])
+                single_transaction['payment_method'] = user_accounts[0]
+
+        # now that we have the payment method, we will look up the account_owner, e.g. if Laura logs YouTrip txn, the account owner is Sujay
+        extracted_account = single_transaction.get('payment_method')
         
+        if extracted_account and extracted_account.lower() == 'cash':
+            single_transaction['account_owner'] = spender_name
+        else:
+            account_owner = "Unknown"
+            for owner, accounts_list in ACCOUNT_OWNERS.items():
+                if extracted_account in accounts_list:
+                    account_owner = owner
+                    break
+            single_transaction['account_owner'] = account_owner
+                
         # Store the isolated transaction in memory, not the whole wrapper
         context.user_data['pending_transaction'] = single_transaction
         
