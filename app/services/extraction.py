@@ -24,15 +24,25 @@ class ExpenseCategory(str, Enum):
 # 2. Define the Upgraded Data Blueprint
 class TransactionSchema(BaseModel):
     # Optional[] means the LLM is allowed to return 'null' if the user forgot to state the price
-    amount: Optional[float] = Field(default=None, description="The numerical amount. If not explicitly stated in the text, this MUST be null.")
-    currency: str = Field(default="SGD", description="3-letter currency code. Default to SGD if not stated.")
-    # no description, because I want to store the raw transcript for better historical data
+    amount: Optional[float] = Field(default=None, description="""The exact numerical value. Extract ONLY the number. 
+                                    Example: for '50 ringgit', extract 50.0. If not explicitly stated in the text, it must be NULL""")
+    
+    currency: str = Field(default="SGD", description="""3-letter ISO currency code. 
+                          You MUST map spoken words to standard codes: 'dollars' -> SGD, 'ringgit' -> MYR, 'rupiah' -> IDR, 'baht' -> THB, 'usd' -> USD, 'rupees' -> INR, 'aud' -> AUD.
+                          Default to SGD if not stated or if user mentions 'dollars' Only use USD and AUD at their explicit mentions.""")
+    
+    # no schema for description, because I want to store the raw transcript for better historical data rather than a summary
+
     transaction_type: Literal['Expense', 'Transfer'] = Field(description="""Classify as 'Transfer' if the user is topping up a wallet (e.g., YouTrip),
                                                               moving money between accounts, or paying a credit card bill. Otherwise, classify as 'Expense'.""")
     # NEW: Capture the payment method or account
     payment_method: Optional[str] = Field(default=None, description=f"""The card, account, or wallet used (Must be one of: 
-                                          {ALLOWED_ACCOUNTS}). Null if not mentioned. If topping up YouTrip, the payment method is ALWAYS 'OCBC Infinity'.""")
+                                          {ALLOWED_ACCOUNTS}). Null if not mentioned. If topping up YouTrip, the payment method 
+                                          is ALWAYS 'OCBC Infinity'. If the words 'pay' and 'now' are mentioned consecutively, then 
+                                          the payment method is most likely 'PayNow'.""")
+    
     category: ExpenseCategory = Field(description="Classify into one of the exact ExpenseCategory enums.")
+    
     date: str = Field(description="YYYY-MM-DD format. Infer based on today's date.")
     
     # A flag for your future UI to know if it needs to ask the user for clarification

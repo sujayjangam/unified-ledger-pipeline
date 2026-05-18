@@ -25,11 +25,20 @@ def add_expense(date_str, description, amount_dollars, category, currency="SGD",
         # INSERT STATEMENT to add all the required fields from the transcript that is passed when add_expense() is called
         query = '''
             INSERT INTO transactions (
-                transaction_id, date, description, amount, currency,
-                base_amount, category, transaction_type, account_desc, account_owner,
-                reconciliation_status, source
+                transaction_id, 
+                date, 
+                description, 
+                amount, 
+                currency,
+                base_amount, 
+                category, 
+                transaction_type, 
+                account_desc, 
+                account_owner,
+                reconciliation_status, 
+                source
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         '''
         
         # Note: source is 'Manual' for this tool

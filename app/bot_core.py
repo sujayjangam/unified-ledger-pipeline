@@ -259,9 +259,14 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Inject the raw, unedited transcript directly as the description
         single_transaction['description'] = transcript_text
 
+        # handle scenarios where amount spent was not picked up by whisper AI
+        if single_transaction.get('amount') is None:
+            await update.message.reply_text("⚠️ I couldn't detect an exact amount from your voice note. Could you try saying it again?")
+            return # Stop processing this transaction
+
         # if the transaction is in non SGD currency, for now we automatically assume it's made with YouTrip, unless payment method already mentioned e.g. Cash
         if single_transaction.get('category') == 'YouTrip top-up':
-            single_transaction['payment_method'] = 'OCBC Infinity'
+            single_transaction['payment_method'] = ACCOUNT_OWNERS["Sujay"][0]
             single_transaction['transaction_type'] = 'Transfer'
             
         elif not single_transaction.get('payment_method'):
@@ -282,7 +287,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             account_owner = "Unknown"
             for owner, accounts_list in ACCOUNT_OWNERS.items():
-                if extracted_account in accounts_list:
+                if extracted_account.lower() in [account.lower() for account in accounts_list]:
                     account_owner = owner
                     break
             single_transaction['account_owner'] = account_owner
@@ -296,6 +301,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💰 **Amount:** {single_transaction.get('currency')} {float(single_transaction.get('amount')):.2f}\n"
             f"🏷️ **Category:** {single_transaction.get('category')}\n"
             f"💳 **Account:** {single_transaction.get('payment_method', 'Unspecified')}\n"
+            f"💳 **Account Owner:** {single_transaction.get('account_owner', 'Unspecified')}\n"
             f"📝 **Notes:** {single_transaction.get('description', 'None')}\n"
             f"📅 **Date:** {single_transaction.get('date')}\n"
         )
@@ -336,8 +342,9 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
                 amount_dollars=transaction_to_save.get('amount'),
                 category=transaction_to_save.get('category'),
                 currency=transaction_to_save.get('currency', 'SGD'),
-                transaction_type=transaction_to_save.get('transaction_type', 'Expense'), # NEW
-                account_owner=transaction_to_save.get('payment_method'),                 # NEW
+                transaction_type=transaction_to_save.get('transaction_type', 'Expense'), 
+                account_desc=transaction_to_save.get('payment_method'),                 
+                account_owner=transaction_to_save.get('account_owner'),
                 source="Telegram Bot"
             )
 
