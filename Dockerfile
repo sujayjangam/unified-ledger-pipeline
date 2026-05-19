@@ -12,4 +12,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # 5. The exact command to turn on the FastAPI web server
-CMD ["uvicorn", "bot_webhook:app_fastapi", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["uvicorn", "app.bot_webhook:app_fastapi", "--host", "0.0.0.0", "--port", "8080"]
