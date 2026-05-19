@@ -5,7 +5,7 @@ from enum import Enum
 from pydantic import BaseModel, Field
 from openai import AsyncOpenAI
 from typing import Optional, Literal
-from services.utils import get_sgt_now
+from app.services.utils import get_sgt_now
 
 # Initialize the OpenAI client
 openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))

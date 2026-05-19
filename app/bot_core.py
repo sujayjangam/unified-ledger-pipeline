@@ -6,7 +6,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 import tempfile
 from openai import AsyncOpenAI
-from add_expense import add_expense
+from app.add_expense import add_expense
 from app.services.utils import get_sgt_now
 from datetime import datetime, timedelta, timezone
 from app.services.ledger_queries import get_recent_entries, get_period_summary, get_category_summary
@@ -26,8 +26,8 @@ except json.JSONDecodeError:
 
 
 # NOW it is safe to import  custom services because the environment is ready (load_dotenv() already ran)
-from services.transcription import transcribe_audio
-from services.extraction import extract_transactions
+from app.services.transcription import transcribe_audio
+from app.services.extraction import extract_transactions
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 # Initialize OpenAI client (it automatically looks for OPENAI_API_KEY in your environment)
