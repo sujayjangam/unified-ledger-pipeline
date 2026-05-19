@@ -1,3 +1,6 @@
 python-telegram-bot[job-queue]==21.1.1
 fastapi
 uvicorn
+openai
+python-dotenv
+truststore
