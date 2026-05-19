@@ -18,7 +18,7 @@ truststore.inject_into_ssl()
 load_dotenv()
 
 try: 
-    ALLOWED_TG_IDS = json.loads(os.getenv("ALLOWED_TG_IDS", {}))
+    ALLOWED_TG_IDS = json.loads(os.getenv("ALLOWED_TG_IDS", "{}"))
     ACCOUNT_OWNERS = json.loads(os.getenv("ACCOUNT_OWNERS", "{}"))
 except json.JSONDecodeError:
     print("❌ Error: Invalid JSON format in .env file.")
