@@ -7,9 +7,9 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 import tempfile
 from openai import AsyncOpenAI
 from add_expense import add_expense
-from services.utils import get_sgt_now
+from app.services.utils import get_sgt_now
 from datetime import datetime, timedelta, timezone
-from services.ledger_queries import get_recent_entries, get_period_summary, get_category_summary
+from app.services.ledger_queries import get_recent_entries, get_period_summary, get_category_summary
 
 # use the local windows persmissions
 truststore.inject_into_ssl()
