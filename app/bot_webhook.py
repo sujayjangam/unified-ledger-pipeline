@@ -2,7 +2,7 @@ import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from telegram import Update
-from bot_core import get_application
+from app.bot_core import get_application
 
 # Fetch our bot engine
 ptb_app = get_application()
