@@ -1,4 +1,4 @@
-from database import get_connection
+from app.database import get_connection
 
 def view_transactions():
     """Fetches and displays transactions in a human-readable format."""

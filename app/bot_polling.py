@@ -1,4 +1,4 @@
-from bot_core import get_application
+from app.bot_core import get_application
 
 if __name__ == '__main__':
     # Fetch the configured engine from core

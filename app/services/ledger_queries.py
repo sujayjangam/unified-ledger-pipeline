@@ -1,4 +1,4 @@
-from database import get_connection
+from app.database import get_connection
 
 def get_recent_entries(limit=5):
     """Fetches the latest transactions, including both expenses and transfers."""
