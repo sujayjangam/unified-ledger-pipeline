@@ -2,7 +2,7 @@ import argparse
 import uuid
 from datetime import datetime, timedelta, timezone
 import sys
-from database import get_connection
+from app.database import get_connection
 
 def add_expense(date_str, description, amount_dollars, category, currency="SGD", transaction_type="Expense", account_desc=None, account_owner=None, source="Manual CLI"):
     try:
