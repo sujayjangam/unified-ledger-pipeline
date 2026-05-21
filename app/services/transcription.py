@@ -14,7 +14,7 @@ async def transcribe_audio(file_path: str) -> str:
             transcript = await openai_client.audio.transcriptions.create(
                 model="whisper-1", 
                 file=audio_stream,
-                langauage="en"
+                langauage="en",
                 # The prompt acts as a hint for the AI to recognize specific words
                 prompt="McDonalds, McChicken, Warung, GoJek, Grab, IDR, SGD, USD, AUD, YouTrip" 
             )
