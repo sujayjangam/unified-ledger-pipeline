@@ -20,3 +20,7 @@
 - **transaction_type**: 'income' or 'expense'
 - **source**: Data origin
 - **reconciliation_status**: 'settled' or 'unsettled'
+- **idempotency_key**: UUID, nullable, UNIQUE. Set by the Telegram bot (one per confirm prompt,
+  generated when the transaction is presented for confirmation, reused on every save attempt for
+  that same prompt) so a double-tap or webhook redelivery can't insert the same transaction twice.
+  Manual/API inserts leave this NULL — the UNIQUE constraint allows multiple NULLs.

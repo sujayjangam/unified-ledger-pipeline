@@ -1,6 +1,7 @@
 import json
 import truststore
 import os
+import uuid
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
@@ -292,6 +293,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     break
             single_transaction['account_owner'] = account_owner
                 
+        # One idempotency key per confirm prompt (not per save attempt) - reused on every
+        # save attempt for this same prompt, so a double-tap or webhook retry can't insert twice.
+        single_transaction['idempotency_key'] = str(uuid.uuid4())
+
         # Store the isolated transaction in memory, not the whole wrapper
         context.user_data['pending_transaction'] = single_transaction
         
@@ -331,8 +336,10 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     # when the user clicks on the confirm button, we get the pending transaction and save it to our database
     if query.data == "confirm_save":
-        transaction_to_save = context.user_data.get('pending_transaction')
-        
+        # Atomic check-and-remove: whichever concurrent call (double-tap, webhook retry) gets
+        # here first wins the transaction; any other one sees None below instead of also saving it.
+        transaction_to_save = context.user_data.pop('pending_transaction', None)
+
         if transaction_to_save: # checks if transaction_to_save variable actually contains data. If empty, returns None (False)
             # await query.edit_message_text("✅ **Confirmed!** Transaction ready for the database.", parse_mode="Markdown")
             # save success will return True if done, or False if failed
@@ -342,10 +349,11 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
                 amount_dollars=transaction_to_save.get('amount'),
                 category=transaction_to_save.get('category'),
                 currency=transaction_to_save.get('currency', 'SGD'),
-                transaction_type=transaction_to_save.get('transaction_type', 'Expense'), 
-                account_desc=transaction_to_save.get('payment_method'),                 
+                transaction_type=transaction_to_save.get('transaction_type', 'Expense'),
+                account_desc=transaction_to_save.get('payment_method'),
                 account_owner=transaction_to_save.get('account_owner'),
-                source="Telegram Bot"
+                source="Telegram Bot",
+                idempotency_key=transaction_to_save.get('idempotency_key')
             )
 
             if save_success: 
@@ -369,12 +377,10 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
                     f"📅 **Date:** {transaction_to_save.get('date')}\n"
                 )
                 await query.edit_message_text(error_summary, parse_mode="Markdown")
-            
-            context.user_data.pop('pending_transaction', None)
-            
+
         else:
             await query.edit_message_text("⚠️ Session expired or data lost. Please send the voice note again.")
-            
+
     elif query.data == "cancel_save":
         await query.edit_message_text("❌ **Cancelled.** Nothing was saved to the Ledger.", parse_mode="Markdown")
         context.user_data.pop('pending_transaction', None)
