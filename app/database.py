@@ -28,7 +28,8 @@ def initialize_db():
             category TEXT,
             transaction_type TEXT,
             source TEXT,
-            reconciliation_status TEXT
+            reconciliation_status TEXT,
+            idempotency_key TEXT UNIQUE
         )
     ''')
 

@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 import sys
 from app.database import get_connection
 
-def add_expense(date_str, description, amount_dollars, category, currency="SGD", transaction_type="Expense", account_desc=None, account_owner=None, source="Manual CLI"):
+def add_expense(date_str, description, amount_dollars, category, currency="SGD", transaction_type="Expense", account_desc=None, account_owner=None, source="Manual CLI", idempotency_key=None):
     try:
         # 1. Validation: Convert to Integer Cents (Mathematical Precision)
         # We convert to float first, then multiply by 100, then cast to int.
@@ -22,35 +22,46 @@ def add_expense(date_str, description, amount_dollars, category, currency="SGD",
         conn = get_connection()
         cursor = conn.cursor()
         
-        # INSERT STATEMENT to add all the required fields from the transcript that is passed when add_expense() is called
+        # INSERT OR IGNORE: if idempotency_key is provided and already exists (a duplicate save
+        # attempt for the same confirm prompt), the UNIQUE constraint silently skips the insert
+        # instead of raising - rowcount tells us which happened. NULL idempotency_key (CLI/API
+        # callers) never collides, since SQL treats every NULL as distinct.
         query = '''
-            INSERT INTO transactions (
-                transaction_id, 
-                date, 
-                description, 
-                amount, 
+            INSERT OR IGNORE INTO transactions (
+                transaction_id,
+                date,
+                description,
+                amount,
                 currency,
-                base_amount, 
-                category, 
-                transaction_type, 
-                account_desc, 
+                base_amount,
+                category,
+                transaction_type,
+                account_desc,
                 account_owner,
-                reconciliation_status, 
-                source
+                reconciliation_status,
+                source,
+                idempotency_key
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         '''
-        
+
         # Note: source is 'Manual' for this tool
         cursor.execute(query, (
             transaction_id, date_str, description, amount_cents, currency,
             amount_cents, category, transaction_type, account_desc, account_owner,
-            'unsettled', source
+            'unsettled', source, idempotency_key
         ))
-        
+
+        was_duplicate = cursor.rowcount == 0
         conn.commit()
         conn.close()
-        print(f"✅ Successfully added: {description} ({currency} {float(amount_dollars):.2f}) on {date_str}")
+
+        if was_duplicate:
+            # Already saved by a prior/concurrent call with the same idempotency_key - the
+            # transaction is safely in the DB either way, so this is a success, not an error.
+            print(f"↩️ Duplicate save ignored (already recorded): {description} ({currency} {float(amount_dollars):.2f}) on {date_str}")
+        else:
+            print(f"✅ Successfully added: {description} ({currency} {float(amount_dollars):.2f}) on {date_str}")
         return True
 
     except ValueError:
