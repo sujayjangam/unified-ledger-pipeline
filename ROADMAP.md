@@ -16,12 +16,13 @@ that naturally produces the stronger interview story too.
 
 ## Current status
 **Phase:** Phase 0 in progress.
-**Next action:** Review and merge [PR #3](https://github.com/sujayjangam/unified-ledger-pipeline/pull/3)
-(branch `fix/issue-1-double-insert`), which fixes issue #1 — Sujay plans to review and merge no
-earlier than 2026-07-30. Once merged, continue with the rest of the Phase 0 tasks below.
+**Next action:** Not yet decided — pick the next item from "Known issues to fix" below or start
+issue #2 (Neon Postgres migration) at the start of the next session.
 
-Issue #1 and issue #2 are both assigned to Sujay. Issue #1's fix is implemented and awaiting
-review per the above; issue #2 (Neon Postgres migration) is assigned but not yet started.
+[Issue #1](https://github.com/sujayjangam/unified-ledger-pipeline/issues/1) (Telegram double-insert
+bug) is fixed, merged via [PR #3](https://github.com/sujayjangam/unified-ledger-pipeline/pull/3),
+and closed as of 2026-07-30. Issue #2 (Neon Postgres migration) is assigned to Sujay but not yet
+started.
 
 ## Constraints (agreed, don't relitigate without a reason)
 - Target: GenAI/ML/Data Engineering in Perth, open to any of the three — explicitly not a project
@@ -55,9 +56,6 @@ review per the above; issue #2 (Neon Postgres migration) is assigned but not yet
   commits.
 - `README.md` currently contains accidental `requirements.txt` content, not real documentation.
 - A stray empty `ledger.db` sits at the repo root; the real database is `data/ledger.db`.
-- **[Issue #1](https://github.com/sujayjangam/unified-ledger-pipeline/issues/1)** — Telegram bot's
-  "Confirm" button can insert the same transaction twice (double-tap / webhook retry race in
-  `handle_button_click`, no `update_id` dedup in `bot_webhook.py`).
 - **[Issue #2](https://github.com/sujayjangam/unified-ledger-pipeline/issues/2)** — transactions are
   lost on Cloud Run restart/redeploy because SQLite lives on the container's ephemeral local disk
   (compounded by `data/ledger.db` being accidentally committed to git and baked into every image
