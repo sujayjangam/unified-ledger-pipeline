@@ -4,3 +4,6 @@ uvicorn
 openai
 python-dotenv
 truststore
+sqlalchemy>=2.0.35,<3.0
+psycopg[binary]>=3.2,<4.0
+alembic>=1.13,<2.0

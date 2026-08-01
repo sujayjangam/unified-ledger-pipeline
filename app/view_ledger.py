@@ -1,14 +1,14 @@
+from sqlalchemy import text
 from app.database import get_connection
 
 def view_transactions():
     """Fetches and displays transactions in a human-readable format."""
-    conn = get_connection()
-    cursor = conn.cursor()
-
     # Query the database
     # We select specific columns to keep the view clean
-    cursor.execute("SELECT date, description, amount, category FROM transactions ORDER BY date DESC")
-    rows = cursor.fetchall()
+    with get_connection() as conn:
+        rows = conn.execute(text(
+            "SELECT date, description, amount, category FROM transactions ORDER BY date DESC"
+        )).fetchall()
 
     if not rows:
         print("\n📭 The ledger is currently empty.")
@@ -26,7 +26,6 @@ def view_transactions():
         print(f"{date:<12} | {desc:<22} | ${amt_dollars:>10.2f} | {cat}")
 
     print("="*65 + "\n")
-    conn.close()
 
 if __name__ == "__main__":
     view_transactions()
