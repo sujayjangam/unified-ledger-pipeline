@@ -31,31 +31,35 @@ doesn't map to anything in the actual system. Use, and refine once Phase 1/2 lan
 
 ## Current status
 
-**Phase:** Phase 0 — Postgres migration is **code-complete but not yet cut over** (as of
-2026-08-01).
-**Next action:** Provision the Neon project, then run the cutover + verification sequence below.
-Nothing else in Phase 0 should start until the ledger is actually reading and writing from
-Postgres.
+**Phase:** Phase 0 — Postgres migration is **live and verified** as of 2026-08-01. One
+end-to-end bot check outstanding before the cutover is closed out.
+**Next action:** Run `python -m app.bot_polling` and put one real voice note through the confirm
+flow. If that saves correctly, the migration is done and the next Phase 0 item can start.
 
-The code no longer talks to SQLite: `app/database.py` is a pooled SQLAlchemy Core engine reading
+The ledger now runs on Neon Postgres. `app/database.py` is a pooled SQLAlchemy Core engine reading
 `DATABASE_URL`, Alembic owns the schema (`alembic/versions/0001_create_transactions_table.py`
 records the true live schema including the previously-undocumented `account_desc`), and every
-query is `text()` with named binds. Verified against in-memory SQLite — including that
-`ON CONFLICT` dedupe inserts exactly one row for a repeated `idempotency_key` — but **not yet
-against real Postgres**.
+query is `text()` with named binds.
 
-Remaining, in order:
-1. Create the Neon project, take the **direct/unpooled** connection string, put it in `.env` as
-   `DATABASE_URL` (see `.env.example`).
-2. `alembic upgrade head`.
-3. `python -m scripts.migrate_to_postgres` — copies the 21 live rows, verifies counts and amount
-   checksums, exits non-zero on any mismatch. Expected: 21 rows, `SUM(amount)` = 100087720,
-   dates 2023-10-01 → 2026-05-18.
-4. Work through the verification list in the session plan: `view_ledger`, a throwaway
-   `add_expense`, a **real duplicate-`idempotency_key` test against Postgres** (the one behavior
-   that's genuinely driver-dependent), the bot's `/recent /today /week /month /cat_today` under
-   `bot_polling`, one real voice note end-to-end, and both FastAPI routes.
-5. Only then rename `data/ledger.db` → `data/ledger.db.pre-migration-backup` (already gitignored).
+All 21 rows migrated with checksums matching the pre-migration SQLite file exactly
+(`SUM(amount)` = 100087720, dates 2023-10-01 → 2026-05-18). Verified against real Postgres:
+`alembic current` at head, `view_ledger` and `GET /transactions` both return all 21 rows, the
+`ON CONFLICT` dedupe reports `rowcount=0` on a repeated `idempotency_key` while NULL keys still
+don't collide (tested inside a rolled-back transaction, so the ledger was never touched), and
+malformed `ALLOWED_TG_IDS` JSON now falls back to an empty allowlist instead of raising
+`NameError`.
+
+Still to do:
+1. `python -m app.bot_polling` — exercise `/recent /today /week /month /cat_today` and send one
+   real voice note through the confirm-button save path. This is the only remaining path that
+   performs a *committed* write end-to-end.
+2. Then rename `data/ledger.db` → `data/ledger.db.pre-migration-backup` (already gitignored).
+   Don't delete it.
+
+Environment note for future sessions: `.venv/` is a **micromamba conda env, not a virtualenv**
+(created `micromamba create -p ./.venv python=3.11 pip -c conda-forge`). Run
+`micromamba activate .\.venv` from the repo root first; bare `python` on PATH is a Microsoft Store
+alias stub and will not work.
 
 [Issue #1](https://github.com/sujayjangam/unified-ledger-pipeline/issues/1) (Telegram double-insert
 bug) is fixed and closed as of 2026-07-30. Issue #2 (Neon Postgres migration) is in progress.
