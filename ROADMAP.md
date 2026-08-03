@@ -31,13 +31,42 @@ doesn't map to anything in the actual system. Use, and refine once Phase 1/2 lan
 
 ## Current status
 
-**Phase:** Phase 0, not yet started under this revised plan.
-**Next action:** Begin Phase 0 with the Postgres migration (see below) — it now gates everything
-else, so start there rather than picking arbitrarily from the bug list.
+**Phase:** Phase 0 — Postgres migration is **live and verified** as of 2026-08-01. One
+end-to-end bot check outstanding before the cutover is closed out.
+**Next action:** Run `python -m app.bot_polling` and put one real voice note through the confirm
+flow. If that saves correctly, the migration is done and the next Phase 0 item can start.
+
+The ledger now runs on Neon Postgres. `app/database.py` is a pooled SQLAlchemy Core engine reading
+`DATABASE_URL`, Alembic owns the schema (`alembic/versions/0001_create_transactions_table.py`
+records the true live schema including the previously-undocumented `account_desc`), and every
+query is `text()` with named binds.
+
+All 21 rows migrated with checksums matching the pre-migration SQLite file exactly
+(`SUM(amount)` = 100087720, dates 2023-10-01 → 2026-05-18). Verified against real Postgres:
+`alembic current` at head, `view_ledger` and `GET /transactions` both return all 21 rows, the
+`ON CONFLICT` dedupe reports `rowcount=0` on a repeated `idempotency_key` while NULL keys still
+don't collide (tested inside a rolled-back transaction, so the ledger was never touched), and
+malformed `ALLOWED_TG_IDS` JSON now falls back to an empty allowlist instead of raising
+`NameError`.
+
+Still to do:
+1. `python -m app.bot_polling` — exercise `/recent /today /week /month /cat_today` and send one
+   real voice note through the confirm-button save path. This is the only remaining path that
+   performs a *committed* write end-to-end.
+2. Then rename `data/ledger.db` → `data/ledger.db.pre-migration-backup` (already gitignored).
+   Don't delete it.
+
+Environment note for future sessions: `.venv/` is a **micromamba conda env, not a virtualenv**
+(created `micromamba create -p ./.venv python=3.11 pip -c conda-forge`). Run
+`micromamba activate .\.venv` from the repo root first; bare `python` on PATH is a Microsoft Store
+alias stub and will not work.
 
 [Issue #1](https://github.com/sujayjangam/unified-ledger-pipeline/issues/1) (Telegram double-insert
-bug) is fixed and closed as of 2026-07-30. Issue #2 (Neon Postgres migration) is assigned to Sujay,
-not yet started, and is now the first blocking task of Phase 0.
+bug) is fixed and closed as of 2026-07-30. Issue #2 (Neon Postgres migration) is in progress.
+
+Also cleaned up this session: `.venv/` (6,427 files, ~30MB) and `data/ledger.db` were both tracked
+in git and are now untracked — **but they remain in git history**, which is a deliberate open
+decision, not an oversight. Purging them needs a history rewrite and force-push.
 
 ## Constraints (agreed, don't relitigate without a reason)
 
@@ -88,42 +117,53 @@ This is the differentiated technical story and should be solid before applicatio
 not cut — this is because the project keeps running as live household infrastructure regardless
 of the job search timeline. It just doesn't gate when applications begin.
 
-## Known issues to fix (confirmed via code review, not yet fixed)
+## Known issues
 
-- `app/database.py`'s `CREATE TABLE` is missing the `account_desc` column that `app/add_expense.py`
-inserts into — added via an ad hoc `ALTER TABLE` in `test_queries.py`, never codified.
-- `app/bot_core.py`: on `JSONDecodeError`, the except block sets `TG_USERS` instead of
-`ALLOWED_TG_IDS` — the intended graceful fallback is broken and would raise a `NameError` instead.
-- `app/sample_data.py` imports `from database import get_connection` instead of
-`from app.database import get_connection` — broken since earlier module-path fixes.
-- No connection pooling anywhere `get_connection()` is used.
-- No idempotency handling for duplicate Telegram update delivery (webhook retries can double-save).
+Fixed as part of the Postgres migration (2026-08-01):
+
+- ~~`app/database.py`'s `CREATE TABLE` is missing the `account_desc` column~~ — the Alembic
+baseline now records the true schema, and `test_queries.py` (the ad hoc `ALTER TABLE` that caused
+the drift) is deleted.
+- ~~`app/bot_core.py`: on `JSONDecodeError`, the except block sets `TG_USERS` instead of
+`ALLOWED_TG_IDS`~~.
+- ~~`app/sample_data.py` imports `from database import get_connection`~~ — import fixed, and its
+positional `INSERT` (which silently depended on column order) now names its columns.
+- ~~No connection pooling anywhere `get_connection()` is used~~ — SQLAlchemy `QueuePool`,
+`pool_size=5`, `pool_pre_ping=True` for Neon's idle auto-suspend.
+- ~~No migrations tooling~~ — Alembic, with the convention that migrations are hand-written
+(Core, not ORM, so there's no metadata for `--autogenerate` to diff against).
+
+Still outstanding:
+
+- Duplicate Telegram update delivery is deduped only in memory (`_seen_update_ids` in
+`bot_webhook.py`), which doesn't survive a Cloud Run restart or a second instance. Now that
+Postgres exists, this should become a persisted constraint.
 - Broad `except Exception` blocks throughout silently swallow errors via `print()` instead of
 structured logging — failures are invisible in production.
 - `needs_review` is extracted by `app/services/extraction.py` but never acted on anywhere — the
 human-in-the-loop claim doesn't hold until this actually gates bot behavior.
-- No migrations tooling — schema changes are applied by hand directly against the live DB.
-- No automated test suite (`test_queries.py` is a one-off migration script, not tests, despite the
-name).
+- No automated test suite. The in-memory-SQLite smoke test written during the migration was
+throwaway; it should be turned into real pytest coverage.
 - `README.md` currently contains accidental `requirements.txt` content, not real documentation.
-- A stray empty `ledger.db` sits at the repo root; the real database is `data/ledger.db` (moot
-once Postgres migration lands, but confirm it's removed from git history too).
-- Transactions are lost on Cloud Run restart/redeploy because SQLite lives on the container's
-ephemeral disk, compounded by `data/ledger.db` being committed to git and baked into image builds.
+- A stray empty `ledger.db` sits at the repo root (untracked, harmless).
+- `.venv/` and `data/ledger.db` are untracked as of 2026-08-01 but **still present in git
+history** — purging needs a rewrite + force-push, deliberately deferred.
+- Cloud Run still runs against the old SQLite code path until the deployment session lands; until
+then production transactions are still lost on restart/redeploy.
 
 ## Plan
 
 ### Phase 0 — Foundation & ownership
 
-- [ ] **Postgres migration (Neon)** — this is the spine of Phase 0, not an optional pick. All
-`?`-placeholder SQLite syntax across `add_expense.py`, `ledger_queries.py`, `main.py`,
-`sample_data.py` needs converting to Postgres-compatible parameterization.
-- [ ] Fix all "Known issues" above as part of the migration, not after it
-- [ ] Connection pooling (e.g. SQLAlchemy engine with pooling, or a psycopg2 pool)
-- [ ] Webhook idempotency — dedupe on Telegram `update_id`
-- [ ] Structured logging to replace silent `except`/`print` error handling
-- [ ] Migrations tooling — **Alembic** (schema will keep changing: staging table next phase,
+- [x] **Postgres migration (Neon)** — code-complete 2026-08-01 (SQLAlchemy Core, all SQL converted
+to `text()` with named binds). **Cutover to the real Neon instance still pending** — see
+"Current status".
+- [x] Fix the DB-layer "Known issues" as part of the migration, not after it
+- [x] Connection pooling — SQLAlchemy `QueuePool`
+- [x] Migrations tooling — **Alembic** (schema will keep changing: staging table next phase,
 splits tables after that)
+- [ ] Webhook idempotency — persist the `update_id` dedupe in Postgres instead of process memory
+- [ ] Structured logging to replace silent `except`/`print` error handling
 - [ ] Wire `needs_review` so it actually gates bot behavior (prerequisite for the
 human-in-the-loop framing to hold up under questioning)
 - [ ] Scheduled logical backup: `pg_dump` → GCS free tier, rolling retention (e.g. 30 days)

@@ -11,7 +11,7 @@
 - **date**: ISO 8601 string (YYYY-MM-DD)
 - **description**: Raw bank text
 - **amount**: Positive integer (cents)
-- **transaction_currency**: ISO 3-letter code
+- **currency**: ISO 3-letter code
 - **base_amount**: Final value in SGD (Integer Cents)
 - **account_owner**: Card owner (e.g., 'Sujay', 'Wife')
 - **benefit_of**: Beneficiary (e.g., 'Sujay', 'Wife', 'Shared')
@@ -20,6 +20,8 @@
 - **transaction_type**: 'income' or 'expense'
 - **source**: Data origin
 - **reconciliation_status**: 'settled' or 'unsettled'
+- **account_desc**: Payment method / card the transaction was charged to (e.g. 'YouTrip',
+  'Cash'). Nullable — only the Telegram bot populates it today.
 - **idempotency_key**: UUID, nullable, UNIQUE. Set by the Telegram bot (one per confirm prompt,
   generated when the transaction is presented for confirmation, reused on every save attempt for
   that same prompt) so a double-tap or webhook redelivery can't insert the same transaction twice.

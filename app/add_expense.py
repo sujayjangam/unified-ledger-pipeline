@@ -2,6 +2,7 @@ import argparse
 import uuid
 from datetime import datetime, timedelta, timezone
 import sys
+from sqlalchemy import text
 from app.database import get_connection
 
 def add_expense(date_str, description, amount_dollars, category, currency="SGD", transaction_type="Expense", account_desc=None, account_owner=None, source="Manual CLI", idempotency_key=None):
@@ -19,15 +20,13 @@ def add_expense(date_str, description, amount_dollars, category, currency="SGD",
         
         # 3. DB Insertion
         transaction_id = str(uuid.uuid4())
-        conn = get_connection()
-        cursor = conn.cursor()
-        
-        # INSERT OR IGNORE: if idempotency_key is provided and already exists (a duplicate save
-        # attempt for the same confirm prompt), the UNIQUE constraint silently skips the insert
-        # instead of raising - rowcount tells us which happened. NULL idempotency_key (CLI/API
-        # callers) never collides, since SQL treats every NULL as distinct.
-        query = '''
-            INSERT OR IGNORE INTO transactions (
+
+        # ON CONFLICT DO NOTHING: if idempotency_key is provided and already exists (a duplicate
+        # save attempt for the same confirm prompt), the UNIQUE constraint silently skips the
+        # insert instead of raising - rowcount tells us which happened. NULL idempotency_key
+        # (CLI/API callers) never collides, since SQL treats every NULL as distinct.
+        query = text('''
+            INSERT INTO transactions (
                 transaction_id,
                 date,
                 description,
@@ -42,19 +41,34 @@ def add_expense(date_str, description, amount_dollars, category, currency="SGD",
                 source,
                 idempotency_key
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        '''
+            VALUES (
+                :transaction_id, :date, :description, :amount, :currency,
+                :base_amount, :category, :transaction_type, :account_desc,
+                :account_owner, :reconciliation_status, :source, :idempotency_key
+            )
+            ON CONFLICT (idempotency_key) DO NOTHING
+        ''')
 
         # Note: source is 'Manual' for this tool
-        cursor.execute(query, (
-            transaction_id, date_str, description, amount_cents, currency,
-            amount_cents, category, transaction_type, account_desc, account_owner,
-            'unsettled', source, idempotency_key
-        ))
+        with get_connection() as conn:
+            result = conn.execute(query, {
+                "transaction_id": transaction_id,
+                "date": date_str,
+                "description": description,
+                "amount": amount_cents,
+                "currency": currency,
+                "base_amount": amount_cents,
+                "category": category,
+                "transaction_type": transaction_type,
+                "account_desc": account_desc,
+                "account_owner": account_owner,
+                "reconciliation_status": 'unsettled',
+                "source": source,
+                "idempotency_key": idempotency_key,
+            })
 
-        was_duplicate = cursor.rowcount == 0
-        conn.commit()
-        conn.close()
+            was_duplicate = result.rowcount == 0
+            conn.commit()
 
         if was_duplicate:
             # Already saved by a prior/concurrent call with the same idempotency_key - the

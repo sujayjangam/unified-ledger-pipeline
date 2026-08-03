@@ -23,7 +23,7 @@ try:
     ACCOUNT_OWNERS = json.loads(os.getenv("ACCOUNT_OWNERS", "{}"))
 except json.JSONDecodeError:
     print("❌ Error: Invalid JSON format in .env file.")
-    TG_USERS, ACCOUNT_OWNERS = {}, {}
+    ALLOWED_TG_IDS, ACCOUNT_OWNERS = {}, {}
 
 
 # NOW it is safe to import  custom services because the environment is ready (load_dotenv() already ran)

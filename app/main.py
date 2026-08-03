@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 import uuid
+from sqlalchemy import text
 from app.database import get_connection
 
 app = FastAPI()
@@ -22,15 +23,12 @@ def read_root():
 @app.get("/transactions")
 def get_transactions():
     """Fetches all transactions including the owner."""
-    conn = get_connection()
-    cursor = conn.cursor()
-    
     # for now we select only the following fields from our database
-    query = "SELECT date, description, amount, category, account_owner FROM transactions"
-    cursor.execute(query)
-    rows = cursor.fetchall()
-    conn.close()
-    
+    query = text("SELECT date, description, amount, category, account_owner FROM transactions")
+    with get_connection() as conn:
+        rows = conn.execute(query).fetchall()
+
+
     # Mapping the DB data to API response
     return [
         {
@@ -49,26 +47,32 @@ def add_transaction(item: Transaction):
         amount_cents = int(round(item.amount * 100))
         transaction_id = str(uuid.uuid4())
         
-        conn = get_connection()
-        cursor = conn.cursor()
-        
         # 🏗️ The SQL query now handles the owner field
-        query = '''
+        query = text('''
             INSERT INTO transactions (
-                transaction_id, date, description, amount, 
+                transaction_id, date, description, amount,
                 base_amount, category, account_owner, reconciliation_status, source
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        '''
-        
-        cursor.execute(query, (
-            transaction_id, item.date, item.description, 
-            amount_cents, amount_cents, item.category, 
-            item.account_owner, 'unsettled', 'API'
-        ))
-        
-        conn.commit()
-        conn.close()
+            VALUES (
+                :transaction_id, :date, :description, :amount,
+                :base_amount, :category, :account_owner, :reconciliation_status, :source
+            )
+        ''')
+
+        with get_connection() as conn:
+            conn.execute(query, {
+                "transaction_id": transaction_id,
+                "date": item.date,
+                "description": item.description,
+                "amount": amount_cents,
+                "base_amount": amount_cents,
+                "category": item.category,
+                "account_owner": item.account_owner,
+                "reconciliation_status": 'unsettled',
+                "source": 'API',
+            })
+            conn.commit()
+
         return {"status": "success", "transaction_id": transaction_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

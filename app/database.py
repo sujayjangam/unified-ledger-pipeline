@@ -1,43 +1,48 @@
-import sqlite3
 import os
 
-# Define the path to our database file
-DB_PATH = os.path.join('data', 'ledger.db')
+from dotenv import load_dotenv
+from sqlalchemy import create_engine
+
+# Loaded here rather than relying on callers: view_ledger/sample_data/main.py never call
+# load_dotenv() themselves, and they all need DATABASE_URL to reach the database.
+load_dotenv()
+
+# The engine is created lazily so that merely importing this module (e.g. `--help` on the CLI,
+# or Alembic loading app code) doesn't open a connection pool or hard-fail on a missing .env.
+_engine = None
+
+
+def get_engine():
+    """Returns the process-wide SQLAlchemy engine, creating it on first use."""
+    global _engine
+    if _engine is None:
+        database_url = os.getenv("DATABASE_URL")
+        if not database_url:
+            raise RuntimeError(
+                "DATABASE_URL is not set. Add it to your .env file "
+                "(see .env.example for the expected format)."
+            )
+        _engine = create_engine(
+            database_url,
+            # Small pool: this is a two-person household ledger, not a high-traffic service.
+            pool_size=5,
+            max_overflow=2,
+            # Neon's free tier suspends the compute after ~5 minutes idle. Without pre_ping the
+            # first query after a suspend hits a dead socket instead of transparently reconnecting.
+            pool_pre_ping=True,
+            pool_recycle=300,
+        )
+    return _engine
+
 
 def get_connection():
-    """Establishing a reusable connection to the database."""
-    return sqlite3.connect(DB_PATH)
+    """
+    Returns a pooled connection. Use as a context manager so it is always returned to the pool:
 
-def initialize_db():
-    # 1. Connect to the database (it creates the file if it doesn't exist)
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+        with get_connection() as conn:
+            conn.execute(...)
+            conn.commit()   # writes only; SQLAlchemy does not autocommit
 
-    # 2. Create the table based on SCHEMA.md v1.3
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS transactions (
-            transaction_id TEXT PRIMARY KEY,
-            date TEXT NOT NULL,
-            description TEXT,
-            amount INTEGER NOT NULL,
-            currency TEXT,
-            base_amount INTEGER NOT NULL,
-            account_owner TEXT,
-            benefit_of TEXT,
-            split_ratio REAL,
-            category TEXT,
-            transaction_type TEXT,
-            source TEXT,
-            reconciliation_status TEXT,
-            idempotency_key TEXT UNIQUE
-        )
-    ''')
-
-    # 3. Save changes and close
-    conn.commit()
-    conn.close()
-    print(f"✅ Database initialized at {DB_PATH}")
-
-# without this block, everytime this file is imported, initialize_db() will be run, resetting the data in the database
-if __name__ == "__main__":
-    initialize_db()
+    Exiting the block rolls back any uncommitted transaction and releases the connection.
+    """
+    return get_engine().connect()
