@@ -1,11 +1,15 @@
 # Python environment
 ledger-env/
+.venv/
+venv/
 __pycache__/
 *.pyc
 
 # Local Data (Crucial for privacy!)
 data/ledger.db
 *.db
+# Pre-Postgres-migration SQLite snapshot, kept locally as a rollback safety net
+data/ledger.db.pre-migration-backup
 
 # API key for telegram and other env variables
 .env
