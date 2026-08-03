@@ -31,42 +31,99 @@ doesn't map to anything in the actual system. Use, and refine once Phase 1/2 lan
 
 ## Current status
 
-**Phase:** Phase 0 — Postgres migration is **live and verified** as of 2026-08-01. One
-end-to-end bot check outstanding before the cutover is closed out.
-**Next action:** Run `python -m app.bot_polling` and put one real voice note through the confirm
-flow. If that saves correctly, the migration is done and the next Phase 0 item can start.
+**Phase:** Phase 0 — Postgres migration code merged into `main` (PR #6, 2026-08-03). Turns out
+merging wasn't the finish line: Cloud Run auto-deployed the new code immediately, but the live
+service is missing the `DATABASE_URL` secret, so the bot cannot actually save transactions right
+now. That's the one blocker left.
+**Next action:** Create a `DATABASE_URL` secret in Secret Manager (same pattern as the existing
+`OPENAI_API_KEY`/`TELEGRAM_BOT_TOKEN` secrets), attach it to the `unified-ledger-bot` Cloud Run
+service, then work through the verification checklist below before trusting it with a real entry.
+Picking this up 2026-08-04.
 
-The ledger now runs on Neon Postgres. `app/database.py` is a pooled SQLAlchemy Core engine reading
+**The Cloud Run gap (found 2026-08-03):** This GCP project has **built-in continuous deployment**
+from this GitHub repo already configured — a GCP-side Cloud Build trigger, invisible to a repo scan
+(no `cloudbuild.yaml`/`.github/workflows` needed). Confirmed via `gcloud run revisions list`:
+revision `unified-ledger-bot-00029-dkd` deployed automatically at 2026-08-03 11:19:29 UTC, image
+tagged with the exact PR #6 merge commit (`acfa45396eb19fee1efc5b2c0427a4e49fdbf41d`), deployed by
+the Cloud Build service account, not a human running `gcloud`. So the Postgres code is **already
+live in production** — "redeploy" was never actually the pending step, contrary to what this file
+said before today.
+
+But `gcloud run services describe unified-ledger-bot --region asia-southeast1` shows the live
+service's env vars are only `ENVIRONMENT`, `WEBHOOK_URL`, `OPENAI_API_KEY`, `TELEGRAM_BOT_TOKEN`,
+`ALLOWED_TG_IDS`, `ACCOUNT_OWNERS` — **no `DATABASE_URL`**. `app/database.py::get_engine()` raises
+`RuntimeError` without it. Since `WEBHOOK_URL` is set, the Telegram webhook is actively registered,
+so right now a real voice note would transcribe and ask for confirmation normally, then **silently
+fail to save** when Confirm is tapped (swallowed by one of the broad `except`/`print()` blocks
+already flagged under "Known issues") — no error shown to the user. Treat the bot as unsafe for
+real logging until the secret is attached and verified.
+
+**Verification checklist for the fix (do these yourself, don't just take a report on faith):**
+1. GCP Console → Cloud Run → Revisions: confirm a new revision was created after the secret is
+   attached, with a fresh timestamp.
+2. Send one real voice note through the actual bot (the Cloud Run webhook, not local polling) and
+   tap Confirm.
+3. Open Neon's own SQL console directly (not through the bot) and run
+   `SELECT * FROM transactions ORDER BY id DESC LIMIT 5;` — confirm the row landed with the right
+   amount/date.
+4. Force a restart (deploy a no-op revision, or let it scale to zero on idle) and re-run that same
+   query — the row surviving a restart is the actual fix for issue #2's original bug, not just "a
+   row appeared once."
+5. Check Cloud Run logs for a clean startup (no `RuntimeError`/`NameError` during boot).
+
+The ledger runs on Neon Postgres. `app/database.py` is a pooled SQLAlchemy Core engine reading
 `DATABASE_URL`, Alembic owns the schema (`alembic/versions/0001_create_transactions_table.py`
 records the true live schema including the previously-undocumented `account_desc`), and every
-query is `text()` with named binds.
+query is `text()` with named binds. All 21 rows migrated with checksums matching the
+pre-migration SQLite file exactly (`SUM(amount)` = 100087720, dates 2023-10-01 → 2026-05-18),
+verified locally via `python -m app.bot_polling` before merging.
 
-All 21 rows migrated with checksums matching the pre-migration SQLite file exactly
-(`SUM(amount)` = 100087720, dates 2023-10-01 → 2026-05-18). Verified against real Postgres:
-`alembic current` at head, `view_ledger` and `GET /transactions` both return all 21 rows, the
-`ON CONFLICT` dedupe reports `rowcount=0` on a repeated `idempotency_key` while NULL keys still
-don't collide (tested inside a rolled-back transaction, so the ledger was never touched), and
-malformed `ALLOWED_TG_IDS` JSON now falls back to an empty allowlist instead of raising
-`NameError`.
+Still to do, unverified from this machine (no `data/` directory present here to check either way):
+rename `data/ledger.db` → `data/ledger.db.pre-migration-backup` (gitignored) once confirmed which
+machine still has the pre-migration file.
 
-Still to do:
-1. `python -m app.bot_polling` — exercise `/recent /today /week /month /cat_today` and send one
-   real voice note through the confirm-button save path. This is the only remaining path that
-   performs a *committed* write end-to-end.
-2. Then rename `data/ledger.db` → `data/ledger.db.pre-migration-backup` (already gitignored).
-   Don't delete it.
+**Also done this session (2026-08-03):**
+- PR #5 (`chore/untrack-venv-and-db`) merged into `main` first, via a real merge commit (not
+  squash) — `postgres-migration` was built directly on top of that commit, so merging it first
+  collapsed PR #6's diff down to just the Postgres-related commits, making it reviewable.
+- **Found and fixed a real PII leak**: `.env.example` on the `postgres-migration` branch had real
+  names (first name, "Wife") and real bank/card names (OCBC 90N, DBS Altitude, YouTrip) instead of
+  placeholders, already pushed to this **public** repo. Rewrote the branch's git history
+  (cherry-pick + amend onto `main`, not `rebase -i`) so the real values don't appear in any commit
+  reachable from `main`, force-pushed, then merged. A local-only backup branch
+  (`postgres-migration-backup-before-rewrite`) still holds the old history if ever needed — never
+  pushed anywhere.
+- Filed sub-issue #4 ("Redeploy Cloud Run with the Postgres-backed image") under issue #2 via
+  GitHub's native sub-issues (`gh issue create --parent 2`). Slightly misnamed in hindsight — see
+  "Cloud Run gap" above, the deploy already happens automatically — but it's still the right place
+  to track finishing the cutover.
+- `gcloud` CLI installed locally (`winget install --id Google.CloudSDK`, v578.0.0), authenticated
+  as `jayyjangam117@gmail.com`, active project `project-25d90722-14a9-4eca-8a0`. Existing service:
+  `unified-ledger-bot` in `asia-southeast1`.
+- Fixed a recurring environment quirk permanently, not just for this project: bare `python`/
+  `python3` was hitting a Windows **App Execution Alias** stub pointing at the Microsoft Store
+  (this broke `gcloud auth login` too — it's a machine-wide issue, not specific to this repo).
+  Disabled via Settings → Apps → Advanced app settings → App execution aliases. Also set
+  `CLOUDSDK_PYTHON` (persistent user env var) to the Cloud SDK's bundled Python so `gcloud` doesn't
+  depend on the system Python at all going forward.
 
 Environment note for future sessions: `.venv/` is a **micromamba conda env, not a virtualenv**
 (created `micromamba create -p ./.venv python=3.11 pip -c conda-forge`). Run
-`micromamba activate .\.venv` from the repo root first; bare `python` on PATH is a Microsoft Store
-alias stub and will not work.
+`micromamba activate .\.venv` from the repo root first. (The Microsoft Store `python` alias issue
+above is now fixed machine-wide, so this should be less confusing going forward — activation is
+still required to get *this project's* interpreter/deps, that part doesn't change.)
 
 [Issue #1](https://github.com/sujayjangam/unified-ledger-pipeline/issues/1) (Telegram double-insert
-bug) is fixed and closed as of 2026-07-30. Issue #2 (Neon Postgres migration) is in progress.
+bug) is fixed and closed as of 2026-07-30.
+[Issue #2](https://github.com/sujayjangam/unified-ledger-pipeline/issues/2) (Neon Postgres
+migration) is in progress — code is merged and live, sub-issue
+[#4](https://github.com/sujayjangam/unified-ledger-pipeline/issues/4) tracks closing the remaining
+`DATABASE_URL` gap above.
 
-Also cleaned up this session: `.venv/` (6,427 files, ~30MB) and `data/ledger.db` were both tracked
-in git and are now untracked — **but they remain in git history**, which is a deliberate open
-decision, not an oversight. Purging them needs a history rewrite and force-push.
+`.venv/` (6,427 files, ~30MB) and `data/ledger.db` were untracked from git on 2026-08-01 but
+**remain in git history** on `main` — a deliberate open decision, not an oversight. Purging them
+needs a history rewrite and force-push, same technique used for the `.env.example` PII fix above,
+just deferred for now since nothing in that history is as sensitive as real names/bank data.
 
 ## Constraints (agreed, don't relitigate without a reason)
 
@@ -148,16 +205,18 @@ throwaway; it should be turned into real pytest coverage.
 - A stray empty `ledger.db` sits at the repo root (untracked, harmless).
 - `.venv/` and `data/ledger.db` are untracked as of 2026-08-01 but **still present in git
 history** — purging needs a rewrite + force-push, deliberately deferred.
-- Cloud Run still runs against the old SQLite code path until the deployment session lands; until
-then production transactions are still lost on restart/redeploy.
+- Cloud Run auto-deployed the Postgres-backed code on 2026-08-03 (see "Current status"), but the
+service is missing the `DATABASE_URL` secret, so transactions currently fail silently on save.
+Fixing this is tomorrow's first task.
 
 ## Plan
 
 ### Phase 0 — Foundation & ownership
 
-- [x] **Postgres migration (Neon)** — code-complete 2026-08-01 (SQLAlchemy Core, all SQL converted
-to `text()` with named binds). **Cutover to the real Neon instance still pending** — see
-"Current status".
+- [x] **Postgres migration (Neon)** — code-complete 2026-08-01, merged into `main` 2026-08-03
+(SQLAlchemy Core, all SQL converted to `text()` with named binds). **Live on Cloud Run but not yet
+functional there** — missing `DATABASE_URL` secret, see "Current status" and issue
+[#4](https://github.com/sujayjangam/unified-ledger-pipeline/issues/4).
 - [x] Fix the DB-layer "Known issues" as part of the migration, not after it
 - [x] Connection pooling — SQLAlchemy `QueuePool`
 - [x] Migrations tooling — **Alembic** (schema will keep changing: staging table next phase,
