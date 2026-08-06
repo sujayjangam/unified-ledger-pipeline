@@ -127,3 +127,23 @@ transports:
 Independent of the bot — a minimal FastAPI CRUD surface (`GET/POST /transactions`) using its own
 Pydantic `Transaction` model. Defaults `account_owner` to `"Shared"` when unspecified, specifically
 to avoid leaking a real owner's name when the caller doesn't provide one.
+
+## GitHub issue conventions
+
+- **Parent issues are problem statements, not task descriptions.** Describe the user-facing
+symptom/impact ("no way to tell which transaction occurred first"), not the fix ("add a
+created_at column"). Sub-issues (`gh issue create --parent <#>`) break the fix into independently
+completable, independently verifiable steps. See #2 (parent) → #4 (sub-issue), and #9 (parent) →
+#10-#14 (sub-issues) as the reference pattern.
+- **Default assignee: `sujayjangam`, always** (`gh issue create --assignee sujayjangam ...`).
+Every issue in this repo should be assigned by default — don't wait to be asked per issue.
+- **Ask before filing.** Don't create a GitHub issue proactively without the user asking for it in
+the current conversation — offer to file one, or note it as a candidate, but wait for a go-ahead.
+- **Supersede, don't abandon.** If an issue gets re-scoped into a new one, close the old one with
+`gh issue close <old> --duplicate-of <new>` plus a comment explaining why, rather than leaving both
+open or silently dropping one (see #8 → closed as duplicate of #9).
+- **`ROADMAP.md` should not duplicate issue bodies.** Once something has a filed issue, this file
+should link the issue number with a one-line status, not restate its repro steps/sub-tasks/
+verification criteria — those live in the issue. `ROADMAP.md` stays the narrative/phase-level
+layer: what phase we're in, what's currently blocking, and pointers to the issues that track the
+detail.

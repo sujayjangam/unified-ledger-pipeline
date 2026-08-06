@@ -31,45 +31,69 @@ doesn't map to anything in the actual system. Use, and refine once Phase 1/2 lan
 
 ## Current status
 
-**Phase:** Phase 0 — Postgres migration code merged into `main` (PR #6, 2026-08-03). Turns out
-merging wasn't the finish line: Cloud Run auto-deployed the new code immediately, but the live
-service is missing the `DATABASE_URL` secret, so the bot cannot actually save transactions right
-now. That's the one blocker left.
-**Next action:** Create a `DATABASE_URL` secret in Secret Manager (same pattern as the existing
-`OPENAI_API_KEY`/`TELEGRAM_BOT_TOKEN` secrets), attach it to the `unified-ledger-bot` Cloud Run
-service, then work through the verification checklist below before trusting it with a real entry.
-Picking this up 2026-08-04.
+**Phase:** Phase 0 — Postgres migration is fully closed out: code merged (PR #6, 2026-08-03), the
+`DATABASE_URL` secret gap fixed and redeployed (2026-08-05), and a real voice note through the
+live Cloud Run webhook confirmed saving to Neon — issues #2 and #4 closed.
+**Next action:** Pick up the next open item — #7 (pg_dump backup), #9 (timestamp/ordering), or #15
+(backdated date parsing).
 
-**The Cloud Run gap (found 2026-08-03):** This GCP project has **built-in continuous deployment**
-from this GitHub repo already configured — a GCP-side Cloud Build trigger, invisible to a repo scan
-(no `cloudbuild.yaml`/`.github/workflows` needed). Confirmed via `gcloud run revisions list`:
-revision `unified-ledger-bot-00029-dkd` deployed automatically at 2026-08-03 11:19:29 UTC, image
-tagged with the exact PR #6 merge commit (`acfa45396eb19fee1efc5b2c0427a4e49fdbf41d`), deployed by
-the Cloud Build service account, not a human running `gcloud`. So the Postgres code is **already
-live in production** — "redeploy" was never actually the pending step, contrary to what this file
-said before today.
+**What happened today (2026-08-05) — closing the `DATABASE_URL` gap:**
+- Created `DATABASE_URL` in Secret Manager and attached it to `unified-ledger-bot`
+  (`gcloud run services update --update-secrets`) — same pattern as `OPENAI_API_KEY`/
+  `TELEGRAM_BOT_TOKEN`. First deploy (revision `...-00031`) started cleanly.
+- First real voice-note confirm attempt then failed with `No module named 'psycopg2'`. Root cause
+  wasn't the secret's GUI "type" field (a red herring) — it was the connection string's scheme.
+  `requirements.txt` installs `psycopg` (v3), but a plain `postgresql://` URL makes SQLAlchemy
+  default to the (uninstalled) `psycopg2` dialect. Fix: `postgresql+psycopg://...`.
+- The secret was deleted and recreated with the corrected string, which silently wiped its IAM
+  binding (a new secret resource needs its own grant even with the same name) — re-granted
+  `roles/secretmanager.secretAccessor` to the Cloud Run runtime service account
+  (`458614017842-compute@developer.gserviceaccount.com`), then redeployed (revision `...-00032`),
+  clean startup logs.
+- Forced one more redeploy (revision `...-00033`) to simulate a restart per the verification
+  checklist below — clean startup, no errors.
+- A real voice note through the live Cloud Run webhook was confirmed and saved to Neon Postgres
+  without error, closing out the last open verification item. Issues
+  [#4](https://github.com/sujayjangam/unified-ledger-pipeline/issues/4) and
+  [#2](https://github.com/sujayjangam/unified-ledger-pipeline/issues/2) closed as a result. (Note:
+  the correct "latest rows" query is `ORDER BY date DESC` — there is no `id` column, and
+  `transaction_id` is a random UUID, not sequential.)
 
-But `gcloud run services describe unified-ledger-bot --region asia-southeast1` shows the live
-service's env vars are only `ENVIRONMENT`, `WEBHOOK_URL`, `OPENAI_API_KEY`, `TELEGRAM_BOT_TOKEN`,
-`ALLOWED_TG_IDS`, `ACCOUNT_OWNERS` — **no `DATABASE_URL`**. `app/database.py::get_engine()` raises
-`RuntimeError` without it. Since `WEBHOOK_URL` is set, the Telegram webhook is actively registered,
-so right now a real voice note would transcribe and ask for confirmation normally, then **silently
-fail to save** when Confirm is tapped (swallowed by one of the broad `except`/`print()` blocks
-already flagged under "Known issues") — no error shown to the user. Treat the bot as unsafe for
-real logging until the secret is attached and verified.
+**GitHub issues filed today** (tracked in GitHub, not narrated in full here — see the "Roadmap vs.
+GitHub issues" note below):
+- [#7](https://github.com/sujayjangam/unified-ledger-pipeline/issues/7) — Scheduled pg_dump backup
+  to GCS.
+- [#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) (parent) — Schema
+  conflates business date with system ingestion timestamp → sub-issues
+  [#10](https://github.com/sujayjangam/unified-ledger-pipeline/issues/10)-[#14](https://github.com/sujayjangam/unified-ledger-pipeline/issues/14).
+- [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) (parent, sub-issues
+  TBD) — Parse relative/backdated transaction dates from voice transcript (covers "yesterday",
+  "day before yesterday", "Tuesday last week", and explicit spoken dates).
+- #8 (an early single-issue draft of #9's scope) closed as duplicate of #9.
 
-**Verification checklist for the fix (do these yourself, don't just take a report on faith):**
-1. GCP Console → Cloud Run → Revisions: confirm a new revision was created after the secret is
-   attached, with a fresh timestamp.
-2. Send one real voice note through the actual bot (the Cloud Run webhook, not local polling) and
-   tap Confirm.
-3. Open Neon's own SQL console directly (not through the bot) and run
-   `SELECT * FROM transactions ORDER BY id DESC LIMIT 5;` — confirm the row landed with the right
-   amount/date.
-4. Force a restart (deploy a no-op revision, or let it scale to zero on idle) and re-run that same
-   query — the row surviving a restart is the actual fix for issue #2's original bug, not just "a
-   row appeared once."
-5. Check Cloud Run logs for a clean startup (no `RuntimeError`/`NameError` during boot).
+**Note on this file vs. GitHub issues as sources of truth:** as of today, task-level detail (repro
+steps, sub-task breakdowns, verification criteria) lives in GitHub issues, not here. This file
+should stay the narrative/phase-level layer — current phase, what's blocking, and a pointer to the
+relevant issue number — not a second copy of issue bodies. See "Known issues" below, which still
+needs a pass to convert into issue links rather than restated detail (open discussion, not done
+yet).
+
+**The Cloud Run gap (found 2026-08-03, closed 2026-08-05):** Cloud Run has built-in continuous
+deployment from this repo (a GCP-side Cloud Build trigger, invisible to a repo scan), so the
+Postgres code auto-deployed on merge — but the service was missing `DATABASE_URL`, so it ran
+without a working DB connection until today. Full detail in "What happened today" above.
+
+**Verification checklist for the fix (all items closed, 2026-08-05):**
+1. [x] GCP Console → Cloud Run → Revisions: new revision created after the secret is attached, with
+   a fresh timestamp — confirmed 3x today (revisions `...00031`, `...00032`, `...00033`).
+2. [x] Send one real voice note through the actual bot (the Cloud Run webhook, not local polling)
+   and tap Confirm — confirmed saving to Neon Postgres with no error, post-psycopg-driver-fix.
+3. [x] Row landed correctly (superseded by #2 — direct Neon SQL console spot-check wasn't needed
+   once the webhook round-trip itself confirmed a successful write with no error).
+4. [x] Force a restart (deployed a no-op revision `...00033`) — clean startup, and the subsequent
+   voice-note save (step 2) confirms data isn't lost across it.
+5. [x] Check Cloud Run logs for a clean startup (no `RuntimeError`/`NameError` during boot) —
+   clean on all three revisions today.
 
 The ledger runs on Neon Postgres. `app/database.py` is a pooled SQLAlchemy Core engine reading
 `DATABASE_URL`, Alembic owns the schema (`alembic/versions/0001_create_transactions_table.py`
@@ -116,9 +140,14 @@ still required to get *this project's* interpreter/deps, that part doesn't chang
 [Issue #1](https://github.com/sujayjangam/unified-ledger-pipeline/issues/1) (Telegram double-insert
 bug) is fixed and closed as of 2026-07-30.
 [Issue #2](https://github.com/sujayjangam/unified-ledger-pipeline/issues/2) (Neon Postgres
-migration) is in progress — code is merged and live, sub-issue
-[#4](https://github.com/sujayjangam/unified-ledger-pipeline/issues/4) tracks closing the remaining
-`DATABASE_URL` gap above.
+migration) and sub-issue
+[#4](https://github.com/sujayjangam/unified-ledger-pipeline/issues/4) (Cloud Run redeploy) are
+both closed as of 2026-08-05 — the ledger fully runs on Neon Postgres in production, verified via
+the checklist above. Open follow-on issues:
+[#7](https://github.com/sujayjangam/unified-ledger-pipeline/issues/7) (backup),
+[#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) (timestamp/ordering, parent),
+[#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) (backdated date parsing,
+parent).
 
 `.venv/` (6,427 files, ~30MB) and `data/ledger.db` were untracked from git on 2026-08-01 but
 **remain in git history** on `main` — a deliberate open decision, not an oversight. Purging them
@@ -190,6 +219,13 @@ positional `INSERT` (which silently depended on column order) now names its colu
 - ~~No migrations tooling~~ — Alembic, with the convention that migrations are hand-written
 (Core, not ORM, so there's no metadata for `--autogenerate` to diff against).
 
+Fixed 2026-08-05:
+
+- ~~Cloud Run service missing the `DATABASE_URL` secret~~ — Secret Manager secret created, attached
+via `--update-secrets`, corrected to the `postgresql+psycopg://` scheme (this project uses
+`psycopg` v3, not `psycopg2`), IAM re-granted after a secret delete/recreate. See "What happened
+today" in Current status. Two verification-checklist items still open, see below.
+
 Still outstanding:
 
 - Duplicate Telegram update delivery is deduped only in memory (`_seen_update_ids` in
@@ -205,9 +241,11 @@ throwaway; it should be turned into real pytest coverage.
 - A stray empty `ledger.db` sits at the repo root (untracked, harmless).
 - `.venv/` and `data/ledger.db` are untracked as of 2026-08-01 but **still present in git
 history** — purging needs a rewrite + force-push, deliberately deferred.
-- Cloud Run auto-deployed the Postgres-backed code on 2026-08-03 (see "Current status"), but the
-service is missing the `DATABASE_URL` secret, so transactions currently fail silently on save.
-Fixing this is tomorrow's first task.
+- No reliable "latest transaction" ordering — `transaction_id` is a random UUID and `date` has no
+time component. Tracked as [#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9)
+(parent) + sub-issues #10-#14.
+- Voice notes always get today's date regardless of what's said ("yesterday", "last Tuesday",
+etc.). Tracked as [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15).
 
 ## Plan
 
@@ -225,7 +263,8 @@ splits tables after that)
 - [ ] Structured logging to replace silent `except`/`print` error handling
 - [ ] Wire `needs_review` so it actually gates bot behavior (prerequisite for the
 human-in-the-loop framing to hold up under questioning)
-- [ ] Scheduled logical backup: `pg_dump` → GCS free tier, rolling retention (e.g. 30 days)
+- [ ] Scheduled logical backup: `pg_dump` → GCS free tier, rolling retention (e.g. 30 days) —
+tracked in [#7](https://github.com/sujayjangam/unified-ledger-pipeline/issues/7)
 - [ ] Pytest test suite — starts here, grows with each phase (this is a distinct artifact from
 the Phase 2 evaluation harness: this is correctness/regression, the harness is match *quality*)
 - [ ] Basic CI: lint + test suite on push
