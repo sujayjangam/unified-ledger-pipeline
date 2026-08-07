@@ -14,5 +14,9 @@ data/ledger.db.pre-migration-backup
 # API key for telegram and other env variables
 .env
 
+# Private job-search/portfolio notes, not part of the public project docs
+claude-jobhunt-context.md
+.claude/agents/doc-checker.md
+
 # OS files
 .DS_Store

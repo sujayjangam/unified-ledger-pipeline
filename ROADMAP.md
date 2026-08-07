@@ -6,19 +6,11 @@ This document is the single source of truth for where this project stands and wh
 Read "Current status" first when resuming work — don't re-derive it by reading the whole repo.
 This file supersedes any prior version of ROADMAP.md.
 
-## Why this project exists (two goals, one codebase)
+Job-search/portfolio framing (why this project matters beyond the household, build-in-public plan,
+profile prep) lives in `claude-jobhunt-context.md` (private, gitignored) — this file stays scoped
+to the engineering plan.
 
-1. A live financial tool: my wife and I actually use this to log and manage household expenses,
-and intend to keep using it for years. This is not a demo that gets abandoned after the job hunt —
-reliability and correctness matter as much as portfolio signal, indefinitely.
-2. A portfolio piece to land a GenAI/ML/Data Engineering role in Perth's enterprise market
-($120k+, e.g. BHP/Rio Tinto tier). It needs to demonstrate real depth — not "just data
-extraction" — and skills that don't evaporate as AI tooling improves.
-
-Both goals point the same direction, so priorities are set by genuine usefulness first — that
-naturally produces the stronger interview story too.
-
-## About (for README / LinkedIn / GitHub description)
+## About blurb (draft — move into README.md once Phase 1/2 ship)
 
 Old description ("A local-first ETL system... sensor-fusion logic") is retired — it's inaccurate
 (the data is not local, it's Neon Postgres) and uses borrowed jargon from an unrelated domain that
@@ -156,15 +148,16 @@ just deferred for now since nothing in that history is as sensitive as real name
 
 ## Constraints (agreed, don't relitigate without a reason)
 
-- Target: GenAI/ML/Data Engineering in Perth, open to any of the three — explicitly not a project
-that reads as "just data extraction."
-- Timeline: ~5-10 hrs/week. Two horizons, not one deadline (see "Two horizons" below).
+- Timeline: ~5-10 hrs/week, ongoing — the project runs indefinitely as live household
+infrastructure, so no fixed external deadline drives phase order.
 - Background: SQL + a Python bootcamp finished ~3 months ago, no formal CS/DS training.
 Comfortable with Git/GitHub (branches, PRs, CI) and basic ML libraries (scikit-learn, pandas).
 Much of the current codebase was written with AI assistance — ownership is solid on the simple
 parts, weaker on async/await, Pydantic schemas, and FastAPI's `lifespan` handling. Close that gap
 deliberately in Phase 0, not by skipping the code.
 - This is live infrastructure for two real users, not a demo.
+- Target: GenAI/ML/Data Engineering. (Role/market specifics live in
+`claude-jobhunt-context.md`.)
 - Real pain points, in priority order: (1) reconciling voice-logged entries against real bank/card
 statements, (2) household expense splitting, (3) budgeting & visibility. FX conversion is *not* a
 priority — statements already show converted rates.
@@ -177,7 +170,7 @@ only on a *unique* candidate hit; anything ambiguous (0 or 2+ candidates) routes
 `needs_review` rather than guessing. Revisit this rule once real-world testing surfaces edge cases.
 - PDF parsing strategy: rule-based extraction per bank format first (layouts are fairly
 consistent within a bank); LLM-assisted extraction only as a fallback for lines the rules can't
-parse. Cheaper, and a stronger interview story than "always call the LLM."
+parse. Cheaper than always calling the LLM.
 - Budget: infra stays on free tiers (GCP Cloud Run, Neon Postgres free tier, GCS free tier). A
 small, usage-based OpenAI spend is acceptable (already paying for voice-to-text; PDF fallback
 extraction is the same category of cost) — explore free/local extraction first, LLM fallback
@@ -188,20 +181,12 @@ issues. Do not treat it as a backup. A scheduled logical backup (`pg_dump` → G
 required Phase 0/1 deliverable, not optional, given the years-long intended lifetime of this data.
 - Reliability is in scope now, not deferred: automated backups, structured logging, basic CI, a
 pytest test suite, and error alerting.
-- Packaging: rewrite `README.md` as a case study with an architecture diagram. Build-in-public
-content runs continuously from Phase 0 onward (see "Build-in-public track" below), not bolted on
-at the end.
-
-## Two horizons
-
-Design backward from the full target architecture — don't bolt features on incrementally — but
-track two different deadlines against it:
-
-- **v1 / interview-ready (Phases 0-2):** foundation, reconciliation engine, evaluation harness.
-This is the differentiated technical story and should be solid before applications start.
-- **Ongoing (Phases 3+):** household splitting, budgeting/visibility, packaging. Real, committed,
-not cut — this is because the project keeps running as live household infrastructure regardless
-of the job search timeline. It just doesn't gate when applications begin.
+- Packaging: rewrite `README.md` as a case study with an architecture diagram (Phase 5).
+- Phasing: design backward from the full target architecture — don't bolt features on
+incrementally. Phases 0-2 (foundation, reconciliation engine, evaluation harness) are the
+differentiated technical core; Phases 3+ (household splitting, budgeting/visibility, packaging)
+are real and committed, not cut — this keeps running as live household infrastructure
+indefinitely.
 
 ## Known issues
 
@@ -224,7 +209,23 @@ Fixed 2026-08-05:
 - ~~Cloud Run service missing the `DATABASE_URL` secret~~ — Secret Manager secret created, attached
 via `--update-secrets`, corrected to the `postgresql+psycopg://` scheme (this project uses
 `psycopg` v3, not `psycopg2`), IAM re-granted after a secret delete/recreate. See "What happened
-today" in Current status. Two verification-checklist items still open, see below.
+today" in Current status and the verification checklist below (all items closed).
+
+Fixed 2026-08-07:
+
+- ~~`README.md` currently contains accidental `requirements.txt` content, not real
+documentation~~ — rewritten with the corrected About blurb, stack, commands, and links to
+`ARCHITECTURE.md`/`docs/`/this file.
+- ~~`CLAUDE.md` described the pre-Postgres SQLite schema~~ (`data/ledger.db`, `CREATE TABLE IF NOT
+EXISTS`, the `account_desc` drift) a full migration cycle after the Neon Postgres cutover shipped
+— updated to describe the actual `app/database.py` engine + Alembic-owned schema, and added a
+`DATABASE_URL` entry to its env var list. Also added the `doc-checker` subagent
+(`.claude/agents/doc-checker.md`) to catch this class of drift going forward.
+- ~~Job-search/portfolio framing was mixed into `ROADMAP.md`~~ ("Why this project exists,"
+"Two horizons," "Build-in-public track," Perth/interview asides, plus two Phase 5 plan items —
+build-in-public wrap-up, narrative rehearsal — caught in a follow-up pass) — moved to
+`claude-jobhunt-context.md` (private, gitignored); this file now stays scoped to the engineering
+plan.
 
 Still outstanding:
 
@@ -237,7 +238,6 @@ structured logging — failures are invisible in production.
 human-in-the-loop claim doesn't hold until this actually gates bot behavior.
 - No automated test suite. The in-memory-SQLite smoke test written during the migration was
 throwaway; it should be turned into real pytest coverage.
-- `README.md` currently contains accidental `requirements.txt` content, not real documentation.
 - A stray empty `ledger.db` sits at the repo root (untracked, harmless).
 - `.venv/` and `data/ledger.db` are untracked as of 2026-08-01 but **still present in git
 history** — purging needs a rewrite + force-push, deliberately deferred.
@@ -270,9 +270,7 @@ the Phase 2 evaluation harness: this is correctness/regression, the harness is m
 - [ ] Basic CI: lint + test suite on push
 - [ ] Deliberate pass through the AI-assisted async/Pydantic/FastAPI-lifespan code — rewrite or
 annotate until it can be defended live, not just described
-- [ ] `README.md` placeholder fix (full case-study rewrite happens in Phase 5)
-- [ ] Profile readiness (see "Before Phase 0 posting begins" below) — do this in parallel, it
-gates the build-in-public track, not the engineering work
+- [x] `README.md` placeholder fix (full case-study rewrite happens in Phase 5)
 
 ### Phase 1 — Reconciliation engine
 
@@ -291,7 +289,7 @@ gates the build-in-public track, not the engineering work
 - [ ] Hand-label a golden set of real statement-line → ledger-entry matches/non-matches
 - [ ] Score the matcher: precision/recall/F1
 - [ ] Expand the pytest suite to cover matcher edge cases surfaced by the golden set
-- [ ] Document the methodology — this is the headline interview artifact
+- [ ] Document the methodology
 
 ### Phase 3 — Household splitting
 
@@ -310,35 +308,9 @@ gates the build-in-public track, not the engineering work
 - [ ] Rewrite `README.md` as a case study: problem, architecture, decisions, eval metrics, what's
 next
 - [ ] Architecture diagram
-- [ ] Consolidate the build-in-public series into a linked wrap-up post
-- [ ] Rehearse the verbal narrative
 
-## Build-in-public track (continuous, starts in Phase 0)
-
-Runs alongside every phase from the start — documented as decisions happen, not reconstructed
-afterward. Real-time "here's what went wrong and how I fixed it" reads as more credible than a
-retrospective.
-
-- **Format:** short-form posts by default (low friction, steady visibility). Full-length blog
-posts reserved for Phase 1 (PDF parsing strategy) and Phase 2 (eval methodology) — the two genuine
-differentiators worth the depth.
-- **Phase 0:** the audit-and-halt story — found N critical bugs, stopped feature work to fix
-foundations before building on top of them. Good engineering-maturity signal.
-- **Phase 1:** rule-based-first vs. LLM-fallback decision, real messy-statement examples (full blog).
-- **Phase 2:** eval methodology, precision/recall results (full blog, flagship post).
-- **Phase 3:** splitting-schema design tradeoffs.
-- **Phase 4:** budgeting/dashboard build.
-- **Phase 5:** wrap-up post linking the series, alongside the README case study.
-
-### Before Phase 0 posting begins
-
-LinkedIn, resume, and profile photo are currently outdated. Do this before the first public post,
-not in parallel with it — recruiters who click through from a post to a stale profile is a wasted
-impression.
-
-- [ ] LinkedIn photo, headline, and About section updated
-- [ ] Resume tailored to Perth DE/GenAI roles, reflecting this project once Phase 0-1 have shipped
-- [ ] GitHub profile README (if using one) reflects current focus
+(Job-search-facing Phase 5 tasks — build-in-public wrap-up, narrative rehearsal — live in
+`claude-jobhunt-context.md`.)
 
 ## How to resume a session
 

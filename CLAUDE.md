@@ -12,7 +12,7 @@ even if the roadmap lists it as next.
 
 ## What this is
 
-A household expense ledger with two ingestion paths into one SQLite database:
+A household expense ledger with two ingestion paths into one Postgres database:
 1. A Telegram bot that accepts voice notes, transcribes them (OpenAI Whisper), extracts structured
    transaction data (GPT-4o-mini + Pydantic), and asks for confirmation before saving.
 2. A small FastAPI REST API (`app/main.py`) for programmatic entry.
@@ -21,8 +21,30 @@ See `ARCHITECTURE.md` for the reasoning behind the Cloud Run / OpenAI API decisi
 `docs/system_flow.md` / `docs/voice_capture_mvp_flow.md` for the data lifecycle and bot UX flow.
 `docs/SCHEMA.md` is the canonical schema reference — read it before changing table columns.
 
-Note: `README.md` currently contains stray `requirements.txt` content (an accidental overwrite) —
-it is not a useful source of information; use this file and `ARCHITECTURE.md`/`docs/` instead.
+## Keeping the docs current
+
+`README.md`, `ROADMAP.md`, and this file (`CLAUDE.md`) drift out of sync with the code if they
+aren't actively checked, in two different directions — and both have bitten this project already:
+
+- **Staleness**: a past session left this file describing the pre-Postgres SQLite schema (`data/
+  ledger.db`, `CREATE TABLE IF NOT EXISTS`, the `account_desc` drift) for a full migration cycle
+  after the Neon Postgres cutover shipped, because nothing prompted a re-check of `CLAUDE.md`
+  itself when the DB layer changed.
+- **Aspirational drift**: a separate past session copied `ROADMAP.md`'s forward-looking "About"
+  blurb (reconciliation pipeline, eval harness) into `README.md` before that work existed.
+  Forward-looking language belongs in `ROADMAP.md` only, and moves into `README.md` once the
+  corresponding phase actually ships — never before.
+
+So: every new build, feature, or bug fix should include a check of whether `README.md`,
+`ROADMAP.md`, and `CLAUDE.md` each need a corresponding update — a new capability worth mentioning,
+a claim that's now inaccurate, a command that changed, or a description of internals (schema,
+architecture, env vars) that no longer matches the code. `README.md` specifically should only ever
+describe what is actually shipped, never planned/in-progress work.
+
+The `doc-checker` subagent (`.claude/agents/doc-checker.md`) automates the README-vs-code-vs-roadmap
+half of this check, plus scanning for job-search content leaking into `CLAUDE.md`/`ROADMAP.md` (see
+`claude-jobhunt-context.md`, gitignored, for where that content actually lives). Run it — `@doc-
+checker run the check` — before committing doc changes or when picking work back up after a gap.
 
 ## Commands
 
@@ -32,8 +54,8 @@ files, so packages rely on Python's implicit namespace packages).
 ```bash
 pip install -r requirements.txt
 
-# Initialize the DB (creates the `transactions` table at data/ledger.db if missing)
-python -m app.database
+# Initialize the DB (Alembic creates the `transactions` table in Postgres)
+alembic upgrade head
 
 # Run the Telegram bot locally (blocking long-poll loop, no ngrok/webhook needed)
 python -m app.bot_polling
@@ -51,9 +73,10 @@ python -m app.add_expense --date 2026-07-29 --desc "Lunch" --amount 12.50 --cat 
 python -m app.view_ledger
 ```
 
-There is no automated test suite. `test_queries.py` at the repo root is a one-off ad hoc DB
-migration script (it ran an `ALTER TABLE ... ADD COLUMN account_desc`), not a pytest suite —
-don't expect `pytest` to do anything meaningful here despite the filename.
+There is no automated test suite yet (tracked in `ROADMAP.md`'s Phase 0 plan). The old
+`test_queries.py` — a one-off ad hoc script that ran `ALTER TABLE ... ADD COLUMN account_desc`
+directly against the pre-Postgres SQLite file — is gone; that schema change is now codified in
+`alembic/versions/0001_create_transactions_table.py` instead.
 
 Docker (Cloud Run deployment target): `Dockerfile` installs `requirements.txt` and runs
 `uvicorn app.bot_webhook:app_fastapi --host 0.0.0.0 --port 8080`.
@@ -66,6 +89,9 @@ Docker (Cloud Run deployment target): `Dockerfile` installs `requirements.txt` a
   first entry is that person's default. Used to reverse-lookup `account_owner` from whatever
   payment method was extracted from the voice note.
 - `OPENAI_API_KEY`
+- `DATABASE_URL` — Postgres connection string (`postgresql+psycopg://...`; note the `+psycopg`
+  scheme — this project uses `psycopg` v3, a plain `postgresql://` URL makes SQLAlchemy default to
+  the uninstalled `psycopg2` dialect and fail).
 - `WEBHOOK_URL` — optional, only used by `bot_webhook.py` to register the Telegram webhook.
 - `ALLOWED_ACCOUNTS` — optional, feeds the extraction prompt's list of valid payment methods.
 
@@ -106,15 +132,20 @@ transports:
    which calls `app/add_expense.py::add_expense`.
 
 ### Storage
-- `app/database.py` owns the SQLite connection (`data/ledger.db`) and `CREATE TABLE IF NOT EXISTS`
-  for `transactions`. Money is always stored as **integer cents**, never floats, per
-  `docs/SCHEMA.md` — conversions to/from dollars happen only at the display/API boundary.
-- There is schema drift to be aware of: `add_expense.py` inserts into an `account_desc` column
-  that is **not** in `database.py`'s `CREATE TABLE` statement — it was added later via a manual
-  `ALTER TABLE` (see `test_queries.py`) run directly against the live `data/ledger.db` file rather
-  than being codified in `database.py`. If you touch the schema, update both places.
-- A second, empty `ledger.db` sits at the repo root (stray/unused) — the real database is always
-  `data/ledger.db` via `app/database.py::DB_PATH`.
+- `app/database.py` owns a lazily-created, pooled SQLAlchemy Core engine (`get_engine()` /
+  `get_connection()`) reading `DATABASE_URL`. The ledger runs on Neon Postgres; the engine is not
+  created at import time so loading this module (Alembic, `--help`, etc.) never hard-fails on a
+  missing `.env`. Money is always stored as **integer cents**, never floats, per `docs/SCHEMA.md`
+  — conversions to/from dollars happen only at the display/API boundary.
+- Alembic (`alembic/versions/`) owns the schema, not `database.py` — there is no `CREATE TABLE` in
+  application code. `0001_create_transactions_table.py` is the baseline and already includes
+  `account_desc`; the old SQLite-era schema drift (that column existing only via a manual
+  `ALTER TABLE` in the now-deleted `test_queries.py`, undocumented in `database.py`) is resolved.
+  Schema changes go through a new Alembic revision (hand-written — this project uses Core, not the
+  ORM, so there's no metadata for `--autogenerate` to diff against).
+- A stray, empty `ledger.db` SQLite file sits at the repo root (untracked, harmless leftover from
+  before the Postgres migration) — the real ledger is always the Postgres database at
+  `DATABASE_URL`.
 - `app/services/ledger_queries.py` holds the read-side aggregate queries backing the bot's
   `/recent`, `/today`, `/week`, `/month`, `/cat_today`, `/cat_week`, `/cat_month` commands. All
   currency-related aggregation is grouped by currency (multi-currency ledger, no FX conversion is
