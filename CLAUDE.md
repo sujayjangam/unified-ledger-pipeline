@@ -154,6 +154,20 @@ transports:
   it instead of `datetime.now()` so week/month cutoffs stay anchored to Singapore time regardless
   of where the process runs (e.g. UTC on Cloud Run).
 
+### Backups
+Neon's free-tier point-in-time recovery only covers the last 6 hours (capped at 1GB of changes),
+so `.github/workflows/backup.yml` runs a separate, independent backup every 6 hours: `pg_dump -Fc`
+(custom format, chosen over plain SQL for TOC-based inspection and selective/parallel restore as
+the schema grows past one table) uploaded to `gs://unified-ledger-pg-backups-458614017842/`, with
+a 30-day rolling retention enforced by a GCS Object Lifecycle rule (not application code). Auth is
+Workload Identity Federation — no long-lived GCP credential is stored in GitHub, deliberately,
+since this repo is public. This is a GitHub Actions workflow rather than a GCP-side Cloud
+Scheduler job specifically so the schedule stays versioned and reviewable in the repo, avoiding
+the kind of invisible-GCP-config blind spot that caused the `DATABASE_URL` gap (see
+`ROADMAP.md`'s "What happened today (2026-08-05)"). See `docs/BACKUP_RESTORE.md` for the restore
+procedure — a `pg_dump` backup is a full-database snapshot, not a per-transaction undo tool, and
+production is never restored into directly.
+
 ### REST API (`app/main.py`)
 Independent of the bot — a minimal FastAPI CRUD surface (`GET/POST /transactions`) using its own
 Pydantic `Transaction` model. Defaults `account_owner` to `"Shared"` when unspecified, specifically

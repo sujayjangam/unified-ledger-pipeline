@@ -23,11 +23,41 @@ doesn't map to anything in the actual system. Use, and refine once Phase 1/2 lan
 
 ## Current status
 
-**Phase:** Phase 0 — Postgres migration is fully closed out: code merged (PR #6, 2026-08-03), the
-`DATABASE_URL` secret gap fixed and redeployed (2026-08-05), and a real voice note through the
-live Cloud Run webhook confirmed saving to Neon — issues #2 and #4 closed.
-**Next action:** Pick up the next open item — #7 (pg_dump backup), #9 (timestamp/ordering), or #15
-(backdated date parsing).
+**Phase:** Phase 0 — Postgres migration is fully closed out (see 2026-08-05 below). The scheduled
+`pg_dump` → GCS backup (#7) is built and infra-verified as of 2026-08-12 (GCP setup + a manual
+workflow run confirmed an object landing in GCS); the actual restore drill that closes #7 for
+good is still pending — see "What happened today (2026-08-12)" below.
+**Next action:** Run the Neon-branch restore drill to close out #7, then merge the backup PR. After
+that, pick up #9 (timestamp/ordering) or #15 (backdated date parsing).
+
+**What happened today (2026-08-12) — building the scheduled backup (#7):**
+- Chose GitHub Actions (scheduled `cron`, every 6 hours) over Cloud Scheduler + Cloud Run Job,
+  specifically because the repo is public and this project already had one incident from
+  invisible GCP-side config (the `DATABASE_URL` secret gap below) — a GCP-side-only backup job
+  would repeat that blind spot. GitHub Actions keeps the schedule versioned and reviewable in the
+  repo instead.
+- Auth via Workload Identity Federation, not a stored service-account key — no long-lived GCP
+  credential exists anywhere in GitHub, which matters more than usual since this repo is public.
+  Built: GCS bucket `unified-ledger-pg-backups-458614017842` (asia-southeast1,
+  uniform-bucket-level-access, public-access-prevention enforced, 30-day Delete lifecycle rule),
+  service account `pg-backup-runner` (bucket-scoped `storage.objectAdmin` + secret-scoped
+  `secretmanager.secretAccessor` on `DATABASE_URL` only, not project-wide), Workload Identity Pool
+  `github-actions-pool` + OIDC provider `github-actions-provider` with an attribute condition
+  restricted to this exact repo *and* `refs/heads/main`.
+- Dump format: `pg_dump -Fc` (custom format), not plain SQL — chosen for TOC-based inspection
+  (`pg_restore -l`) and selective/parallel restore, which starts to matter once the schema grows
+  past one table (Phase 1's staging table, Phase 3's `participants`/`transaction_splits` — already
+  committed phases, not speculation).
+- `.github/workflows/backup.yml` added (first CI/CD file in this repo) and
+  `docs/BACKUP_RESTORE.md` added, covering why a Neon branch (not local Postgres) is the right
+  restore-drill target, and the manual row-level reconciliation pattern for getting recovered data
+  back into production (a `pg_dump` backup is a full-database snapshot, not a per-transaction undo
+  tool — production is never `pg_restore`'d into directly).
+- Failure alerting deliberately deferred — Phase 1 already plans a Telegram alert for pipeline
+  failures; extending it to cover this workflow is future work, not part of this task.
+- Verification still open at time of writing: the actual Neon-branch restore drill (download a
+  backup, empty a branch, `pg_restore` into it, confirm row count/`SUM(amount)`) hasn't run yet —
+  that result is the evidence that actually closes #7, not just the workflow existing.
 
 **What happened today (2026-08-05) — closing the `DATABASE_URL` gap:**
 - Created `DATABASE_URL` in Secret Manager and attached it to `unified-ledger-bot`
@@ -246,6 +276,11 @@ time component. Tracked as [#9](https://github.com/sujayjangam/unified-ledger-pi
 (parent) + sub-issues #10-#14.
 - Voice notes always get today's date regardless of what's said ("yesterday", "last Tuesday",
 etc.). Tracked as [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15).
+- The backup workflow (`.github/workflows/backup.yml`) has no failure alerting yet — deliberately
+deferred to when the Phase 1 "Telegram alert on pipeline failure" item exists, which should be
+extended to cover this workflow too, not just the reconciliation pipeline.
+- The GCS lifecycle rule's 30-day deletion can't be verified same-day by construction — follow up
+in ~30 days (from 2026-08-12) to confirm the oldest backup objects actually age out.
 
 ## Plan
 
@@ -263,8 +298,11 @@ splits tables after that)
 - [ ] Structured logging to replace silent `except`/`print` error handling
 - [ ] Wire `needs_review` so it actually gates bot behavior (prerequisite for the
 human-in-the-loop framing to hold up under questioning)
-- [ ] Scheduled logical backup: `pg_dump` → GCS free tier, rolling retention (e.g. 30 days) —
-tracked in [#7](https://github.com/sujayjangam/unified-ledger-pipeline/issues/7)
+- [x] Scheduled logical backup: `pg_dump` → GCS free tier, rolling retention (e.g. 30 days) —
+tracked in [#7](https://github.com/sujayjangam/unified-ledger-pipeline/issues/7). Built
+2026-08-12 as a GitHub Actions scheduled workflow (`.github/workflows/backup.yml`), not a
+GCP-side Cloud Scheduler job — see "What happened today" below for why, and
+`docs/BACKUP_RESTORE.md` for the restore procedure.
 - [ ] Pytest test suite — starts here, grows with each phase (this is a distinct artifact from
 the Phase 2 evaluation harness: this is correctness/regression, the harness is match *quality*)
 - [ ] Basic CI: lint + test suite on push

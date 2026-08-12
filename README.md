@@ -31,7 +31,9 @@ until the user confirms it via an inline button, then written to the ledger.
 own Pydantic model, for programmatic entry outside of Telegram.
 
 **Storage.** Money is always stored as integer cents, never floats. The ledger runs on Neon
-Postgres via a pooled SQLAlchemy Core engine, with Alembic owning schema migrations.
+Postgres via a pooled SQLAlchemy Core engine, with Alembic owning schema migrations. Backed up
+every 6 hours to GCS with 30-day rolling retention — see
+[`docs/BACKUP_RESTORE.md`](docs/BACKUP_RESTORE.md).
 
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the reasoning behind these decisions, and
 [`docs/system_flow.md`](docs/system_flow.md) / [`docs/voice_capture_mvp_flow.md`](docs/voice_capture_mvp_flow.md)
@@ -102,4 +104,6 @@ blocking, and links to the GitHub issues tracking active work.
 - [`docs/system_flow.md`](docs/system_flow.md) — end-to-end data lifecycle
 - [`docs/voice_capture_mvp_flow.md`](docs/voice_capture_mvp_flow.md) — bot UX flow
 - [`docs/SCHEMA.md`](docs/SCHEMA.md) — canonical schema reference
+- [`docs/BACKUP_RESTORE.md`](docs/BACKUP_RESTORE.md) — backup cadence/retention and the restore
+  procedure
 - [`ROADMAP.md`](ROADMAP.md) — current phase, status, and plan
