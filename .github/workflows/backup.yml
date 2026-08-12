@@ -40,7 +40,15 @@ jobs:
             > /etc/apt/sources.list.d/pgdg.list'
           sudo apt-get update
           sudo apt-get install -y postgresql-client
-          pg_dump --version
+
+          # ubuntu-latest runners ship an older pg_dump on PATH already (16.14, from Ubuntu's
+          # own noble repo, confirmed via a live run) which the apt-get above does not override.
+          # pg_dump refuses to dump a server newer than itself, and Neon runs Postgres 18 — so
+          # the PGDG-installed binary must be found explicitly and put ahead of PATH for every
+          # later step in this job (GITHUB_PATH additions apply starting next step, not this one).
+          PG_BIN_DIR="$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)"
+          echo "$PG_BIN_DIR" >> "$GITHUB_PATH"
+          "$PG_BIN_DIR/pg_dump" --version
 
       - name: Dump database and upload to GCS
         id: backup
