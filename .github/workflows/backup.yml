@@ -30,7 +30,7 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Install pg_dump (latest PGDG client — newer clients safely dump older servers)
+      - name: Install pg_dump (pinned to Neon's actual Postgres major version, not "latest")
         run: |
           set -euo pipefail
           sudo install -d /usr/share/postgresql-common/pgdg
@@ -39,8 +39,23 @@ jobs:
           sudo sh -c 'echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.pub] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
             > /etc/apt/sources.list.d/pgdg.list'
           sudo apt-get update
-          sudo apt-get install -y postgresql-client
-          pg_dump --version
+
+          # Pinned to 18, not the unversioned "latest" package: Neon's actual server version is
+          # 18.4, confirmed 2026-08-12 from a local pg_dump's own archive header ("Dumped from
+          # database version: 18.4"), not assumed. "Latest" would drift silently across runs as
+          # PGDG publishes new majors, with nothing in this file recording what's actually being
+          # used or why it's safe. If Neon's project is ever upgraded to a new major version
+          # (a deliberate, rare, user-initiated action — not something Neon does silently),
+          # update this pin (and the PG_BIN_DIR fallback below) alongside that upgrade.
+          sudo apt-get install -y postgresql-client-18
+
+          # ubuntu-latest runners ship an older pg_dump on PATH already (16.14, from Ubuntu's
+          # own noble repo, confirmed via a live run) which the apt-get above does not override.
+          # The PGDG-installed binary must be found explicitly and put ahead of PATH for every
+          # later step in this job (GITHUB_PATH additions apply starting next step, not this one).
+          PG_BIN_DIR="$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)"
+          echo "$PG_BIN_DIR" >> "$GITHUB_PATH"
+          "$PG_BIN_DIR/pg_dump" --version
 
       - name: Dump database and upload to GCS
         id: backup

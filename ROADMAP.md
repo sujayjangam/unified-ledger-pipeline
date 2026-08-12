@@ -281,6 +281,11 @@ deferred to when the Phase 1 "Telegram alert on pipeline failure" item exists, w
 extended to cover this workflow too, not just the reconciliation pipeline.
 - The GCS lifecycle rule's 30-day deletion can't be verified same-day by construction — follow up
 in ~30 days (from 2026-08-12) to confirm the oldest backup objects actually age out.
+- `.github/workflows/backup.yml` pins its `pg_dump` client to Postgres 18 (`postgresql-client-18`
+  from PGDG), matching Neon's actual server version confirmed 2026-08-12 — deliberately not the
+  unversioned "latest" package, so behavior doesn't silently drift as PGDG publishes new majors.
+  If the Neon project is ever upgraded to a new Postgres major version, this pin needs a matching
+  update in the same PR as that upgrade, or backups will start failing (client older than server).
 
 ## Plan
 
