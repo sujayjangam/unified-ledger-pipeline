@@ -1,0 +1,79 @@
+name: Postgres backup to GCS
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # 00:00, 06:00, 12:00, 18:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write   # required to mint the WIF OIDC token
+
+env:
+  GCP_PROJECT_ID: project-25d90722-14a9-4eca-8a0
+  GCS_BUCKET: unified-ledger-pg-backups-458614017842
+  WIF_PROVIDER: projects/458614017842/locations/global/workloadIdentityPools/github-actions-pool/providers/github-actions-provider
+  WIF_SERVICE_ACCOUNT: pg-backup-runner@project-25d90722-14a9-4eca-8a0.iam.gserviceaccount.com
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Authenticate to GCP (Workload Identity Federation)
+        uses: google-github-actions/auth@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Install pg_dump (latest PGDG client — newer clients safely dump older servers)
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.pub \
+            --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          sudo sh -c 'echo "deb https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            > /etc/apt/sources.list.d/pgdg.list'
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+          pg_dump --version
+
+      - name: Dump database and upload to GCS
+        id: backup
+        run: |
+          set -euo pipefail
+          DB_URL="$(gcloud secrets versions access latest --secret=DATABASE_URL --project="${GCP_PROJECT_ID}")"
+          if [ -z "$DB_URL" ]; then
+            echo "::error::DATABASE_URL secret returned empty"
+            exit 1
+          fi
+          echo "::add-mask::${DB_URL}"
+
+          TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+          DUMP_FILE="/tmp/ulp-backup-${TIMESTAMP}.dump"
+          OBJECT_PATH="gs://${GCS_BUCKET}/backups/${TIMESTAMP}.dump"
+
+          pg_dump -Fc --no-owner --no-privileges -d "$DB_URL" -f "$DUMP_FILE"
+          unset DB_URL
+
+          DUMP_SIZE=$(stat -c%s "$DUMP_FILE")
+          echo "Dump size: ${DUMP_SIZE} bytes"
+          if [ "$DUMP_SIZE" -lt 1024 ]; then
+            echo "::error::Dump file suspiciously small (${DUMP_SIZE} bytes) — refusing to upload"
+            exit 1
+          fi
+
+          gcloud storage cp "$DUMP_FILE" "$OBJECT_PATH"
+          rm -f "$DUMP_FILE"
+
+          echo "object_path=${OBJECT_PATH}" >> "$GITHUB_OUTPUT"   # path only — never the DB URL
+
+      - name: Verify object landed in GCS
+        run: |
+          set -euo pipefail
+          gcloud storage objects describe "${{ steps.backup.outputs.object_path }}" \
+            --format="default(name,size,timeCreated)"
