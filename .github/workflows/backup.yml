@@ -53,12 +53,32 @@ jobs:
           fi
           echo "::add-mask::${DB_URL}"
 
+          # libpq (which pg_dump uses) doesn't understand the +psycopg SQLAlchemy dialect
+          # suffix used elsewhere in this repo (app/database.py needs it, pg_dump does not).
+          # Passing it unmodified causes libpq to mis-parse the DSN — a first live run showed
+          # this can make libpq reconstruct connection details in its error message in a form
+          # that doesn't byte-match the masked string above, leaking host/db info into a public
+          # log even with ::add-mask:: registered. Mask the corrected form too, defensively.
+          DB_URL="${DB_URL/postgresql+psycopg:\/\//postgresql:\/\/}"
+          echo "::add-mask::${DB_URL}"
+
           TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
           DUMP_FILE="/tmp/ulp-backup-${TIMESTAMP}.dump"
           OBJECT_PATH="gs://${GCS_BUCKET}/backups/${TIMESTAMP}.dump"
 
-          pg_dump -Fc --no-owner --no-privileges -d "$DB_URL" -f "$DUMP_FILE"
+          # pg_dump's raw stderr is never echoed to the log, even on failure: masking is
+          # substring-based and only catches text that byte-matches a registered secret, so any
+          # future reformatting quirk (in libpq or elsewhere) could leak connection details the
+          # same way the scheme bug above did. Capture to a file that never leaves the runner.
+          set +e
+          pg_dump -Fc --no-owner --no-privileges -d "$DB_URL" -f "$DUMP_FILE" 2>/tmp/pg_dump_stderr.log
+          PG_DUMP_EXIT=$?
+          set -e
           unset DB_URL
+          if [ "$PG_DUMP_EXIT" -ne 0 ]; then
+            echo "::error::pg_dump failed with exit code ${PG_DUMP_EXIT}. Raw error withheld from this public log — re-run locally against the same DATABASE_URL secret to see the full message."
+            exit 1
+          fi
 
           DUMP_SIZE=$(stat -c%s "$DUMP_FILE")
           echo "Dump size: ${DUMP_SIZE} bytes"
