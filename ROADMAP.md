@@ -24,11 +24,33 @@ doesn't map to anything in the actual system. Use, and refine once Phase 1/2 lan
 ## Current status
 
 **Phase:** Phase 0 — Postgres migration is fully closed out (see 2026-08-05 below). The scheduled
-`pg_dump` → GCS backup (#7) is built and infra-verified as of 2026-08-12 (GCP setup + a manual
-workflow run confirmed an object landing in GCS); the actual restore drill that closes #7 for
-good is still pending — see "What happened today (2026-08-12)" below.
-**Next action:** Run the Neon-branch restore drill to close out #7, then merge the backup PR. After
-that, pick up #9 (timestamp/ordering) or #15 (backdated date parsing).
+`pg_dump` → GCS backup (#7) is built, infra-verified, and now restore-verified as of 2026-08-13 —
+see "What happened today (2026-08-13)" below. #7 is closed.
+**Next action:** Pick up #9 (timestamp/ordering) or #15 (backdated date parsing).
+
+**What happened today (2026-08-13) — restore-verifying the scheduled backup (#7):**
+- Ran the Neon-branch restore drill from `docs/BACKUP_RESTORE.md`: created a scratch branch,
+  emptied `public` via `DROP SCHEMA ... CASCADE` / `CREATE SCHEMA public`, downloaded the latest
+  `pg_dump` object from GCS, and `pg_restore`'d it in.
+- Verification used `SELECT currency, COUNT(*), SUM(amount) FROM transactions GROUP BY currency`
+  instead of the plain `SUM(amount)` in the doc's original example — this is a multi-currency
+  ledger with no FX conversion anywhere in the codebase, so an un-grouped `SUM(amount)` mixes
+  currencies and is meaningless as a check. Grouped by currency, every value matched between the
+  branch and `main` except MYR, which was short exactly one row/amount — the one transaction
+  recorded after the backup ran. That mismatch matching the known gap exactly is what confirms the
+  dump/restore round-trip is faithful, not corrupting or dropping data.
+- Hit a false failure first: ran the "empty the branch" step in the Neon console SQL Editor and the
+  restore/verify steps locally via `psql`/`pg_restore` against the pooled (`-pooler`) endpoint. The
+  local session couldn't see the restored table at all (`relation "transactions" does not exist`)
+  even after a clean `pg_restore` exit, while the console still showed the branch's original
+  pre-drop data. Root cause not fully isolated, but redoing the entire drill in one
+  session/connection (local `psql`, direct/unpooled endpoint, no console SQL Editor involved)
+  resolved it cleanly. `docs/BACKUP_RESTORE.md` updated with this as a documented gotcha.
+- Postgres client tools (`psql`, `pg_restore` 18.4 — version-matched to Neon and the pinned
+  `pg_dump` client) installed into the `ledger-env` micromamba env for this
+  (`micromamba install -n ledger-env -c conda-forge postgresql`); they weren't present locally
+  before. Also discovered the project's own `.venv/` is stale/broken (no interpreter) — `ledger-env`
+  is the real working environment; `.venv` should be ignored or cleaned up in a future session.
 
 **What happened today (2026-08-12) — building the scheduled backup (#7):**
 - Chose GitHub Actions (scheduled `cron`, every 6 hours) over Cloud Scheduler + Cloud Run Job,

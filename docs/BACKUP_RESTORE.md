@@ -58,20 +58,37 @@ the schema and data on its own, the branch must be **emptied first**, then resto
 
 ## Restore steps (Neon branch path)
 
+**Do steps (c)-(e) from one place, in one continuous session — don't split them between the Neon
+console SQL Editor and a local shell.** A 2026-08-13 restore drill split "empty the branch" (run in
+the console) from "restore and verify" (run locally via `psql`/`pg_restore` against the pooled
+`-pooler` endpoint) and got a false failure: the local session reported
+`relation "transactions" does not exist` right after a clean, zero-exit-code `pg_restore`, while the
+console SQL Editor still showed the branch's original pre-drop data, as if the `DROP SCHEMA` had
+never taken effect there. Root cause was never fully isolated — but redoing the whole drill from a
+single local `psql`/`pg_restore` session against the **direct/unpooled** endpoint, with the console
+untouched after copying the connection string, resolved it cleanly on the first try. Treat the
+console SQL Editor as a viewer for spot-checks, not as one leg of a multi-step operation that also
+involves a local shell.
+
 ```bash
 # a. Create a branch (Neon console, or `neonctl branches create --name restore-drill-YYYYMMDD`)
 
 # b. Grab its connection string from the Neon console (direct/unpooled endpoint, same convention
-#    as prod's DATABASE_URL — postgresql+psycopg-style host, no PgBouncer suffix)
+#    as prod's DATABASE_URL — postgresql+psycopg-style host, no PgBouncer suffix). Use this same
+#    $BRANCH_DATABASE_URL for every command below, in the same shell session.
 
 # c. Empty it — this is the step that makes the drill meaningful:
 psql "$BRANCH_DATABASE_URL" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+psql "$BRANCH_DATABASE_URL" -c "\dt"   # confirm: "Did not find any relations"
 
 # d. Restore:
 pg_restore --no-owner --no-privileges --clean --if-exists -d "$BRANCH_DATABASE_URL" backup.dump
 
-# e. Verify (compare against a count/checksum captured at or near dump time):
-psql "$BRANCH_DATABASE_URL" -c "SELECT COUNT(*), SUM(amount) FROM transactions;"
+# e. Verify — group by currency, not a flat SUM(amount): this is a multi-currency ledger with no FX
+#    conversion anywhere in the codebase, so an un-grouped sum mixes currencies and proves nothing.
+#    Compare against the same query run against prod at/near dump time; any gap should match rows
+#    recorded strictly after the backup ran, nothing else:
+psql "$BRANCH_DATABASE_URL" -c "SELECT currency, COUNT(*), SUM(amount) FROM transactions GROUP BY currency ORDER BY currency;"
 
 # f. Delete the branch when done (console, or `neonctl branches delete restore-drill-YYYYMMDD`)
 ```
