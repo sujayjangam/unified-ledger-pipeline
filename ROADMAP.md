@@ -283,7 +283,9 @@ Still outstanding:
 
 - Duplicate Telegram update delivery is deduped only in memory (`_seen_update_ids` in
 `bot_webhook.py`), which doesn't survive a Cloud Run restart or a second instance. Now that
-Postgres exists, this should become a persisted constraint.
+Postgres exists, this should become a persisted constraint. Deliberately deferred, not forgotten —
+see the Phase 0 checklist note on why usage is currently too low for the race window to matter in
+practice.
 - Broad `except Exception` blocks throughout silently swallow errors via `print()` instead of
 structured logging — failures are invisible in production.
 - `needs_review` is extracted by `app/services/extraction.py` but never acted on anywhere — the
@@ -321,7 +323,13 @@ functional there** — missing `DATABASE_URL` secret, see "Current status" and i
 - [x] Connection pooling — SQLAlchemy `QueuePool`
 - [x] Migrations tooling — **Alembic** (schema will keep changing: staging table next phase,
 splits tables after that)
-- [ ] Webhook idempotency — persist the `update_id` dedupe in Postgres instead of process memory
+- [ ] Webhook idempotency — persist the `update_id` dedupe in Postgres instead of process memory.
+**Deferred** — the in-memory dedupe's blast radius is low while usage stays low: voice notes are
+the only ingestion path (no text-input option), and there's no receipt-capture path either, so
+volume is naturally capped by how much either household member is willing to narrate out loud.
+Revisit once usage rises meaningfully — most plausibly once receipt capture ships (see Phase 1) —
+or, at the latest, during the Phase 5 reliability pass before the case-study writeup, so the
+in-memory gap isn't still open when this project is presented as production-grade.
 - [ ] Structured logging to replace silent `except`/`print` error handling
 - [ ] Wire `needs_review` so it actually gates bot behavior (prerequisite for the
 human-in-the-loop framing to hold up under questioning)
@@ -343,6 +351,9 @@ annotate until it can be defended live, not just described
 
 - [ ] PDF statement parser: rule-based extraction per bank format (OCBC, DBS, YouTrip) first
 - [ ] LLM-assisted extraction as fallback, only for lines the rule-based parser can't handle
+- [ ] Receipt image capture (Telegram photo message) as a second ingestion path alongside voice
+notes — store the image (GCS) and link it to the transaction row; reuses the rule-based +
+LLM-fallback extraction architecture above rather than building a separate one-off pipeline.
 - [ ] Normalize parsed statement lines into a staging table (Postgres)
 - [ ] Deterministic matcher: amount + date window against existing ledger entries
 - [ ] Tie-breaking rule: auto-match only on a unique candidate; 0 or 2+ candidates → `needs_review`
