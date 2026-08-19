@@ -42,9 +42,9 @@ architecture, env vars) that no longer matches the code. `README.md` specificall
 describe what is actually shipped, never planned/in-progress work.
 
 The `doc-checker` subagent (`.claude/agents/doc-checker.md`) automates the README-vs-code-vs-roadmap
-half of this check, plus scanning for job-search content leaking into `CLAUDE.md`/`ROADMAP.md` (see
-`claude-jobhunt-context.md`, gitignored, for where that content actually lives). Run it — `@doc-
-checker run the check` — before committing doc changes or when picking work back up after a gap.
+half of this check, plus scanning `CLAUDE.md`/`ROADMAP.md` for non-engineering content that
+shouldn't be in either (both files are checked into a public repo). Run it — `@doc-checker run the
+check` — before committing doc changes or when picking work back up after a gap.
 
 ## Commands
 
@@ -143,6 +143,18 @@ transports:
   `ALTER TABLE` in the now-deleted `test_queries.py`, undocumented in `database.py`) is resolved.
   Schema changes go through a new Alembic revision (hand-written — this project uses Core, not the
   ORM, so there's no metadata for `--autogenerate` to diff against).
+- The `transactions` table has an `idempotency_key` column with an `ON CONFLICT (idempotency_key)
+  DO NOTHING` upsert in `app/add_expense.py`. `bot_core.py` generates this key when the confirm
+  button is built, so a double-tap on "Confirm" (slow connection, impatient re-tap) can't insert
+  the same transaction twice. This is separate from — and already solves a narrower case than —
+  the still-open webhook `update_id` dedupe below; don't conflate the two when reading the "Still
+  outstanding" list in `ROADMAP.md`.
+- Deduping duplicate Telegram webhook deliveries (`update_id`) is deliberately deferred rather than
+  persisted as its own table/column: it's currently handled only in memory (`_seen_update_ids` in
+  `bot_webhook.py`), which doesn't survive a restart. Persisting it is low-value while voice-only
+  ingestion keeps transaction volume low; revisit once volume rises — most plausibly once receipt
+  capture ships, or at the latest during the Phase 5 reliability pass. See `ROADMAP.md`'s Phase 0
+  checklist for the full reasoning.
 - A stray, empty `ledger.db` SQLite file sits at the repo root (untracked, harmless leftover from
   before the Postgres migration) — the real ledger is always the Postgres database at
   `DATABASE_URL`.

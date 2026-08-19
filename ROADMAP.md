@@ -6,10 +6,6 @@ This document is the single source of truth for where this project stands and wh
 Read "Current status" first when resuming work — don't re-derive it by reading the whole repo.
 This file supersedes any prior version of ROADMAP.md.
 
-Job-search/portfolio framing (why this project matters beyond the household, build-in-public plan,
-profile prep) lives in `claude-jobhunt-context.md` (private, gitignored) — this file stays scoped
-to the engineering plan.
-
 ## About blurb (draft — move into README.md once Phase 1/2 ship)
 
 Old description ("A local-first ETL system... sensor-fusion logic") is retired — it's inaccurate
@@ -208,8 +204,6 @@ Much of the current codebase was written with AI assistance — ownership is sol
 parts, weaker on async/await, Pydantic schemas, and FastAPI's `lifespan` handling. Close that gap
 deliberately in Phase 0, not by skipping the code.
 - This is live infrastructure for two real users, not a demo.
-- Target: GenAI/ML/Data Engineering. (Role/market specifics live in
-`claude-jobhunt-context.md`.)
 - Real pain points, in priority order: (1) reconciling voice-logged entries against real bank/card
 statements, (2) household expense splitting, (3) budgeting & visibility. FX conversion is *not* a
 priority — statements already show converted rates.
@@ -273,11 +267,9 @@ EXISTS`, the `account_desc` drift) a full migration cycle after the Neon Postgre
 — updated to describe the actual `app/database.py` engine + Alembic-owned schema, and added a
 `DATABASE_URL` entry to its env var list. Also added the `doc-checker` subagent
 (`.claude/agents/doc-checker.md`) to catch this class of drift going forward.
-- ~~Job-search/portfolio framing was mixed into `ROADMAP.md`~~ ("Why this project exists,"
-"Two horizons," "Build-in-public track," Perth/interview asides, plus two Phase 5 plan items —
-build-in-public wrap-up, narrative rehearsal — caught in a follow-up pass) — moved to
-`claude-jobhunt-context.md` (private, gitignored); this file now stays scoped to the engineering
-plan.
+- ~~Non-engineering framing was mixed into `ROADMAP.md`~~ ("Why this project exists," "Two
+horizons," "Build-in-public track," and other narrative asides, plus two Phase 5 plan items caught
+in a follow-up pass) — removed; this file now stays scoped to the engineering plan.
 
 Still outstanding:
 
@@ -384,9 +376,6 @@ LLM-fallback extraction architecture above rather than building a separate one-o
 - [ ] Rewrite `README.md` as a case study: problem, architecture, decisions, eval metrics, what's
 next
 - [ ] Architecture diagram
-
-(Job-search-facing Phase 5 tasks — build-in-public wrap-up, narrative rehearsal — live in
-`claude-jobhunt-context.md`.)
 
 ## How to resume a session
 
