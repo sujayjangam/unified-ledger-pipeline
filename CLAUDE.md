@@ -151,10 +151,12 @@ transports:
   outstanding" list in `ROADMAP.md`.
 - Deduping duplicate Telegram webhook deliveries (`update_id`) is deliberately deferred rather than
   persisted as its own table/column: it's currently handled only in memory (`_seen_update_ids` in
-  `bot_webhook.py`), which doesn't survive a restart. Persisting it is low-value while voice-only
-  ingestion keeps transaction volume low; revisit once volume rises — most plausibly once receipt
-  capture ships, or at the latest during the Phase 5 reliability pass. See `ROADMAP.md`'s Phase 0
-  checklist for the full reasoning.
+  `bot_webhook.py`), which doesn't survive a restart. The original reasoning was that persisting it
+  is low-value while voice-only ingestion keeps transaction volume low. **That reasoning is now on
+  a clock**: as of 2026-08-20 the capture-friction work (backdated dates, edit/delete, text
+  ingestion) is early Phase 0 and exists specifically to raise capture volume, so persisting the
+  dedupe is scheduled in the same phase as the work that invalidates the deferral. See
+  `ROADMAP.md`'s Phase 0 checklist for the full reasoning.
 - A stray, empty `ledger.db` SQLite file sits at the repo root (untracked, harmless leftover from
   before the Postgres migration) — the real ledger is always the Postgres database at
   `DATABASE_URL`.
@@ -204,3 +206,25 @@ should link the issue number with a one-line status, not restate its repro steps
 verification criteria — those live in the issue. `ROADMAP.md` stays the narrative/phase-level
 layer: what phase we're in, what's currently blocking, and pointers to the issues that track the
 detail.
+- **Hierarchy for decomposition, labels for themes.** Parent/sub-issue means "these are the steps
+that complete this one deliverable" — the parent closes when its children do (#9 → #10-#14). A
+cross-cutting theme spanning independently-shippable issues is a *label*, never a grandparent
+issue: GitHub allows 8 levels of nesting but an issue can have only **one** parent ever, so
+spending that slot on a theme is unrecoverable, and a theme parent never closes.
+- **Label set (added 2026-08-20).** Type reuses GitHub's defaults (`bug`, `enhancement`,
+`documentation`). Area is four labels: `area:capture` (entry, ingestion paths, input UX),
+`area:reconciliation` (statement parsing, matching, review queue), `area:data-integrity` (schema
+correctness, wrong/missing values, doc-code drift), `area:infra` (deploy, backups, CI, secrets).
+Keep the set small — large label sets rot. **Area labels go on parents and standalone issues only,
+not on sub-issues**, so that filtering by area returns deliverables rather than their internal
+steps.
+- **Phases are milestones, not labels** (`Phase 0: Foundation & ownership`, `Phase 1:
+Reconciliation engine`). An issue belongs to exactly one phase, which is what a milestone models,
+and it gives a completion bar for free. Do not also create phase labels — that pair goes stale.
+Sub-issues *do* get the milestone even though they don't get area labels, so the progress bar
+counts real units of work. Later-phase milestones get created when they have issues to hold, not
+in advance.
+- **Reading the issue list without sub-issue noise:** `no:parent-issue` shows only top-level
+issues, and `has:sub-issue` shows only true parents. Both work in the GitHub UI search box and via
+`gh issue list --search "no:parent-issue"`. The default list view interleaves parents and children
+and is much harder to read.

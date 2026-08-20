@@ -19,10 +19,38 @@ doesn't map to anything in the actual system. Use, and refine once Phase 1/2 lan
 
 ## Current status
 
-**Phase:** Phase 0 — Postgres migration is fully closed out (see 2026-08-05 below). The scheduled
-`pg_dump` → GCS backup (#7) is built, infra-verified, and now restore-verified as of 2026-08-13 —
-see "What happened today (2026-08-13)" below. #7 is closed.
-**Next action:** Pick up #9 (timestamp/ordering) or #15 (backdated date parsing).
+**Phase:** Phase 0 — scope extended 2026-08-20, see below. Postgres migration is fully closed out
+(see 2026-08-05 below). The scheduled `pg_dump` → GCS backup (#7) is built, infra-verified, and now
+restore-verified as of 2026-08-13 — see "What happened today (2026-08-13)" below. #7 is closed.
+**Next action:** Capture reliability — [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15)
+(backdated date parsing) and [#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9)
+(timestamp/ordering), then edit/delete and text ingestion. Full ordering in the Phase 0 checklist.
+
+**What happened today (2026-08-20) — extending Phase 0 instead of opening Phase 1:**
+- **Capture friction is the binding constraint on ledger data quality**, not capacity or
+  reliability. Real usage sits below what the system was built for because entering an expense is
+  harder than it should be — voice is the only ingestion path, nothing can be corrected after it's
+  saved, and every entry is stamped with today's date regardless of what was actually said.
+- This reclassifies two open issues. #15 ("voice notes always get today's date") is not a
+  date-parsing nicety: because dates can't be backdated, the system forces logging *at the moment
+  of spend*, which is exactly when a voice note is least usable (restaurant, office, public
+  transport). #9 (no reliable ordering) is the integrity half of the same problem — what does get
+  captured can't be reliably sequenced. Both gate whether captured data is correct and whether
+  capture happens at all, so neither is deferrable behind Phase 1.
+- **README case study, architecture diagram and demo recording moved out of Phase 5 to the end of
+  Phase 0.** They were scheduled last on the assumption that documentation should describe a
+  finished system. That assumption has aged badly: the decision log has grown large enough
+  (Postgres migration, the `postgresql+psycopg://` scheme trap, WIF over stored service-account
+  keys, `-Fc` over plain SQL, the pooled-endpoint restore gotcha) that writing it up while the
+  reasoning is fresh is both cheaper and more accurate than reconstructing it several phases later.
+  Placing it at the *end* of Phase 0 rather than the start means it documents a working expense
+  recorder instead of the current friction-limited one.
+- **Pytest suite sequenced immediately before those documentation items.** The suite's job is to
+  prove the expense-recording paths actually work — which is the same claim the README makes, so
+  the evidence should exist before the claim is published.
+- The webhook idempotency deferral is now explicitly time-limited rather than open-ended — its
+  justification depends on low volume, and low volume is the thing being fixed. See the Phase 0
+  checklist.
 
 **What happened today (2026-08-13) — restore-verifying the scheduled backup (#7):**
 - Ran the Neon-branch restore drill from `docs/BACKUP_RESTORE.md`: created a scratch branch,
@@ -171,11 +199,16 @@ machine still has the pre-migration file.
   `CLOUDSDK_PYTHON` (persistent user env var) to the Cloud SDK's bundled Python so `gcloud` doesn't
   depend on the system Python at all going forward.
 
-Environment note for future sessions: `.venv/` is a **micromamba conda env, not a virtualenv**
-(created `micromamba create -p ./.venv python=3.11 pip -c conda-forge`). Run
-`micromamba activate .\.venv` from the repo root first. (The Microsoft Store `python` alias issue
-above is now fixed machine-wide, so this should be less confusing going forward — activation is
-still required to get *this project's* interpreter/deps, that part doesn't change.)
+Environment note for future sessions (**corrected 2026-08-20** — the instruction that used to sit
+here told you to activate `.\.venv`, which stopped being true on 2026-08-13; see that entry above):
+the working environment is **`ledger-env`**, a micromamba env registered at
+`~/AppData/Roaming/mamba/envs/ledger-env` (Python 3.11.15, plus the Postgres client tools). Run
+`micromamba activate ledger-env` from the repo root. The project-local `.venv/` is a **stale,
+broken leftover** — no interpreter, just two orphaned console scripts — and should be cleaned up
+rather than activated. Always run project commands from the repo root: implicit namespace packages
+with an `app.` prefix, no `__init__.py` files, and relative paths (`alembic.ini`, `.env`) all
+assume it. (The Microsoft Store `python` alias issue above is fixed machine-wide, so a bare
+`python` no longer hits a Store stub — activation is still required to get this project's deps.)
 
 [Issue #1](https://github.com/sujayjangam/unified-ledger-pipeline/issues/1) (Telegram double-insert
 bug) is fixed and closed as of 2026-07-30.
@@ -196,14 +229,17 @@ just deferred for now since nothing in that history is as sensitive as real name
 
 ## Constraints (agreed, don't relitigate without a reason)
 
-- Timeline: ~5-10 hrs/week, ongoing — the project runs indefinitely as live household
-infrastructure, so no fixed external deadline drives phase order.
-- Background: SQL + a Python bootcamp finished ~3 months ago, no formal CS/DS training.
-Comfortable with Git/GitHub (branches, PRs, CI) and basic ML libraries (scikit-learn, pandas).
-Much of the current codebase was written with AI assistance — ownership is solid on the simple
-parts, weaker on async/await, Pydantic schemas, and FastAPI's `lifespan` handling. Close that gap
-deliberately in Phase 0, not by skipping the code.
-- This is live infrastructure for two real users, not a demo.
+- Timeline: ~10-15 hrs/week, ongoing — the project runs indefinitely as live household
+infrastructure.
+- Ownership: much of the current codebase was written with AI assistance — ownership is solid on
+the simple parts, weaker on async/await, Pydantic schemas, and FastAPI's `lifespan` handling. Close
+that gap deliberately in Phase 0, not by skipping the code. This applies to new AI-assisted work
+as well as old: nothing gets committed that couldn't be explained, line by line, without the
+assistant in the room.
+- Intended as live household infrastructure for two real users, not a demo — but **currently below
+that bar**, and honestly so. Real usage is limited by capture friction, not by capacity or
+reliability. Until that closes (Phase 0), claims about production usage belong in this file as
+intent, not as fact, and must not be restated as fact in `README.md`.
 - Real pain points, in priority order: (1) reconciling voice-logged entries against real bank/card
 statements, (2) household expense splitting, (3) budgeting & visibility. FX conversion is *not* a
 priority — statements already show converted rates.
@@ -214,6 +250,15 @@ document-extraction story.
 eval set reporting precision/recall — not semantic/LLM-based matching from day one. Auto-match
 only on a *unique* candidate hit; anything ambiguous (0 or 2+ candidates) routes to
 `needs_review` rather than guessing. Revisit this rule once real-world testing surfaces edge cases.
+- Prior art for the matcher: [Actual Budget](https://github.com/actual-budget/actual) runs a
+three-stage match — exact imported transaction id, then amount + a ±7-day window + payee, then
+amount + the same window ignoring payee. Adopt the *staged* structure rather than a single rule,
+but treat the window as a parameter the Phase 2 eval harness tunes, not a constant to copy.
+[Firefly III](https://github.com/firefly-iii/firefly-iii) is the other reference point: editing,
+reconciliation and rules are first-class there from the start rather than later phases — the
+opposite of this project's original ordering, and part of why capture and edit/delete moved
+earlier. Neither tool supports Australian or Singaporean bank feeds, which is where this project's
+ingestion work is actually differentiated.
 - PDF parsing strategy: rule-based extraction per bank format first (layouts are fairly
 consistent within a bank); LLM-assisted extraction only as a fallback for lines the rules can't
 parse. Cheaper than always calling the LLM.
@@ -227,12 +272,17 @@ issues. Do not treat it as a backup. A scheduled logical backup (`pg_dump` → G
 required Phase 0/1 deliverable, not optional, given the years-long intended lifetime of this data.
 - Reliability is in scope now, not deferred: automated backups, structured logging, basic CI, a
 pytest test suite, and error alerting.
-- Packaging: rewrite `README.md` as a case study with an architecture diagram (Phase 5).
+- Packaging: the project's presentation deliverable is a case-study `README.md` — problem →
+architecture → key decisions and tradeoffs → what's live today → what's next — plus an inline
+Mermaid architecture diagram and a short demo recording. This fixes *what* the deliverable is (not
+a docs site, not a blog series, not a slide deck) so it doesn't get redesigned mid-project.
+Originally scheduled for Phase 5; moved to the **end of Phase 0** on 2026-08-20.
 - Phasing: design backward from the full target architecture — don't bolt features on
 incrementally. Phases 0-2 (foundation, reconciliation engine, evaluation harness) are the
 differentiated technical core; Phases 3+ (household splitting, budgeting/visibility, packaging)
 are real and committed, not cut — this keeps running as live household infrastructure
-indefinitely.
+indefinitely. Scope discovered mid-phase is absorbed by extending that phase, not by inserting
+fractional phases or renumbering.
 
 ## Known issues
 
@@ -303,39 +353,113 @@ in ~30 days (from 2026-08-12) to confirm the oldest backup objects actually age 
   If the Neon project is ever upgraded to a new Postgres major version, this pin needs a matching
   update in the same PR as that upgrade, or backups will start failing (client older than server).
 
+Found by inspection 2026-08-19, none filed as issues yet (the capture-side ones are already
+sequenced in the Phase 0 checklist and aren't repeated here):
+
+- No refund or reversal representation anywhere — `app/add_expense.py` rejects `amount <= 0`.
+  Phase 1 reconciliation against real statements hits refunds almost immediately, so this is a
+  Phase 1 blocker rather than a cosmetic gap.
+- `reconciliation_status` is hardcoded to `'unsettled'` in both writers. The field Phase 1 is
+  meant to populate currently has no writer at all.
+- `benefit_of` and `split_ratio` exist in the schema and in `docs/SCHEMA.md` but are written by no
+  code path — Phase 3 will need them, nothing populates them today.
+- `docs/SCHEMA.md` says `transaction_type` is `'income'`/`'expense'`; the code writes
+  `'Expense'`/`'Transfer'` (`app/services/extraction.py`). The doc and the data disagree, and no
+  income path exists at all.
+- `app/main.py`'s POST handler omits `currency` entirely, so a row created through the REST API
+  would land with a NULL currency and corrupt every currency-grouped aggregate in
+  `app/services/ledger_queries.py`. Latent rather than live — the Dockerfile runs `bot_webhook`,
+  not `main` — but it's a live landmine for whenever the API is deployed.
+- `app/bot_core.py` hardcodes `ACCOUNT_OWNERS["Sujay"][0]`, which raises a bare `KeyError` if that
+  key is ever renamed in the env.
+- No index on `date`. Irrelevant at current row counts; matters once Phase 1's statement staging
+  table lands and date-window matching starts scanning.
+- Chat commands have no discoverability — `/month` and `/cat_month` were forgotten by their own
+  author despite existing. This is an interface problem, not a memory lapse, and it belongs with
+  the capture-friction work: a ledger nobody can navigate is a ledger nobody keeps feeding.
+  Candidate fix worth prototyping alongside text ingestion: a bot command that pre-fills the
+  message box with a field template (date already filled in, remaining fields blank) so an entry
+  is edit-and-send rather than type-from-scratch. Telegram exposes two mechanisms for this —
+  `switch_inline_query_current_chat`, which genuinely pre-populates the input field but requires
+  inline mode enabled on the bot, or sending the template as a tap-to-copy code block, which needs
+  no bot configuration but costs the user an extra paste.
+
 ## Plan
 
 ### Phase 0 — Foundation & ownership
 
 - [x] **Postgres migration (Neon)** — code-complete 2026-08-01, merged into `main` 2026-08-03
-(SQLAlchemy Core, all SQL converted to `text()` with named binds). **Live on Cloud Run but not yet
-functional there** — missing `DATABASE_URL` secret, see "Current status" and issue
-[#4](https://github.com/sujayjangam/unified-ledger-pipeline/issues/4).
+(SQLAlchemy Core, all SQL converted to `text()` with named binds). Fully live on Cloud Run as of
+2026-08-05 — the missing `DATABASE_URL` secret and the `psycopg` scheme bug are both closed, issue
+[#4](https://github.com/sujayjangam/unified-ledger-pipeline/issues/4) closed with it.
 - [x] Fix the DB-layer "Known issues" as part of the migration, not after it
 - [x] Connection pooling — SQLAlchemy `QueuePool`
 - [x] Migrations tooling — **Alembic** (schema will keep changing: staging table next phase,
 splits tables after that)
-- [ ] Webhook idempotency — persist the `update_id` dedupe in Postgres instead of process memory.
-**Deferred** — the in-memory dedupe's blast radius is low while usage stays low: voice notes are
-the only ingestion path (no text-input option), and there's no receipt-capture path either, so
-volume is naturally capped by how much either household member is willing to narrate out loud.
-Revisit once usage rises meaningfully — most plausibly once receipt capture ships (see Phase 1) —
-or, at the latest, during the Phase 5 reliability pass before the case-study writeup, so the
-in-memory gap isn't still open when this project is presented as production-grade.
-- [ ] Structured logging to replace silent `except`/`print` error handling
-- [ ] Wire `needs_review` so it actually gates bot behavior (prerequisite for the
-human-in-the-loop framing to hold up under questioning)
 - [x] Scheduled logical backup: `pg_dump` → GCS free tier, rolling retention (e.g. 30 days) —
 tracked in [#7](https://github.com/sujayjangam/unified-ledger-pipeline/issues/7). Built
 2026-08-12 as a GitHub Actions scheduled workflow (`.github/workflows/backup.yml`), not a
-GCP-side Cloud Scheduler job — see "What happened today" below for why, and
+GCP-side Cloud Scheduler job — see "What happened today (2026-08-12)" above for why, and
 `docs/BACKUP_RESTORE.md` for the restore procedure.
+
+**Ordering within the rest of Phase 0 (set 2026-08-20):** capture reliability first, then
+correctness/observability, then the test suite, then packaging. The suite proves the recording
+paths work; the packaging items publish that claim, so the evidence is produced before the claim.
+
+**1. Capture reliability** — the binding constraint on data quality; see 2026-08-20 above.
+
+- [ ] Backdated/relative date parsing from the transcript ("yesterday", "last Tuesday", explicit
+spoken dates) — [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15). Highest
+leverage of the group: without it every entry must be logged at the moment of spend.
+- [ ] Business date vs. system ingestion timestamp, and reliable ordering —
+[#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) (parent) + sub-issues
+[#10](https://github.com/sujayjangam/unified-ledger-pipeline/issues/10)-[#14](https://github.com/sujayjangam/unified-ledger-pipeline/issues/14).
+- [ ] Edit and delete path. No `UPDATE` or `DELETE` statement exists anywhere in `app/` — a wrong
+extraction is currently permanent, which is also what hollows out the human-in-the-loop claim: the
+human is in the loop for a few seconds at confirm time and never again. No issue filed yet.
+- [ ] Text ingestion alongside voice. Voice is unusable in most real spending moments (restaurant,
+office, public transport), so voice-only capture caps volume by design — [#16](https://github.com/sujayjangam/unified-ledger-pipeline/issues/16).
+- [ ] Drop the one-expense-per-voice-note guardrail in `app/bot_core.py` — `TransactionList`
+already models multiple; this is a product restriction, not a technical limit.
+- [ ] Webhook idempotency — persist the `update_id` dedupe in Postgres instead of process memory.
+Previously deferred on the grounds that voice-only ingestion naturally caps volume. **That premise
+expires with the items above**: they exist specifically to raise capture volume, so the deferral is
+now time-limited rather than open-ended, and this lands in the same phase as the work that
+invalidates it — not at some later reliability pass.
+
+**2. Correctness and observability**
+
+- [ ] Structured logging to replace silent `except`/`print` error handling
+- [ ] Wire `needs_review` so it actually gates bot behavior (prerequisite for the
+human-in-the-loop framing to hold up under questioning)
+- [ ] `base_amount` correctness — currently written as the raw amount regardless of currency,
+contradicting `docs/SCHEMA.md`. Prefer absent (`NULL`) over silently incorrect until an FX source
+exists.
+
+**3. Test suite** — sequenced after the capture work and before packaging, deliberately: its
+primary job is to prove every expense-recording path actually works, so it has to run against the
+finished capture paths rather than the ones being replaced.
+
 - [ ] Pytest test suite — starts here, grows with each phase (this is a distinct artifact from
-the Phase 2 evaluation harness: this is correctness/regression, the harness is match *quality*)
+the Phase 2 evaluation harness: this is correctness/regression, the harness is match *quality*).
+First coverage targets: every ingestion path end to end, `add_expense` validation and the
+idempotency-key path, extraction schema parsing, and the period boundaries in
+`app/services/utils.py` / `app/services/ledger_queries.py`.
 - [ ] Basic CI: lint + test suite on push
 - [ ] Deliberate pass through the AI-assisted async/Pydantic/FastAPI-lifespan code — rewrite or
 annotate until it can be defended live, not just described
-- [x] `README.md` placeholder fix (full case-study rewrite happens in Phase 5)
+
+**4. Packaging** — moved here from Phase 5 on 2026-08-20.
+
+- [x] `README.md` placeholder fix
+- [ ] Rewrite `README.md` as a case study: problem → architecture → key decisions and tradeoffs →
+what's live today → what's next. The standing rule still binds — `README.md` describes only what
+has shipped, and forward-looking work sits under an explicit "What's next" heading.
+- [ ] Inline Mermaid architecture diagram, authored with the README rewrite
+- [ ] Short demo recording → GIF at the top of `README.md`. Last item in the phase: it should show
+a working expense recorder, not the friction-limited one. Recording it early against the current
+build is still worthwhile as a private friction-finding exercise — it surfaces exactly the UX
+problems the capture work above is meant to fix — but the published artifact comes last.
 
 ### Phase 1 — Reconciliation engine
 
@@ -356,6 +480,8 @@ LLM-fallback extraction architecture above rather than building a separate one-o
 
 - [ ] Hand-label a golden set of real statement-line → ledger-entry matches/non-matches
 - [ ] Score the matcher: precision/recall/F1
+- [ ] Tune the date window against the golden set rather than inheriting a constant — Actual
+Budget's ±7 days is a starting point to measure, not a value to copy (see Constraints)
 - [ ] Expand the pytest suite to cover matcher edge cases surfaced by the golden set
 - [ ] Document the methodology
 
@@ -371,11 +497,18 @@ LLM-fallback extraction architecture above rather than building a separate one-o
 - [ ] Weekly digest (Telegram)
 - [ ] Reconciled vs. unreconciled breakdown
 
-### Phase 5 — Packaging & capstone
+### Phase 5 — Reliability hardening & packaging refresh
 
-- [ ] Rewrite `README.md` as a case study: problem, architecture, decisions, eval metrics, what's
-next
-- [ ] Architecture diagram
+The case-study README and architecture diagram moved to the end of Phase 0 on 2026-08-20, so this
+phase is no longer the project's first packaging pass — it's the pass that brings the published
+material back in line with a system that by then has reconciliation, an eval harness, splitting and
+budgeting in it.
+
+- [ ] Refresh the case-study `README.md` and architecture diagram against the shipped Phase 1-4
+system — in particular the eval metrics, which don't exist yet at the Phase 0 writeup
+- [ ] Error alerting beyond the Phase 1 Telegram pipeline-failure alert, extended to cover
+`.github/workflows/backup.yml` (see "Still outstanding")
+- [ ] Revisit the deferred git-history purge of `.venv/` and `data/ledger.db`
 
 ## How to resume a session
 
