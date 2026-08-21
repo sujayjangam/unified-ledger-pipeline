@@ -13,11 +13,14 @@ even if the roadmap lists it as next.
 ## What this is
 
 A household expense ledger with two ingestion paths into one Postgres database:
-1. A Telegram bot that accepts voice notes, transcribes them (OpenAI Whisper), extracts structured
-   transaction data (GPT-4o-mini + Pydantic), and asks for confirmation before saving.
+1. A Telegram bot that accepts voice notes or plain text messages, transcribes voice notes (OpenAI
+   Whisper), extracts structured transaction data (GPT-4o-mini + Pydantic), and asks for
+   confirmation before saving.
 2. A small FastAPI REST API (`app/main.py`) for programmatic entry.
 
-See `ARCHITECTURE.md` for the reasoning behind the Cloud Run / OpenAI API decisions, and
+Design decisions live in `docs/decisions/` as numbered ADRs (`docs/decisions/README.md` is the
+index) — read the relevant one before re-opening a settled choice, and add a new record rather
+than editing an accepted one. `ARCHITECTURE.md` is now just an index into them. See
 `docs/system_flow.md` / `docs/voice_capture_mvp_flow.md` for the data lifecycle and bot UX flow.
 `docs/SCHEMA.md` is the canonical schema reference — read it before changing table columns.
 
@@ -58,7 +61,12 @@ pip install -r requirements.txt
 alembic upgrade head
 
 # Run the Telegram bot locally (blocking long-poll loop, no ngrok/webhook needed)
+# NOTE: this uses TELEGRAM_BOT_TOKEN from .env - i.e. the PRODUCTION bot - and polling
+# deletes that bot's registered webhook. Use app.bot_local below for testing instead.
 python -m app.bot_polling
+
+# Run against the separate test bot (reads .env.local over .env) - see docs/LOCAL_TESTING.md
+python -m app.bot_local
 
 # Run the production-style webhook server locally
 uvicorn app.bot_webhook:app_fastapi --reload --port 8080
@@ -95,6 +103,13 @@ Docker (Cloud Run deployment target): `Dockerfile` installs `requirements.txt` a
 - `WEBHOOK_URL` — optional, only used by `bot_webhook.py` to register the Telegram webhook.
 - `ALLOWED_ACCOUNTS` — optional, feeds the extraction prompt's list of valid payment methods.
 
+`.env.local` (gitignored via the `.env.*` rule, which exists because git reads `.env` as a literal
+filename rather than a prefix) is the local-testing overlay: it holds only `TELEGRAM_BOT_TOKEN` for
+a second BotFather bot and a Neon-branch `DATABASE_URL`. `app/bot_local.py` loads it with
+`override=True` *before* importing `bot_core`, whose own `load_dotenv()` defaults to
+`override=False` and so fills in the remaining keys from `.env` without disturbing the overrides —
+one copy of each secret on disk. See `docs/LOCAL_TESTING.md`.
+
 ## Architecture
 
 ### Bot: transport vs. logic split
@@ -108,26 +123,51 @@ transports:
   `POST /webhook` endpoint and managing PTB init/shutdown via a `lifespan` context manager (needed
   because Cloud Run sleeps idle containers, so polling isn't viable there).
 
-### Voice note pipeline (`handle_voice` in `bot_core.py`)
-1. Download the voice file to a temp `.ogg` (closed immediately after creation to avoid a Windows
-   file-lock before Telegram writes to it).
-2. `app/services/transcription.py::transcribe_audio` → OpenAI Whisper (`language="en"` is pinned
-   deliberately — omitting it caused the model to randomly switch transcription languages).
-3. `app/services/extraction.py::extract_transactions` → GPT-4o-mini with structured output
+### Ingestion pipeline (`bot_core.py`)
+
+Two entry points converge on one shared function. **Put new extraction/inference logic in
+`process_expense_text`, not in a handler** — anything added to a handler only works for that one
+input type.
+
+- `handle_voice` (`filters.VOICE`) — downloads the voice file to a temp `.ogg` (closed immediately
+  after creation to avoid a Windows file-lock before Telegram writes to it), transcribes it via
+  `app/services/transcription.py::transcribe_audio` → OpenAI Whisper (`language="en"` is pinned
+  deliberately — omitting it caused the model to randomly switch transcription languages), then
+  hands the transcript to `process_expense_text`. The `try/finally` temp-file cleanup lives here
+  and is voice-specific.
+- `handle_text` (`filters.TEXT & ~filters.COMMAND`) — no transcription step; the message body goes
+  straight to `process_expense_text`. `~filters.COMMAND` is what keeps `/recent`, `/today` etc. on
+  their `CommandHandler`s.
+- `handle_unsupported` (`~filters.VOICE & ~filters.TEXT`) — photos, video, stickers, documents and
+  locations. Before this existed they matched no handler at all, so PTB dropped them silently and
+  the user got no reply, which is indistinguishable from the bot being down. A photo *with* a
+  caption lands here too: `filters.TEXT` matches `message.text`, and a captioned photo carries
+  `caption`, not `text`.
+
+`process_expense_text(update, context, raw_text, status_msg)` is the shared pipeline. `status_msg`
+is a parameter rather than created inside because each transport shows a different message while it
+works (voice echoes the transcript back, text has nothing to echo); every branch inside then *edits*
+that one message rather than sending new ones, so a user is left with exactly one message per entry
+attempt. It does:
+
+1. `app/services/extraction.py::extract_transactions` → GPT-4o-mini with structured output
    (`response_format=TransactionList`, a Pydantic model) to pull amount, currency, category,
-   payment method, transaction type, and date out of the raw transcript. The raw transcript itself
+   payment method, transaction type, and date out of the raw text. The raw input itself
    is kept as `description` rather than an LLM-generated summary — earlier versions summarized and
    that drifted into non-English languages.
-4. V1 intentionally rejects voice notes containing more than one detected expense (asks the user to
+2. V1 intentionally rejects input containing more than one detected expense (asks the user to
    resend one at a time) — `TransactionList` already supports multiple, this is just a product
    guardrail, not a technical limit.
-5. Payment method / account owner inference: if category is `YouTrip top-up` the payment method is
+3. If `amount` came back `None`, the entry is abandoned with a prompt to try again — the extraction
+   prompt is deliberately told never to guess an amount, so a missing one means the input genuinely
+   didn't contain a price. This is the branch a non-expense message ("hello") lands on.
+4. Payment method / account owner inference: if category is `YouTrip top-up` the payment method is
    forced to the primary Sujay account and type is set to `Transfer`; otherwise a missing payment
    method falls back to `YouTrip` for non-SGD amounts or the sender's default account (index 0 in
    `ACCOUNT_OWNERS`) for SGD. `account_owner` is then derived by reverse-matching the payment
    method against `ACCOUNT_OWNERS` (case-insensitive), except `Cash`, which is always attributed to
    the sender.
-6. The pending transaction is stashed in `context.user_data['pending_transaction']` and only
+5. The pending transaction is stashed in `context.user_data['pending_transaction']` and only
    written to the DB after the user taps the inline "Confirm" button (`handle_button_click`),
    which calls `app/add_expense.py::add_expense`.
 
