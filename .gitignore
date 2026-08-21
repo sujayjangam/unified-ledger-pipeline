@@ -13,6 +13,10 @@ data/ledger.db.pre-migration-backup
 
 # API key for telegram and other env variables
 .env
+# ...and every variant of it (.env.local holds the local-testing bot token). The ".env"
+# rule above does NOT cover these - git reads it as a literal filename, not a prefix.
+.env.*
+!.env.example
 
 # Private job-search/portfolio notes, not part of the public project docs
 claude-jobhunt-context.md

@@ -61,7 +61,12 @@ pip install -r requirements.txt
 alembic upgrade head
 
 # Run the Telegram bot locally (blocking long-poll loop, no ngrok/webhook needed)
+# NOTE: this uses TELEGRAM_BOT_TOKEN from .env - i.e. the PRODUCTION bot - and polling
+# deletes that bot's registered webhook. Use app.bot_local below for testing instead.
 python -m app.bot_polling
+
+# Run against the separate test bot (reads .env.local over .env) - see docs/LOCAL_TESTING.md
+python -m app.bot_local
 
 # Run the production-style webhook server locally
 uvicorn app.bot_webhook:app_fastapi --reload --port 8080
@@ -97,6 +102,13 @@ Docker (Cloud Run deployment target): `Dockerfile` installs `requirements.txt` a
   the uninstalled `psycopg2` dialect and fail).
 - `WEBHOOK_URL` — optional, only used by `bot_webhook.py` to register the Telegram webhook.
 - `ALLOWED_ACCOUNTS` — optional, feeds the extraction prompt's list of valid payment methods.
+
+`.env.local` (gitignored via the `.env.*` rule, which exists because git reads `.env` as a literal
+filename rather than a prefix) is the local-testing overlay: it holds only `TELEGRAM_BOT_TOKEN` for
+a second BotFather bot and a Neon-branch `DATABASE_URL`. `app/bot_local.py` loads it with
+`override=True` *before* importing `bot_core`, whose own `load_dotenv()` defaults to
+`override=False` and so fills in the remaining keys from `.env` without disturbing the overrides —
+one copy of each secret on disk. See `docs/LOCAL_TESTING.md`.
 
 ## Architecture
 

@@ -67,8 +67,13 @@ pip install -r requirements.txt
 # Initialize the DB (Alembic creates the `transactions` table)
 alembic upgrade head
 
-# Run the Telegram bot locally (blocking long-poll loop, no ngrok/webhook needed)
+# Run the Telegram bot locally (blocking long-poll loop, no ngrok/webhook needed).
+# Polling deletes the registered webhook of whichever token it runs with, so for testing
+# use the runner below instead - it drives a separate test bot. See docs/LOCAL_TESTING.md.
 python -m app.bot_polling
+
+# Run against a separate test bot, reading .env.local over .env
+python -m app.bot_local
 
 # Run the production-style webhook server locally
 uvicorn app.bot_webhook:app_fastapi --reload --port 8080
@@ -114,4 +119,6 @@ blocking, and links to the GitHub issues tracking active work.
 - [`docs/SCHEMA.md`](docs/SCHEMA.md) — canonical schema reference
 - [`docs/BACKUP_RESTORE.md`](docs/BACKUP_RESTORE.md) — backup cadence/retention and the restore
   procedure
+- [`docs/LOCAL_TESTING.md`](docs/LOCAL_TESTING.md) — running the bot locally against a separate
+  test bot, without disturbing the deployed one
 - [`ROADMAP.md`](ROADMAP.md) — current phase, status, and plan
