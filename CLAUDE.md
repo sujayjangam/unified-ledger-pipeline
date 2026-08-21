@@ -18,7 +18,9 @@ A household expense ledger with two ingestion paths into one Postgres database:
    confirmation before saving.
 2. A small FastAPI REST API (`app/main.py`) for programmatic entry.
 
-See `ARCHITECTURE.md` for the reasoning behind the Cloud Run / OpenAI API decisions, and
+Design decisions live in `docs/decisions/` as numbered ADRs (`docs/decisions/README.md` is the
+index) — read the relevant one before re-opening a settled choice, and add a new record rather
+than editing an accepted one. `ARCHITECTURE.md` is now just an index into them. See
 `docs/system_flow.md` / `docs/voice_capture_mvp_flow.md` for the data lifecycle and bot UX flow.
 `docs/SCHEMA.md` is the canonical schema reference — read it before changing table columns.
 

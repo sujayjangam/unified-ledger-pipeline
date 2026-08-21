@@ -19,213 +19,49 @@ doesn't map to anything in the actual system. Use, and refine once Phase 1/2 lan
 
 ## Current status
 
-**Phase:** Phase 0 — scope extended 2026-08-20, see below. Postgres migration is fully closed out
-(see 2026-08-05 below). The scheduled `pg_dump` → GCS backup (#7) is built, infra-verified, and now
-restore-verified as of 2026-08-13 — see "What happened today (2026-08-13)" below. #7 is closed.
-**Next action:** Capture reliability — [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15)
-(backdated date parsing) and [#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9)
-(timestamp/ordering), then edit/delete and text ingestion. Full ordering in the Phase 0 checklist.
+**Phase:** Phase 0 — Foundation & ownership. Scope was extended on 2026-08-20 to cover capture
+friction before moving to Phase 1; see
+[ADR-0017](docs/decisions/0017-extend-phase-0-for-capture-friction.md).
 
-**What happened today (2026-08-20) — extending Phase 0 instead of opening Phase 1:**
-- **Capture friction is the binding constraint on ledger data quality**, not capacity or
-  reliability. Real usage sits below what the system was built for because entering an expense is
-  harder than it should be — voice is the only ingestion path, nothing can be corrected after it's
-  saved, and every entry is stamped with today's date regardless of what was actually said.
-- This reclassifies two open issues. #15 ("voice notes always get today's date") is not a
-  date-parsing nicety: because dates can't be backdated, the system forces logging *at the moment
-  of spend*, which is exactly when a voice note is least usable (restaurant, office, public
-  transport). #9 (no reliable ordering) is the integrity half of the same problem — what does get
-  captured can't be reliably sequenced. Both gate whether captured data is correct and whether
-  capture happens at all, so neither is deferrable behind Phase 1.
-- **README case study, architecture diagram and demo recording moved out of Phase 5 to the end of
-  Phase 0.** They were scheduled last on the assumption that documentation should describe a
-  finished system. That assumption has aged badly: the decision log has grown large enough
-  (Postgres migration, the `postgresql+psycopg://` scheme trap, WIF over stored service-account
-  keys, `-Fc` over plain SQL, the pooled-endpoint restore gotcha) that writing it up while the
-  reasoning is fresh is both cheaper and more accurate than reconstructing it several phases later.
-  Placing it at the *end* of Phase 0 rather than the start means it documents a working expense
-  recorder instead of the current friction-limited one.
-- **Pytest suite sequenced immediately before those documentation items.** The suite's job is to
-  prove the expense-recording paths actually work — which is the same claim the README makes, so
-  the evidence should exist before the claim is published.
-- The webhook idempotency deferral is now explicitly time-limited rather than open-ended — its
-  justification depends on low volume, and low volume is the thing being fixed. See the Phase 0
-  checklist.
+**Shipped:** the Neon Postgres migration ([#2](https://github.com/sujayjangam/unified-ledger-pipeline/issues/2)) and Cloud Run cutover ([#4](https://github.com/sujayjangam/unified-ledger-pipeline/issues/4)); the
+6-hourly `pg_dump` → GCS backup ([#7](https://github.com/sujayjangam/unified-ledger-pipeline/issues/7)), infra-verified and restore-verified 2026-08-13;
+text ingestion ([#16](https://github.com/sujayjangam/unified-ledger-pipeline/issues/16)), 2026-08-21.
 
-**What happened today (2026-08-13) — restore-verifying the scheduled backup (#7):**
-- Ran the Neon-branch restore drill from `docs/BACKUP_RESTORE.md`: created a scratch branch,
-  emptied `public` via `DROP SCHEMA ... CASCADE` / `CREATE SCHEMA public`, downloaded the latest
-  `pg_dump` object from GCS, and `pg_restore`'d it in.
-- Verification used `SELECT currency, COUNT(*), SUM(amount) FROM transactions GROUP BY currency`
-  instead of the plain `SUM(amount)` in the doc's original example — this is a multi-currency
-  ledger with no FX conversion anywhere in the codebase, so an un-grouped `SUM(amount)` mixes
-  currencies and is meaningless as a check. Grouped by currency, every value matched between the
-  branch and `main` except MYR, which was short exactly one row/amount — the one transaction
-  recorded after the backup ran. That mismatch matching the known gap exactly is what confirms the
-  dump/restore round-trip is faithful, not corrupting or dropping data.
-- Hit a false failure first: ran the "empty the branch" step in the Neon console SQL Editor and the
-  restore/verify steps locally via `psql`/`pg_restore` against the pooled (`-pooler`) endpoint. The
-  local session couldn't see the restored table at all (`relation "transactions" does not exist`)
-  even after a clean `pg_restore` exit, while the console still showed the branch's original
-  pre-drop data. Root cause not fully isolated, but redoing the entire drill in one
-  session/connection (local `psql`, direct/unpooled endpoint, no console SQL Editor involved)
-  resolved it cleanly. `docs/BACKUP_RESTORE.md` updated with this as a documented gotcha.
-- Postgres client tools (`psql`, `pg_restore` 18.4 — version-matched to Neon and the pinned
-  `pg_dump` client) installed into the `ledger-env` micromamba env for this
-  (`micromamba install -n ledger-env -c conda-forge postgresql`); they weren't present locally
-  before. Also discovered the project's own `.venv/` is stale/broken (no interpreter) — `ledger-env`
-  is the real working environment; `.venv` should be ignored or cleaned up in a future session.
+**Next action:** [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) (backdated date parsing), then [#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) (business date vs.
+ingestion timestamp), then the pending-transaction edit path. Full ordering in the Phase 0
+checklist below.
 
-**What happened today (2026-08-12) — building the scheduled backup (#7):**
-- Chose GitHub Actions (scheduled `cron`, every 6 hours) over Cloud Scheduler + Cloud Run Job,
-  specifically because the repo is public and this project already had one incident from
-  invisible GCP-side config (the `DATABASE_URL` secret gap below) — a GCP-side-only backup job
-  would repeat that blind spot. GitHub Actions keeps the schedule versioned and reviewable in the
-  repo instead.
-- Auth via Workload Identity Federation, not a stored service-account key — no long-lived GCP
-  credential exists anywhere in GitHub, which matters more than usual since this repo is public.
-  Built: GCS bucket `unified-ledger-pg-backups-458614017842` (asia-southeast1,
-  uniform-bucket-level-access, public-access-prevention enforced, 30-day Delete lifecycle rule),
-  service account `pg-backup-runner` (bucket-scoped `storage.objectAdmin` + secret-scoped
-  `secretmanager.secretAccessor` on `DATABASE_URL` only, not project-wide), Workload Identity Pool
-  `github-actions-pool` + OIDC provider `github-actions-provider` with an attribute condition
-  restricted to this exact repo *and* `refs/heads/main`.
-- Dump format: `pg_dump -Fc` (custom format), not plain SQL — chosen for TOC-based inspection
-  (`pg_restore -l`) and selective/parallel restore, which starts to matter once the schema grows
-  past one table (Phase 1's staging table, Phase 3's `participants`/`transaction_splits` — already
-  committed phases, not speculation).
-- `.github/workflows/backup.yml` added (first CI/CD file in this repo) and
-  `docs/BACKUP_RESTORE.md` added, covering why a Neon branch (not local Postgres) is the right
-  restore-drill target, and the manual row-level reconciliation pattern for getting recovered data
-  back into production (a `pg_dump` backup is a full-database snapshot, not a per-transaction undo
-  tool — production is never `pg_restore`'d into directly).
-- Failure alerting deliberately deferred — Phase 1 already plans a Telegram alert for pipeline
-  failures; extending it to cover this workflow is future work, not part of this task.
-- Verification still open at time of writing: the actual Neon-branch restore drill (download a
-  backup, empty a branch, `pg_restore` into it, confirm row count/`SUM(amount)`) hasn't run yet —
-  that result is the evidence that actually closes #7, not just the workflow existing.
+**Open top-level issues:** [#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) ordering · [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) backdated dates ·
+[#17](https://github.com/sujayjangam/unified-ledger-pipeline/issues/17) unused REST API · [#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22) entries can't be corrected ·
+[#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27) unpinned dependencies.
+Read the list without sub-issue noise with `gh issue list --search "no:parent-issue"`.
 
-**What happened today (2026-08-05) — closing the `DATABASE_URL` gap:**
-- Created `DATABASE_URL` in Secret Manager and attached it to `unified-ledger-bot`
-  (`gcloud run services update --update-secrets`) — same pattern as `OPENAI_API_KEY`/
-  `TELEGRAM_BOT_TOKEN`. First deploy (revision `...-00031`) started cleanly.
-- First real voice-note confirm attempt then failed with `No module named 'psycopg2'`. Root cause
-  wasn't the secret's GUI "type" field (a red herring) — it was the connection string's scheme.
-  `requirements.txt` installs `psycopg` (v3), but a plain `postgresql://` URL makes SQLAlchemy
-  default to the (uninstalled) `psycopg2` dialect. Fix: `postgresql+psycopg://...`.
-- The secret was deleted and recreated with the corrected string, which silently wiped its IAM
-  binding (a new secret resource needs its own grant even with the same name) — re-granted
-  `roles/secretmanager.secretAccessor` to the Cloud Run runtime service account
-  (`458614017842-compute@developer.gserviceaccount.com`), then redeployed (revision `...-00032`),
-  clean startup logs.
-- Forced one more redeploy (revision `...-00033`) to simulate a restart per the verification
-  checklist below — clean startup, no errors.
-- A real voice note through the live Cloud Run webhook was confirmed and saved to Neon Postgres
-  without error, closing out the last open verification item. Issues
-  [#4](https://github.com/sujayjangam/unified-ledger-pipeline/issues/4) and
-  [#2](https://github.com/sujayjangam/unified-ledger-pipeline/issues/2) closed as a result. (Note:
-  the correct "latest rows" query is `ORDER BY date DESC` — there is no `id` column, and
-  `transaction_id` is a random UUID, not sequential.)
+### Where things are written down
 
-**GitHub issues filed today** (tracked in GitHub, not narrated in full here — see the "Roadmap vs.
-GitHub issues" note below):
-- [#7](https://github.com/sujayjangam/unified-ledger-pipeline/issues/7) — Scheduled pg_dump backup
-  to GCS.
-- [#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) (parent) — Schema
-  conflates business date with system ingestion timestamp → sub-issues
-  [#10](https://github.com/sujayjangam/unified-ledger-pipeline/issues/10)-[#14](https://github.com/sujayjangam/unified-ledger-pipeline/issues/14).
-- [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) (parent, sub-issues
-  TBD) — Parse relative/backdated transaction dates from voice transcript (covers "yesterday",
-  "day before yesterday", "Tuesday last week", and explicit spoken dates).
-- #8 (an early single-issue draft of #9's scope) closed as duplicate of #9.
+- **Design decisions** live in [`docs/decisions/`](docs/decisions/) as numbered ADRs — one file
+  per decision, each carrying its context, the alternatives, the issue/PR that implemented it,
+  and what it cost. **This file says where the project is going; those say why it is built the
+  way it is.**
+- **Task detail** (repro steps, sub-tasks, verification criteria) lives in GitHub issues, not
+  here. This file stays the narrative/phase layer: current phase, what's blocking, and pointers.
+- **Session narrative** ("what happened today") belongs in PR descriptions, next to the diff it
+  explains. It used to live here and grew to 41% of the file before being moved out on
+  2026-08-21.
 
-**Note on this file vs. GitHub issues as sources of truth:** as of today, task-level detail (repro
-steps, sub-task breakdowns, verification criteria) lives in GitHub issues, not here. This file
-should stay the narrative/phase-level layer — current phase, what's blocking, and a pointer to the
-relevant issue number — not a second copy of issue bodies. See "Known issues" below, which still
-needs a pass to convert into issue links rather than restated detail (open discussion, not done
-yet).
+### Environment
 
-**The Cloud Run gap (found 2026-08-03, closed 2026-08-05):** Cloud Run has built-in continuous
-deployment from this repo (a GCP-side Cloud Build trigger, invisible to a repo scan), so the
-Postgres code auto-deployed on merge — but the service was missing `DATABASE_URL`, so it ran
-without a working DB connection until today. Full detail in "What happened today" above.
-
-**Verification checklist for the fix (all items closed, 2026-08-05):**
-1. [x] GCP Console → Cloud Run → Revisions: new revision created after the secret is attached, with
-   a fresh timestamp — confirmed 3x today (revisions `...00031`, `...00032`, `...00033`).
-2. [x] Send one real voice note through the actual bot (the Cloud Run webhook, not local polling)
-   and tap Confirm — confirmed saving to Neon Postgres with no error, post-psycopg-driver-fix.
-3. [x] Row landed correctly (superseded by #2 — direct Neon SQL console spot-check wasn't needed
-   once the webhook round-trip itself confirmed a successful write with no error).
-4. [x] Force a restart (deployed a no-op revision `...00033`) — clean startup, and the subsequent
-   voice-note save (step 2) confirms data isn't lost across it.
-5. [x] Check Cloud Run logs for a clean startup (no `RuntimeError`/`NameError` during boot) —
-   clean on all three revisions today.
-
-The ledger runs on Neon Postgres. `app/database.py` is a pooled SQLAlchemy Core engine reading
-`DATABASE_URL`, Alembic owns the schema (`alembic/versions/0001_create_transactions_table.py`
-records the true live schema including the previously-undocumented `account_desc`), and every
-query is `text()` with named binds. All 21 rows migrated with checksums matching the
-pre-migration SQLite file exactly (`SUM(amount)` = 100087720, dates 2023-10-01 → 2026-05-18),
-verified locally via `python -m app.bot_polling` before merging.
-
-Still to do, unverified from this machine (no `data/` directory present here to check either way):
-rename `data/ledger.db` → `data/ledger.db.pre-migration-backup` (gitignored) once confirmed which
-machine still has the pre-migration file.
-
-**Also done this session (2026-08-03):**
-- PR #5 (`chore/untrack-venv-and-db`) merged into `main` first, via a real merge commit (not
-  squash) — `postgres-migration` was built directly on top of that commit, so merging it first
-  collapsed PR #6's diff down to just the Postgres-related commits, making it reviewable.
-- **Found and fixed a real PII leak**: `.env.example` on the `postgres-migration` branch had real
-  names (first name, "Wife") and real bank/card names (OCBC 90N, DBS Altitude, YouTrip) instead of
-  placeholders, already pushed to this **public** repo. Rewrote the branch's git history
-  (cherry-pick + amend onto `main`, not `rebase -i`) so the real values don't appear in any commit
-  reachable from `main`, force-pushed, then merged. A local-only backup branch
-  (`postgres-migration-backup-before-rewrite`) still holds the old history if ever needed — never
-  pushed anywhere.
-- Filed sub-issue #4 ("Redeploy Cloud Run with the Postgres-backed image") under issue #2 via
-  GitHub's native sub-issues (`gh issue create --parent 2`). Slightly misnamed in hindsight — see
-  "Cloud Run gap" above, the deploy already happens automatically — but it's still the right place
-  to track finishing the cutover.
-- `gcloud` CLI installed locally (`winget install --id Google.CloudSDK`, v578.0.0), authenticated
-  as `jayyjangam117@gmail.com`, active project `project-25d90722-14a9-4eca-8a0`. Existing service:
-  `unified-ledger-bot` in `asia-southeast1`.
-- Fixed a recurring environment quirk permanently, not just for this project: bare `python`/
-  `python3` was hitting a Windows **App Execution Alias** stub pointing at the Microsoft Store
-  (this broke `gcloud auth login` too — it's a machine-wide issue, not specific to this repo).
-  Disabled via Settings → Apps → Advanced app settings → App execution aliases. Also set
-  `CLOUDSDK_PYTHON` (persistent user env var) to the Cloud SDK's bundled Python so `gcloud` doesn't
-  depend on the system Python at all going forward.
-
-Environment note for future sessions (**corrected 2026-08-20** — the instruction that used to sit
-here told you to activate `.\.venv`, which stopped being true on 2026-08-13; see that entry above):
-the working environment is **`ledger-env`**, a micromamba env registered at
+The working environment is **`ledger-env`**, a micromamba env at
 `~/AppData/Roaming/mamba/envs/ledger-env` (Python 3.11.15, plus the Postgres client tools). Run
-`micromamba activate ledger-env` from the repo root. The project-local `.venv/` is a **stale,
-broken leftover** — no interpreter, just two orphaned console scripts — and should be cleaned up
-rather than activated. Always run project commands from the repo root: implicit namespace packages
-with an `app.` prefix, no `__init__.py` files, and relative paths (`alembic.ini`, `.env`) all
-assume it. (The Microsoft Store `python` alias issue above is fixed machine-wide, so a bare
-`python` no longer hits a Store stub — activation is still required to get this project's deps.)
+`micromamba activate ledger-env`. The project-local `.venv/` is a **stale, broken leftover** —
+never activate it.
 
-[Issue #1](https://github.com/sujayjangam/unified-ledger-pipeline/issues/1) (Telegram double-insert
-bug) is fixed and closed as of 2026-07-30.
-[Issue #2](https://github.com/sujayjangam/unified-ledger-pipeline/issues/2) (Neon Postgres
-migration) and sub-issue
-[#4](https://github.com/sujayjangam/unified-ledger-pipeline/issues/4) (Cloud Run redeploy) are
-both closed as of 2026-08-05 — the ledger fully runs on Neon Postgres in production, verified via
-the checklist above. Open follow-on issues:
-[#7](https://github.com/sujayjangam/unified-ledger-pipeline/issues/7) (backup),
-[#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) (timestamp/ordering, parent),
-[#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) (backdated date parsing,
-parent).
+Always run project commands **from the repo root**: implicit namespace packages with an `app.`
+prefix, no `__init__.py` files, and relative paths (`alembic.ini`, `.env`) all assume it.
 
-`.venv/` (6,427 files, ~30MB) and `data/ledger.db` were untracked from git on 2026-08-01 but
-**remain in git history** on `main` — a deliberate open decision, not an oversight. Purging them
-needs a history rewrite and force-push, same technique used for the `.env.example` PII fix above,
-just deferred for now since nothing in that history is as sensitive as real names/bank data.
+Local testing must not use the production bot token or `DATABASE_URL` — `run_polling()` deletes
+the live webhook, and there is no delete path for rows written by mistake. See
+[ADR-0019](docs/decisions/0019-separate-bot-token-for-local-testing.md).
+
 
 ## Constraints (agreed, don't relitigate without a reason)
 
@@ -243,13 +79,12 @@ intent, not as fact, and must not be restated as fact in `README.md`.
 - Real pain points, in priority order: (1) reconciling voice-logged entries against real bank/card
 statements, (2) household expense splitting, (3) budgeting & visibility. FX conversion is *not* a
 priority — statements already show converted rates.
-- Statement format to support: **PDF exports** (OCBC, DBS, YouTrip and similar) — chosen
-deliberately over cleaner CSV exports because messy real-world PDFs make a stronger
-document-extraction story.
-- Matching approach: deterministic rules (amount + date window) first, backed by a hand-labeled
-eval set reporting precision/recall — not semantic/LLM-based matching from day one. Auto-match
-only on a *unique* candidate hit; anything ambiguous (0 or 2+ candidates) routes to
-`needs_review` rather than guessing. Revisit this rule once real-world testing surfaces edge cases.
+- Statement format to support: **PDF exports** (OCBC, DBS, YouTrip and similar), chosen
+deliberately over cleaner CSV exports — [ADR-0016](docs/decisions/0016-pdf-statements-over-csv.md).
+- Matching approach: deterministic rules first, scored against a hand-labeled eval set; auto-match
+only on a *unique* candidate, anything ambiguous routes to `needs_review` —
+[ADR-0015](docs/decisions/0015-deterministic-matching-before-llm.md). Revisit once real-world
+testing surfaces edge cases.
 - Prior art for the matcher: [Actual Budget](https://github.com/actual-budget/actual) runs a
 three-stage match — exact imported transaction id, then amount + a ±7-day window + payee, then
 amount + the same window ignoring payee. Adopt the *staged* structure rather than a single rule,
@@ -270,6 +105,8 @@ second.
 1GB of changes** — it protects against "I just made a mistake," not against account/provider
 issues. Do not treat it as a backup. A scheduled logical backup (`pg_dump` → GCS free tier) is a
 required Phase 0/1 deliverable, not optional, given the years-long intended lifetime of this data.
+Built as [ADR-0012](docs/decisions/0012-github-actions-over-cloud-scheduler.md) /
+[ADR-0014](docs/decisions/0014-pg-dump-custom-format.md).
 - Reliability is in scope now, not deferred: automated backups, structured logging, basic CI, a
 pytest test suite, and error alerting.
 - Packaging: the project's presentation deliverable is a case-study `README.md` — problem →
@@ -417,8 +254,17 @@ leverage of the group: without it every entry must be logged at the moment of sp
 - [ ] Edit and delete path. No `UPDATE` or `DELETE` statement exists anywhere in `app/` — a wrong
 extraction is currently permanent, which is also what hollows out the human-in-the-loop claim: the
 human is in the loop for a few seconds at confirm time and never again. No issue filed yet.
-- [ ] Text ingestion alongside voice. Voice is unusable in most real spending moments (restaurant,
+- [x] Text ingestion alongside voice. Voice is unusable in most real spending moments (restaurant,
 office, public transport), so voice-only capture caps volume by design — [#16](https://github.com/sujayjangam/unified-ledger-pipeline/issues/16).
+Shipped 2026-08-21: `handle_voice` and the new `handle_text` both feed one shared
+`process_expense_text`, and a third handler replies to input types the bot can't read instead of
+dropping them silently.
+- [ ] Pending-transaction **edit** path — the confirm card should be Confirm/Edit/Cancel, so a wrong
+extraction can be corrected before saving rather than only accepted whole or discarded. This is
+`context.user_data` state only, no DB write, which is what makes it separable from
+[#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22) (editing *saved* rows, which
+needs a hard-vs-soft-delete decision first). The field picker built here is reusable for #22. No
+issue filed yet.
 - [ ] Drop the one-expense-per-voice-note guardrail in `app/bot_core.py` — `TransactionList`
 already models multiple; this is a product restriction, not a technical limit.
 - [ ] Webhook idempotency — persist the `update_id` dedupe in Postgres instead of process memory.
@@ -483,6 +329,12 @@ LLM-fallback extraction architecture above rather than building a separate one-o
 - [ ] Tune the date window against the golden set rather than inheriting a constant — Actual
 Budget's ±7 days is a starting point to measure, not a value to copy (see Constraints)
 - [ ] Expand the pytest suite to cover matcher edge cases surfaced by the golden set
+- [ ] **Auto-categorisation rules** — derive `token → category` rules from confirmed
+`transactions` history (`description` holds the raw input, `category` holds the human-confirmed
+answer), so common entries resolve without an LLM call at all. Sits in this phase rather than
+Phase 0 because the support/purity thresholds want the eval harness to tune them rather than being
+guessed. Note nothing in the codebase consults history for anything today — the `ACCOUNT_OWNERS`
+reverse-lookup in `bot_core.py` is the same *shape* but is hand-maintained from env, not derived.
 - [ ] Document the methodology
 
 ### Phase 3 — Household splitting

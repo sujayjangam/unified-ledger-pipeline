@@ -106,7 +106,9 @@ blocking, and links to the GitHub issues tracking active work.
 
 ## Docs
 
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) — design decisions and trade-offs
+- [`docs/decisions/`](docs/decisions/) — numbered Architecture Decision Records: why each
+  choice was made, what was rejected, and what it cost
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — index into the decision records, grouped by area
 - [`docs/system_flow.md`](docs/system_flow.md) — end-to-end data lifecycle
 - [`docs/voice_capture_mvp_flow.md`](docs/voice_capture_mvp_flow.md) — bot UX flow
 - [`docs/SCHEMA.md`](docs/SCHEMA.md) — canonical schema reference
