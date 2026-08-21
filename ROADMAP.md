@@ -27,13 +27,19 @@ friction before moving to Phase 1; see
 6-hourly `pg_dump` → GCS backup ([#7](https://github.com/sujayjangam/unified-ledger-pipeline/issues/7)), infra-verified and restore-verified 2026-08-13;
 text ingestion ([#16](https://github.com/sujayjangam/unified-ledger-pipeline/issues/16)), 2026-08-21.
 
-**Next action:** [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) (backdated date parsing), then [#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) (business date vs.
-ingestion timestamp), then the pending-transaction edit path. Full ordering in the Phase 0
-checklist below.
+**Next action:** [#31](https://github.com/sujayjangam/unified-ledger-pipeline/issues/31) §3a only —
+the CI scaffolding and the tests that don't depend on the capture paths, so a merge can't take the
+deployed bot down unnoticed. Then back to capture: [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) (backdated date parsing),
+[#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) (business date vs. ingestion
+timestamp), then the pending-transaction edit path. Full ordering in the Phase 0 checklist below.
 
 **Open top-level issues:** [#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) ordering · [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) backdated dates ·
 [#17](https://github.com/sujayjangam/unified-ledger-pipeline/issues/17) unused REST API · [#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22) entries can't be corrected ·
-[#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27) unpinned dependencies.
+[#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27) unpinned dependencies ·
+[#28](https://github.com/sujayjangam/unified-ledger-pipeline/issues/28) stale flow docs ·
+[#29](https://github.com/sujayjangam/unified-ledger-pipeline/issues/29) double-tap Confirm shows a
+false error · [#31](https://github.com/sujayjangam/unified-ledger-pipeline/issues/31) nothing
+verifies a change automatically.
 Read the list without sub-issue noise with `gh issue list --search "no:parent-issue"`.
 
 ### Where things are written down
@@ -169,8 +175,10 @@ practice.
 structured logging — failures are invisible in production.
 - `needs_review` is extracted by `app/services/extraction.py` but never acted on anywhere — the
 human-in-the-loop claim doesn't hold until this actually gates bot behavior.
-- No automated test suite. The in-memory-SQLite smoke test written during the migration was
-throwaway; it should be turned into real pytest coverage.
+- No automated test suite, and no CI: a change is verified only by a person running the bot by hand
+once, and nothing gates a merge. The in-memory-SQLite smoke test written during the migration was
+throwaway. Tracked as [#31](https://github.com/sujayjangam/unified-ledger-pipeline/issues/31);
+scope and sequencing in §3a/§3b of the Phase 0 plan.
 - A stray empty `ledger.db` sits at the repo root (untracked, harmless).
 - `.venv/` and `data/ledger.db` are untracked as of 2026-08-01 but **still present in git
 history** — purging needs a rewrite + force-push, deliberately deferred.
@@ -239,9 +247,14 @@ tracked in [#7](https://github.com/sujayjangam/unified-ledger-pipeline/issues/7)
 GCP-side Cloud Scheduler job — see "What happened today (2026-08-12)" above for why, and
 `docs/BACKUP_RESTORE.md` for the restore procedure.
 
-**Ordering within the rest of Phase 0 (set 2026-08-20):** capture reliability first, then
-correctness/observability, then the test suite, then packaging. The suite proves the recording
-paths work; the packaging items publish that claim, so the evidence is produced before the claim.
+**Ordering within the rest of Phase 0 (set 2026-08-20, amended 2026-08-21):** capture reliability
+first, then correctness/observability, then the test suite, then packaging. The suite proves the
+recording paths work; the packaging items publish that claim, so the evidence is produced before
+the claim.
+
+Amended 2026-08-21: the CI scaffolding and the tests that don't depend on the capture paths move
+*ahead* of the rest of capture reliability — see §3a for why the original reasoning doesn't reach
+them. Everything else keeps its place.
 
 **1. Capture reliability** — the binding constraint on data quality; see 2026-08-20 above.
 
@@ -251,9 +264,11 @@ leverage of the group: without it every entry must be logged at the moment of sp
 - [ ] Business date vs. system ingestion timestamp, and reliable ordering —
 [#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) (parent) + sub-issues
 [#10](https://github.com/sujayjangam/unified-ledger-pipeline/issues/10)-[#14](https://github.com/sujayjangam/unified-ledger-pipeline/issues/14).
-- [ ] Edit and delete path. No `UPDATE` or `DELETE` statement exists anywhere in `app/` — a wrong
-extraction is currently permanent, which is also what hollows out the human-in-the-loop claim: the
-human is in the loop for a few seconds at confirm time and never again. No issue filed yet.
+- [ ] Edit and delete path for *saved* rows — [#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22).
+No `UPDATE` or `DELETE` statement exists anywhere in `app/`, so a wrong extraction is permanent,
+which is also what hollows out the human-in-the-loop claim: the human is in the loop for a few
+seconds at confirm time and never again. Needs a hard-vs-soft-delete decision first, which is what
+separates it from the two `context.user_data`-only recovery paths below.
 - [x] Text ingestion alongside voice. Voice is unusable in most real spending moments (restaurant,
 office, public transport), so voice-only capture caps volume by design — [#16](https://github.com/sujayjangam/unified-ledger-pipeline/issues/16).
 Shipped 2026-08-21: `handle_voice` and the new `handle_text` both feed one shared
@@ -265,6 +280,13 @@ extraction can be corrected before saving rather than only accepted whole or dis
 [#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22) (editing *saved* rows, which
 needs a hard-vs-soft-delete decision first). The field picker built here is reusable for #22. No
 issue filed yet.
+- [ ] Missing-amount recovery — when extraction returns no amount, `process_expense_text` abandons
+the entry with a text prompt, so the user has to start over from scratch. Offer
+`[Manual Entry]` / `[New Voice Note]` buttons instead, keeping the raw text already captured.
+Specified but never built in the MVP flow doc that
+[#28](https://github.com/sujayjangam/unified-ledger-pipeline/issues/28) retired — salvaged here
+before deleting it, so the idea outlives the file. Belongs with the edit path above: both are
+recovery paths over `context.user_data` with no DB write. No issue filed yet.
 - [ ] Drop the one-expense-per-voice-note guardrail in `app/bot_core.py` — `TransactionList`
 already models multiple; this is a product restriction, not a technical limit.
 - [ ] Webhook idempotency — persist the `update_id` dedupe in Postgres instead of process memory.
@@ -282,18 +304,60 @@ human-in-the-loop framing to hold up under questioning)
 contradicting `docs/SCHEMA.md`. Prefer absent (`NULL`) over silently incorrect until an FX source
 exists.
 
-**3. Test suite** — sequenced after the capture work and before packaging, deliberately: its
-primary job is to prove every expense-recording path actually works, so it has to run against the
-finished capture paths rather than the ones being replaced.
+**3. Test suite and CI** — split in three on 2026-08-21. This section originally sat entirely
+after capture reliability, on the grounds that the suite's primary job is to prove every
+expense-recording path works, so it should run against the finished capture paths rather than the
+ones being replaced. That reasoning holds — but only for end-to-end ingestion coverage. It doesn't
+reach the CI scaffolding, or tests over code the capture work never touches. Meanwhile nothing
+stops a merge that breaks the bot on startup from reaching production: `main` is unprotected and
+the deploy trigger is GCP-side and invisible from this repo (see
+[ADR-0012](docs/decisions/0012-github-actions-over-cloud-scheduler.md), written about exactly that
+blind spot). So the parts that don't depend on capture move ahead of it, and the parts that do stay
+where they were.
 
-- [ ] Pytest test suite — starts here, grows with each phase (this is a distinct artifact from
-the Phase 2 evaluation harness: this is correctness/regression, the harness is match *quality*).
-First coverage targets: every ingestion path end to end, `add_expense` validation and the
-idempotency-key path, extraction schema parsing, and the period boundaries in
-`app/services/utils.py` / `app/services/ledger_queries.py`.
-- [ ] Basic CI: lint + test suite on push
+The pytest suite starts here and grows with each phase. It is a distinct artifact from the Phase 2
+evaluation harness: this is correctness/regression, the harness is match *quality*.
+
+**3a. Before the rest of §1** — scaffolding and stable-target tests, tracked as
+[#31](https://github.com/sujayjangam/unified-ledger-pipeline/issues/31) (parent), with
+[#32](https://github.com/sujayjangam/unified-ledger-pipeline/issues/32),
+[#33](https://github.com/sujayjangam/unified-ledger-pipeline/issues/33) and
+[#34](https://github.com/sujayjangam/unified-ledger-pipeline/issues/34) as the minimum slice.
+
+**This is a soft gate, deliberately.** It stops a merge that fails to load — syntax errors, bad
+imports, a missing dependency, an import-time crash — which is the class that takes the deployed
+bot down on startup. It does **not** catch a handler that throws at runtime, a malformed query, or
+a broken prompt, and a green check must not be read as "the bot works". Coverage of the
+expense-recording paths themselves is §3b, and waits until the `area:capture` work is finished so
+it tests the paths that survive rather than the ones being replaced.
+
+Bounded deliberately to what the capture work won't rewrite:
+
+- [ ] CI on pull request: clean install from `requirements.txt`, lint, and an import smoke check
+across `app/`. The import check is what catches a merge that would take the deployed bot down on
+startup; the clean install doubles as the evidence
+[#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27) needs.
+- [ ] Pytest harness, with test-only dependencies in a separate `requirements-dev.txt` so
+`requirements.txt` keeps meaning "what production needs" — otherwise the check above can't answer
+#27.
+- [ ] Stable-target tests: money conversion, the period boundaries in `app/services/utils.py` /
+`app/services/ledger_queries.py`, handler routing, and extraction schema parsing against recorded
+response JSON. No network and no billable API calls anywhere in the suite.
+- [ ] Migrations apply from scratch (`alembic upgrade head` against a throwaway Postgres service
+container), plus `add_expense` validation and the `ON CONFLICT (idempotency_key)` path against it.
+- [ ] Branch protection on `main` requiring those checks — **last**, and only once they are green,
+or the branch becomes unmergeable.
+
+**3b. After §1 completes** — coverage that has to run against the finished capture paths:
+
+- [ ] Every ingestion path end to end, against the capture paths as §1 leaves them — not the ones
+being replaced.
+- [ ] Extend routing coverage to the callback handlers the pending-transaction edit path adds.
+
+**3c. Ownership pass** — not a testing task, and it needs to survive §3a/§3b being ticked off:
+
 - [ ] Deliberate pass through the AI-assisted async/Pydantic/FastAPI-lifespan code — rewrite or
-annotate until it can be defended live, not just described
+annotate until it can be defended live, not just described.
 
 **4. Packaging** — moved here from Phase 5 on 2026-08-20.
 

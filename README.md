@@ -41,9 +41,7 @@ Postgres via a pooled SQLAlchemy Core engine, with Alembic owning schema migrati
 every 6 hours to GCS with 30-day rolling retention — see
 [`docs/BACKUP_RESTORE.md`](docs/BACKUP_RESTORE.md).
 
-See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the reasoning behind these decisions, and
-[`docs/system_flow.md`](docs/system_flow.md) / [`docs/voice_capture_mvp_flow.md`](docs/voice_capture_mvp_flow.md)
-for the full data lifecycle and bot UX flow.
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the reasoning behind these decisions.
 
 ## Tech stack
 
@@ -114,8 +112,6 @@ blocking, and links to the GitHub issues tracking active work.
 - [`docs/decisions/`](docs/decisions/) — numbered Architecture Decision Records: why each
   choice was made, what was rejected, and what it cost
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — index into the decision records, grouped by area
-- [`docs/system_flow.md`](docs/system_flow.md) — end-to-end data lifecycle
-- [`docs/voice_capture_mvp_flow.md`](docs/voice_capture_mvp_flow.md) — bot UX flow
 - [`docs/SCHEMA.md`](docs/SCHEMA.md) — canonical schema reference
 - [`docs/BACKUP_RESTORE.md`](docs/BACKUP_RESTORE.md) — backup cadence/retention and the restore
   procedure
