@@ -204,129 +204,163 @@ async def cat_month_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = format_category_summary(f"📊 **This Month's Categories** ({start_str} to {end_str})", cat_data)
     await update.message.reply_text(text, parse_mode="Markdown")
 
-# get voice message, transcribe, output summary and await confirmation to add to db
+# shared pipeline: raw text (transcript or typed) -> extraction -> pending confirmation card
+async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYPE, raw_text: str, status_msg):
+    """Extracts structured data from raw text and presents it for confirmation.
+
+    'raw_text' is a Whisper transcript when called from handle_voice and the message body
+    when called from handle_text - past this point the two are indistinguishable, which is
+    the whole reason this lives outside either handler.
+
+    'status_msg' is passed in rather than created here because each transport shows a
+    different message while it works (voice echoes the transcript back, text has nothing to
+    echo). Every branch below edits that same message instead of sending a new one, so the
+    user is always left with exactly one message per entry attempt.
+    """
+    # Extract structured data from the raw text
+    structured_data = await extract_transactions(raw_text)
+
+    # Check if data exists AND if the 'transactions' list is present
+    if not structured_data or not structured_data.get("transactions"):
+        await status_msg.edit_text("❌ Failed to extract structured data from your message.")
+        return
+
+    # Extract the actual list from the wrapper and the spender
+    transactions_list = structured_data["transactions"]
+    user_id = str(update.effective_user.id)
+    spender_name = ALLOWED_TG_IDS.get(user_id, "Unknown")
+
+    # The V1 Gatekeeper to politely reject multiple expenses
+    if len(transactions_list) > 1:
+        await status_msg.edit_text(
+            "⚠️ **Hold on!** I detected multiple expenses.\n\n"
+            "To keep the ledger perfectly accurate for V1, please send just **one expense at a time**. 🎙️",
+            parse_mode="Markdown"
+        )
+        return
+
+    # Isolate the single approved transaction
+    single_transaction = transactions_list[0]
+
+    # Inject the raw, unedited input directly as the description
+    single_transaction['description'] = raw_text
+
+    # handle scenarios where the amount spent was not picked up
+    if single_transaction.get('amount') is None:
+        await status_msg.edit_text("⚠️ I couldn't detect an exact amount. Could you try sending it again?")
+        return # Stop processing this transaction
+
+    # if the transaction is in non SGD currency, for now we automatically assume it's made with YouTrip, unless payment method already mentioned e.g. Cash
+    if single_transaction.get('category') == 'YouTrip top-up':
+        single_transaction['payment_method'] = ACCOUNT_OWNERS["Sujay"][0]
+        single_transaction['transaction_type'] = 'Transfer'
+
+    elif not single_transaction.get('payment_method'):
+        # If no method was extracted, apply currency/user defaults
+        if single_transaction.get('currency', 'SGD') != 'SGD':
+            single_transaction['payment_method'] = 'YouTrip'
+        else:
+            # Dynamically pull the user's default card (Index 0)
+            # Fallback to ["Cash"] if the user isn't in the dictionary
+            user_accounts = ACCOUNT_OWNERS.get(spender_name, ["Cash"])
+            single_transaction['payment_method'] = user_accounts[0]
+
+    # now that we have the payment method, we will look up the account_owner, e.g. if Laura logs YouTrip txn, the account owner is Sujay
+    extracted_account = single_transaction.get('payment_method')
+
+    if extracted_account and extracted_account.lower() == 'cash':
+        single_transaction['account_owner'] = spender_name
+    else:
+        account_owner = "Unknown"
+        for owner, accounts_list in ACCOUNT_OWNERS.items():
+            if extracted_account.lower() in [account.lower() for account in accounts_list]:
+                account_owner = owner
+                break
+        single_transaction['account_owner'] = account_owner
+
+    # One idempotency key per confirm prompt (not per save attempt) - reused on every
+    # save attempt for this same prompt, so a double-tap or webhook retry can't insert twice.
+    single_transaction['idempotency_key'] = str(uuid.uuid4())
+
+    # Store the isolated transaction in memory, not the whole wrapper
+    context.user_data['pending_transaction'] = single_transaction
+
+    # Reference 'single_transaction', in future this will read 'transactions' when support for multiple txn is added
+    summary_message = (
+        f"Please confirm your **{single_transaction.get('transaction_type', 'Expense')}**:\n\n"
+        f"💰 **Amount:** {single_transaction.get('currency')} {float(single_transaction.get('amount')):.2f}\n"
+        f"🏷️ **Category:** {single_transaction.get('category')}\n"
+        f"💳 **Account:** {single_transaction.get('payment_method', 'Unspecified')}\n"
+        f"💳 **Account Owner:** {single_transaction.get('account_owner', 'Unspecified')}\n"
+        f"📝 **Notes:** {single_transaction.get('description', 'None')}\n"
+        f"📅 **Date:** {single_transaction.get('date')}\n"
+    )
+
+    # Create the interactive buttons
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ Confirm", callback_data="confirm_save"),
+            InlineKeyboardButton("❌ Cancel", callback_data="cancel_save")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # Send the clean summary with the buttons attached
+    await status_msg.edit_text(summary_message, reply_markup=reply_markup, parse_mode="Markdown")
+
+# get voice message, transcribe, then hand the transcript to the shared pipeline above
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Downloads the voice note, transcribes it, extracts structured data, and cleans up."""
-    if not await is_authorized(update): return 
-    
+    """Downloads the voice note, transcribes it, and passes the transcript on for extraction."""
+    if not await is_authorized(update): return
+
     status_msg = await update.message.reply_text("Voice note received! Transcribing... 🎙️")
     voice_file = await context.bot.get_file(update.message.voice.file_id)
-    
+
     # Create a temp file and IMMEDIATELY close it to release the Windows lock
     temp_audio = tempfile.NamedTemporaryFile(suffix=".ogg", delete=False)
     temp_filepath = temp_audio.name
     temp_audio.close() # 🔓 Unlocks the file for Telegram to use
-    
+
     try:
         # Telegram downloads and writes to the unlocked file
         await voice_file.download_to_drive(custom_path=temp_filepath)
-        
+
         # Transcribe using our reusable service
         transcript_text = await transcribe_audio(temp_filepath)
-        
+
         # Show the result to the user (with basic error handling)
         if transcript_text.startswith("ERROR:"):
             await status_msg.edit_text(f"⚠️ {transcript_text}")
             return # Stop execution if transcription fails
-            
+
         # Update the user that we are moving to the next step
         await status_msg.edit_text(f"📝 *Transcript:* {transcript_text}\n\n🧠 Extracting data...", parse_mode="Markdown")
-        
-        # Extract structured data from the transcript
-        structured_data = await extract_transactions(transcript_text)
-        
-        # Check if data exists AND if the 'transactions' list is present
-        if not structured_data or not structured_data.get("transactions"):
-            await status_msg.edit_text("❌ Failed to extract structured data from the transcript.")
-            return
-            
-        # Extract the actual list from the wrapper and the spender
-        transactions_list = structured_data["transactions"]
-        user_id = str(update.effective_user.id)
-        spender_name = ALLOWED_TG_IDS.get(user_id, "Unknown")
-        
-        # The V1 Gatekeeper to politely reject multiple expenses
-        if len(transactions_list) > 1:
-            await status_msg.edit_text(
-                "⚠️ **Hold on!** I detected multiple expenses.\n\n"
-                "To keep the ledger perfectly accurate for V1, please record just **one expense per voice note**. 🎙️", 
-                parse_mode="Markdown"
-            )
-            return
-            
-        # Isolate the single approved transaction
-        single_transaction = transactions_list[0]
-        
-        # Inject the raw, unedited transcript directly as the description
-        single_transaction['description'] = transcript_text
 
-        # handle scenarios where amount spent was not picked up by whisper AI
-        if single_transaction.get('amount') is None:
-            await update.message.reply_text("⚠️ I couldn't detect an exact amount from your voice note. Could you try saying it again?")
-            return # Stop processing this transaction
+        # From here on a transcript is just text - identical to a typed message
+        await process_expense_text(update, context, transcript_text, status_msg)
 
-        # if the transaction is in non SGD currency, for now we automatically assume it's made with YouTrip, unless payment method already mentioned e.g. Cash
-        if single_transaction.get('category') == 'YouTrip top-up':
-            single_transaction['payment_method'] = ACCOUNT_OWNERS["Sujay"][0]
-            single_transaction['transaction_type'] = 'Transfer'
-            
-        elif not single_transaction.get('payment_method'):
-            # If no method was extracted, apply currency/user defaults
-            if single_transaction.get('currency', 'SGD') != 'SGD':
-                single_transaction['payment_method'] = 'YouTrip'
-            else:
-                # Dynamically pull the user's default card (Index 0)
-                # Fallback to ["Cash"] if the user isn't in the dictionary
-                user_accounts = ACCOUNT_OWNERS.get(spender_name, ["Cash"])
-                single_transaction['payment_method'] = user_accounts[0]
-
-        # now that we have the payment method, we will look up the account_owner, e.g. if Laura logs YouTrip txn, the account owner is Sujay
-        extracted_account = single_transaction.get('payment_method')
-        
-        if extracted_account and extracted_account.lower() == 'cash':
-            single_transaction['account_owner'] = spender_name
-        else:
-            account_owner = "Unknown"
-            for owner, accounts_list in ACCOUNT_OWNERS.items():
-                if extracted_account.lower() in [account.lower() for account in accounts_list]:
-                    account_owner = owner
-                    break
-            single_transaction['account_owner'] = account_owner
-                
-        # One idempotency key per confirm prompt (not per save attempt) - reused on every
-        # save attempt for this same prompt, so a double-tap or webhook retry can't insert twice.
-        single_transaction['idempotency_key'] = str(uuid.uuid4())
-
-        # Store the isolated transaction in memory, not the whole wrapper
-        context.user_data['pending_transaction'] = single_transaction
-        
-        # Reference 'single_transaction', in future this will read 'transactions' when support for multiple txn is added
-        summary_message = (
-            f"Please confirm your **{single_transaction.get('transaction_type', 'Expense')}**:\n\n"
-            f"💰 **Amount:** {single_transaction.get('currency')} {float(single_transaction.get('amount')):.2f}\n"
-            f"🏷️ **Category:** {single_transaction.get('category')}\n"
-            f"💳 **Account:** {single_transaction.get('payment_method', 'Unspecified')}\n"
-            f"💳 **Account Owner:** {single_transaction.get('account_owner', 'Unspecified')}\n"
-            f"📝 **Notes:** {single_transaction.get('description', 'None')}\n"
-            f"📅 **Date:** {single_transaction.get('date')}\n"
-        )
-        
-        # Create the interactive buttons
-        keyboard = [
-            [
-                InlineKeyboardButton("✅ Confirm", callback_data="confirm_save"),
-                InlineKeyboardButton("❌ Cancel", callback_data="cancel_save")
-            ]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        # Send the clean summary with the buttons attached
-        await status_msg.edit_text(summary_message, reply_markup=reply_markup, parse_mode="Markdown")
-            
     finally:
         # Clean up manually since we used delete=False
         if os.path.exists(temp_filepath):
             os.remove(temp_filepath)
+
+# typed expense entry - no transcription step, the message body IS the input
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Passes a plain text message through the same pipeline a voice note uses."""
+    if not await is_authorized(update): return
+
+    status_msg = await update.message.reply_text("🧠 Extracting data...")
+    await process_expense_text(update, context, update.message.text, status_msg)
+
+# anything that is neither a voice note nor text - these used to be dropped silently
+async def handle_unsupported(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Tells the user which input types the bot actually accepts, instead of ignoring them."""
+    if not await is_authorized(update): return
+
+    await update.message.reply_text(
+        "⚠️ I can only read voice notes and text messages right now.\n"
+        "Receipt photos are planned but not supported yet."
+    )
 
 # buttons!
 async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -407,6 +441,13 @@ def get_application():
 
     # voice handler
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
+
+    # text handler - ~filters.COMMAND keeps /recent, /today etc. on their CommandHandlers above
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+
+    # everything else (photo, video, sticker, document, location) - these matched no handler
+    # at all before, so PTB dropped them silently and the user got no reply whatsoever
+    app.add_handler(MessageHandler(~filters.VOICE & ~filters.TEXT, handle_unsupported))
 
     # handler for buttons
     app.add_handler(CallbackQueryHandler(handle_button_click))

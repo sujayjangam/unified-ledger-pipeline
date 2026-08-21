@@ -1,19 +1,21 @@
 # Unified Ledger Pipeline
 
-A household expense ledger that turns voice notes into structured, confirmed transactions in a
-multi-currency Postgres ledger — with a REST API for programmatic entry alongside it.
+A household expense ledger that turns voice notes and typed messages into structured, confirmed
+transactions in a multi-currency Postgres ledger — with a REST API for programmatic entry
+alongside it.
 
 ## About
 
 A household expense ledger with two ingestion paths into one database:
 
-1. A Telegram bot that accepts voice notes, transcribes them (OpenAI Whisper), extracts
-   structured transaction data (GPT-4o-mini + Pydantic), and asks for confirmation before saving.
+1. A Telegram bot that accepts voice notes *or* plain text messages, transcribes voice notes
+   (OpenAI Whisper), extracts structured transaction data (GPT-4o-mini + Pydantic), and asks for
+   confirmation before saving.
 2. A small FastAPI REST API (`app/main.py`) for programmatic entry.
 
 ## How it works
 
-**Telegram voice bot.** The bot is split into a transport layer and a logic layer so the same
+**Telegram bot.** The bot is split into a transport layer and a logic layer so the same
 business logic can run under two different runners:
 - `app/bot_core.py` — the factory (`get_application()`), command/message handlers, and the
   `is_authorized()` allowlist gatekeeper.
@@ -22,10 +24,14 @@ business logic can run under two different runners:
   `POST /webhook` endpoint (needed because Cloud Run sleeps idle containers, so polling isn't
   viable there).
 
-A voice note is downloaded, transcribed via Whisper, then passed to GPT-4o-mini with structured
-output to extract amount, currency, category, payment method, transaction type, and date. The
-raw transcript is kept as the transaction description. The extracted transaction is held pending
-until the user confirms it via an inline button, then written to the ledger.
+There are two ways to log an expense, and they converge on one pipeline. A voice note is
+downloaded and transcribed via Whisper; a plain text message is used as-is. From that point both
+are just raw text, handled by `process_expense_text` in `app/bot_core.py`: GPT-4o-mini with
+structured output extracts amount, currency, category, payment method, transaction type, and
+date, and the raw input is kept verbatim as the transaction description. The extracted
+transaction is held pending until the user confirms it via an inline button, then written to the
+ledger. Any other message type (photo, video, sticker, document, location) gets a reply saying
+it isn't supported.
 
 **REST API.** `app/main.py` exposes an independent `GET/POST /transactions` CRUD surface with its
 own Pydantic model, for programmatic entry outside of Telegram.
