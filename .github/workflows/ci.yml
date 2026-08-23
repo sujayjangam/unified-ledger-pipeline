@@ -1,0 +1,13 @@
+name: CI test before any PR merge to main
+
+on: 
+  pull_request: # left blank to apply to ALL PRs
+  push:
+      branches: [main]
+
+jobs:
+  check-PR-before-merge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: prove workflow works
+        run: echo "CI plumbing works"
