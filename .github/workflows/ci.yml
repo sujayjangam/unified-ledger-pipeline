@@ -23,3 +23,8 @@ jobs:
           OPENAI_API_KEY: this-is-obviously-not-a-real-API-key-1234567890
         run: python -c "import app.bot_core"
         # test with the most evn dependent module
+
+      - name: lint check
+        run: |
+          pip install ruff
+          ruff check .
