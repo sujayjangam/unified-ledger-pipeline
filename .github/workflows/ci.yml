@@ -9,5 +9,7 @@ jobs:
   check-PR-before-merge:
     runs-on: ubuntu-latest
     steps:
-      - name: prove workflow works
-        run: echo "CI plumbing works"
+      - uses: actions/checkout@v7
+
+      - name: test commit with git checkout
+        run: ls -la
