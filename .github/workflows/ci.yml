@@ -9,7 +9,11 @@ jobs:
   check-PR-before-merge:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
-      - name: test commit with git checkout
-        run: ls -la
+      - uses: actions/setup-python@v7.0.0
+        with: 
+          python-version: '3.11'
+
+      - name: check if python version comes out as expected
+        run: python --version
