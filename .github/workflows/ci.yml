@@ -17,3 +17,7 @@ jobs:
 
       - name: requirements check
         run: pip install -r requirements.txt
+
+      - name: test importing module
+        run: python -c "import app.bot_core"
+        # test with the most evn dependent module
