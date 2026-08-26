@@ -1,8 +1,7 @@
 # Unified Ledger Pipeline
 
 A household expense ledger that turns voice notes and typed messages into structured, confirmed
-transactions in a multi-currency Postgres ledger — with a REST API for programmatic entry
-alongside it.
+transactions in a multi-currency Postgres ledger.
 
 ## About
 
