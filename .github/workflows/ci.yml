@@ -21,6 +21,7 @@ jobs:
       - name: test importing modules
         env: 
           OPENAI_API_KEY: this-is-obviously-not-a-real-API-key-1234567890
+          TELEGRAM_BOT_TOKEN: this-is-obviously-not-a-real-tg-bot-token-123567890
         run: |
           set -euo pipefail
           for file in app/*.py app/services/*.py; do
