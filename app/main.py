@@ -1,6 +1,5 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import Optional
 import uuid
 from sqlalchemy import text
 from app.database import get_connection

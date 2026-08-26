@@ -1,0 +1,41 @@
+name: CI test before any PR merge to main
+
+on: 
+  pull_request: # left blank to apply to ALL PRs
+  push:
+      branches: [main]
+
+jobs:
+  check-PR-before-merge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with: 
+          python-version: '3.11'
+
+      - name: requirements check
+        run: pip install -r requirements.txt
+
+      - name: test importing modules
+        env: 
+          OPENAI_API_KEY: this-is-obviously-not-a-real-API-key-1234567890
+          TELEGRAM_BOT_TOKEN: this-is-obviously-not-a-real-tg-bot-token-123567890
+        run: |
+          set -euo pipefail
+          for file in app/*.py app/services/*.py; do
+            module=$(echo $file | sed 's|/|.|g; s|\.py$||')
+            echo "importing $module"
+            if [ "$file" = "app/bot_local.py" ]; then
+              echo "compile-check only: $file (exits at import by design - loads .env.local)"
+              python -m py_compile "$file"
+              continue
+            fi
+            python -c "import $module"
+          done
+
+      - name: lint check
+        run: |
+          pip install ruff
+          ruff check .

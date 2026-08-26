@@ -9,7 +9,7 @@ import tempfile
 from openai import AsyncOpenAI
 from app.add_expense import add_expense
 from app.services.utils import get_sgt_now
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from app.services.ledger_queries import get_recent_entries, get_period_summary, get_category_summary
 
 # use the local windows persmissions
@@ -27,8 +27,8 @@ except json.JSONDecodeError:
 
 
 # NOW it is safe to import  custom services because the environment is ready (load_dotenv() already ran)
-from app.services.transcription import transcribe_audio
-from app.services.extraction import extract_transactions
+from app.services.transcription import transcribe_audio # noqa: E402 - load_dotenv() is required before this import
+from app.services.extraction import extract_transactions # noqa: E402 - load_dotenv() is required before this import
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 # Initialize OpenAI client (it automatically looks for OPENAI_API_KEY in your environment)
@@ -50,7 +50,8 @@ async def is_authorized(update: Update):
 # Define Reflexes (Handlers)
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Answers to the /start command."""
-    if not await is_authorized(update): return 
+    if not await is_authorized(update):
+        return 
     
     user_id = update.effective_user.id
     username = update.effective_user.username
@@ -73,7 +74,7 @@ def format_period_summary(title: str, expenses: list, transfers: list) -> str:
         lines.append("  • No expenses.")
         
     # 🔄 Format transfers separately
-    lines.append(f"\n🔄 **Transfers:**")
+    lines.append("\n🔄 **Transfers:**")
     if transfers:
         for curr, count, total_cents in transfers:
             lines.append(f"  • {curr}: **{total_cents / 100.0:.2f}** ({count} tx)")
@@ -112,7 +113,8 @@ def format_category_summary(title: str, category_data: list) -> str:
     return "\n".join(lines).strip()
 
 async def recent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_authorized(update): return 
+    if not await is_authorized(update):
+        return 
     
     entries = get_recent_entries(limit=5)
     if not entries:
@@ -131,7 +133,8 @@ async def recent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_authorized(update): return 
+    if not await is_authorized(update):
+        return 
     
     today_str = get_sgt_now().strftime('%Y-%m-%d')
     expenses, transfers = get_period_summary(today_str, today_str)
@@ -140,7 +143,8 @@ async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="Markdown")
 
 async def week_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_authorized(update): return 
+    if not await is_authorized(update):
+        return 
     
     today = get_sgt_now()
     start_of_week = today - timedelta(days=today.weekday())
@@ -154,7 +158,8 @@ async def week_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="Markdown")
 
 async def month_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_authorized(update): return 
+    if not await is_authorized(update):
+        return 
     
     today = get_sgt_now()
     start_of_month = today.replace(day=1)
@@ -168,7 +173,8 @@ async def month_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="Markdown")
 
 async def cat_today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_authorized(update): return 
+    if not await is_authorized(update):
+        return 
     
     today_str = get_sgt_now().strftime('%Y-%m-%d')
     cat_data = get_category_summary(today_str, today_str)
@@ -177,7 +183,8 @@ async def cat_today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="Markdown")
 
 async def cat_week_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_authorized(update): return 
+    if not await is_authorized(update):
+        return 
     
     today = get_sgt_now()
     start_of_week = today - timedelta(days=today.weekday())
@@ -191,7 +198,8 @@ async def cat_week_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="Markdown")
 
 async def cat_month_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_authorized(update): return 
+    if not await is_authorized(update):
+        return 
     
     today = get_sgt_now()
     start_of_month = today.replace(day=1)
@@ -311,7 +319,8 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
 # get voice message, transcribe, then hand the transcript to the shared pipeline above
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Downloads the voice note, transcribes it, and passes the transcript on for extraction."""
-    if not await is_authorized(update): return
+    if not await is_authorized(update):
+        return
 
     status_msg = await update.message.reply_text("Voice note received! Transcribing... 🎙️")
     voice_file = await context.bot.get_file(update.message.voice.file_id)
@@ -347,7 +356,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # typed expense entry - no transcription step, the message body IS the input
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Passes a plain text message through the same pipeline a voice note uses."""
-    if not await is_authorized(update): return
+    if not await is_authorized(update):
+        return
 
     status_msg = await update.message.reply_text("🧠 Extracting data...")
     await process_expense_text(update, context, update.message.text, status_msg)
@@ -355,7 +365,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # anything that is neither a voice note nor text - these used to be dropped silently
 async def handle_unsupported(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Tells the user which input types the bot actually accepts, instead of ignoring them."""
-    if not await is_authorized(update): return
+    if not await is_authorized(update):
+        return
 
     await update.message.reply_text(
         "⚠️ I can only read voice notes and text messages right now.\n"
