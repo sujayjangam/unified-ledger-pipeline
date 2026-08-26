@@ -25,13 +25,14 @@ friction before moving to Phase 1; see
 
 **Shipped:** the Neon Postgres migration ([#2](https://github.com/sujayjangam/unified-ledger-pipeline/issues/2)) and Cloud Run cutover ([#4](https://github.com/sujayjangam/unified-ledger-pipeline/issues/4)); the
 6-hourly `pg_dump` → GCS backup ([#7](https://github.com/sujayjangam/unified-ledger-pipeline/issues/7)), infra-verified and restore-verified 2026-08-13;
-text ingestion ([#16](https://github.com/sujayjangam/unified-ledger-pipeline/issues/16)), 2026-08-21.
+text ingestion ([#16](https://github.com/sujayjangam/unified-ledger-pipeline/issues/16)), 2026-08-21; CI on pull requests ([#32](https://github.com/sujayjangam/unified-ledger-pipeline/issues/32)), 2026-08-26.
 
-**Next action:** [#31](https://github.com/sujayjangam/unified-ledger-pipeline/issues/31) §3a only —
-the CI scaffolding and the tests that don't depend on the capture paths, so a merge can't take the
-deployed bot down unnoticed. Then back to capture: [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) (backdated date parsing),
-[#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) (business date vs. ingestion
-timestamp), then the pending-transaction edit path. Full ordering in the Phase 0 checklist below.
+**Next action:** the rest of [#31](https://github.com/sujayjangam/unified-ledger-pipeline/issues/31) §3a — CI now runs on every pull request, but it only
+proves the code loads, and nothing yet stops a red check being merged anyway. What remains is the
+test suite over the money and date invariants ([#33](https://github.com/sujayjangam/unified-ledger-pipeline/issues/33)) and branch protection so `main`
+refuses a merge whose checks did not pass ([#34](https://github.com/sujayjangam/unified-ledger-pipeline/issues/34)). Then back to capture: [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15)
+(backdated date parsing), [#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) (business date vs. ingestion timestamp), then the
+pending-transaction edit path. Full ordering in the Phase 0 checklist below.
 
 **Open top-level issues:** [#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) ordering · [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) backdated dates ·
 [#17](https://github.com/sujayjangam/unified-ledger-pipeline/issues/17) unused REST API · [#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22) entries can't be corrected ·
@@ -333,10 +334,11 @@ it tests the paths that survive rather than the ones being replaced.
 
 Bounded deliberately to what the capture work won't rewrite:
 
-- [ ] CI on pull request: clean install from `requirements.txt`, lint, and an import smoke check
-across `app/`. The import check is what catches a merge that would take the deployed bot down on
-startup; the clean install doubles as the evidence
-[#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27) needs.
+- [x] CI on pull request: clean install from `requirements.txt`, lint, and an import smoke check
+across `app/`. Shipped 2026-08-26 in `.github/workflows/ci.yml`
+([#32](https://github.com/sujayjangam/unified-ledger-pipeline/issues/32)). The import check is what
+catches a merge that would take the deployed bot down on startup; the clean install doubles as the
+evidence [#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27) needs.
 - [ ] Pytest harness, with test-only dependencies in a separate `requirements-dev.txt` so
 `requirements.txt` keeps meaning "what production needs" — otherwise the check above can't answer
 #27.
