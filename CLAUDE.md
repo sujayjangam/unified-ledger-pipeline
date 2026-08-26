@@ -45,8 +45,9 @@ describe what is actually shipped, never planned/in-progress work.
 
 The `doc-checker` subagent (`.claude/agents/doc-checker.md`) automates the README-vs-code-vs-roadmap
 half of this check, plus scanning `CLAUDE.md`/`ROADMAP.md` for non-engineering content that
-shouldn't be in either (both files are checked into a public repo). Run it — `@doc-checker run the
-check` — before committing doc changes or when picking work back up after a gap.
+shouldn't be in either (both files are checked into a public repo). Run it —
+`@agent-doc-checker run the check` — before committing doc changes or when picking work back up
+after a gap.
 
 ## Commands
 
