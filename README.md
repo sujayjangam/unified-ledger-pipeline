@@ -10,7 +10,6 @@ A household expense ledger with two ingestion paths into one database:
 1. A Telegram bot that accepts voice notes *or* plain text messages, transcribes voice notes
    (OpenAI Whisper), extracts structured transaction data (GPT-4o-mini + Pydantic), and asks for
    confirmation before saving.
-2. A small FastAPI REST API (`app/main.py`) for programmatic entry.
 
 ## How it works
 
@@ -33,7 +32,7 @@ ledger. Any other message type (photo, video, sticker, document, location) gets 
 it isn't supported.
 
 **REST API.** `app/main.py` exposes an independent `GET/POST /transactions` CRUD surface with its
-own Pydantic model, for programmatic entry outside of Telegram.
+own Pydantic model, for programmatic entry outside of Telegram. This will be deployed in the future.
 
 **Storage.** Money is always stored as integer cents, never floats. The ledger runs on Neon
 Postgres via a pooled SQLAlchemy Core engine, with Alembic owning schema migrations. Backed up
@@ -74,9 +73,6 @@ python -m app.bot_local
 
 # Run the production-style webhook server locally
 uvicorn app.bot_webhook:app_fastapi --reload --port 8080
-
-# Run the standalone REST API
-uvicorn app.main:app --reload
 
 # CLI expense entry
 python -m app.add_expense --date 2026-07-29 --desc "Lunch" --amount 12.50 --cat Food
