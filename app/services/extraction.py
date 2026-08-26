@@ -1,10 +1,9 @@
 import os
-from datetime import datetime
 from typing import Optional, List
 from enum import Enum
 from pydantic import BaseModel, Field
 from openai import AsyncOpenAI
-from typing import Optional, Literal
+from typing import Literal
 from app.services.utils import get_sgt_now
 
 # Initialize the OpenAI client

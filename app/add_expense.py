@@ -1,7 +1,6 @@
 import argparse
 import uuid
-from datetime import datetime, timedelta, timezone
-import sys
+from datetime import datetime
 from sqlalchemy import text
 from app.database import get_connection
 
