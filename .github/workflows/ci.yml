@@ -21,12 +21,16 @@ jobs:
       - name: test importing modules
         env: 
           OPENAI_API_KEY: this-is-obviously-not-a-real-API-key-1234567890
-        
         run: |
           set -euo pipefail
           for file in app/*.py app/services/*.py; do
             module=$(echo $file | sed 's|/|.|g; s|\.py$||')
             echo "importing $module"
+            if [ "$file" = "app/bot_local.py" ]; then
+              echo "compile-check only: $file (exits at import by design - loads .env.local)"
+              python -m py_compile "$file"
+              continue
+            fi
             python -c "import $module"
           done
 
