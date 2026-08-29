@@ -25,7 +25,10 @@ friction before moving to Phase 1; see
 
 **Shipped:** the Neon Postgres migration ([#2](https://github.com/sujayjangam/unified-ledger-pipeline/issues/2)) and Cloud Run cutover ([#4](https://github.com/sujayjangam/unified-ledger-pipeline/issues/4)); the
 6-hourly `pg_dump` → GCS backup ([#7](https://github.com/sujayjangam/unified-ledger-pipeline/issues/7)), infra-verified and restore-verified 2026-08-13;
-text ingestion ([#16](https://github.com/sujayjangam/unified-ledger-pipeline/issues/16)), 2026-08-21; CI on pull requests ([#32](https://github.com/sujayjangam/unified-ledger-pipeline/issues/32)), 2026-08-26.
+text ingestion ([#16](https://github.com/sujayjangam/unified-ledger-pipeline/issues/16)), 2026-08-21; CI on pull requests ([#32](https://github.com/sujayjangam/unified-ledger-pipeline/issues/32)), 2026-08-26;
+the case-study `README.md` rewrite with inline Mermaid architecture diagram (Phase 0 §4),
+2026-08-29 — pulled ahead of the remaining capture work deliberately, since it only claims
+what has already shipped; the demo GIF stays gated on capture reliability.
 
 **Next action:** the rest of [#31](https://github.com/sujayjangam/unified-ledger-pipeline/issues/31) §3a — CI now runs on every pull request, but it only
 proves the code loads, and nothing yet stops a red check being merged anyway. What remains is the
@@ -37,7 +40,6 @@ pending-transaction edit path. Full ordering in the Phase 0 checklist below.
 **Open top-level issues:** [#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) ordering · [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) backdated dates ·
 [#17](https://github.com/sujayjangam/unified-ledger-pipeline/issues/17) unused REST API · [#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22) entries can't be corrected ·
 [#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27) unpinned dependencies ·
-[#28](https://github.com/sujayjangam/unified-ledger-pipeline/issues/28) stale flow docs ·
 [#29](https://github.com/sujayjangam/unified-ledger-pipeline/issues/29) double-tap Confirm shows a
 false error · [#31](https://github.com/sujayjangam/unified-ledger-pipeline/issues/31) nothing
 verifies a change automatically.
@@ -364,10 +366,12 @@ annotate until it can be defended live, not just described.
 **4. Packaging** — moved here from Phase 5 on 2026-08-20.
 
 - [x] `README.md` placeholder fix
-- [ ] Rewrite `README.md` as a case study: problem → architecture → key decisions and tradeoffs →
-what's live today → what's next. The standing rule still binds — `README.md` describes only what
-has shipped, and forward-looking work sits under an explicit "What's next" heading.
-- [ ] Inline Mermaid architecture diagram, authored with the README rewrite
+- [x] Rewrite `README.md` as a case study: problem → architecture → key decisions and tradeoffs →
+what's live today → what's next. Done 2026-08-29. The standing rule still binds — `README.md`
+describes only what has shipped, and forward-looking work sits under an explicit "What's next"
+heading.
+- [x] Inline Mermaid architecture diagram, authored with the README rewrite — done 2026-08-29,
+one flowchart covering the capture pipeline and the scheduled backup pipeline
 - [ ] Short demo recording → GIF at the top of `README.md`. Last item in the phase: it should show
 a working expense recorder, not the friction-limited one. Recording it early against the current
 build is still worthwhile as a private friction-finding exercise — it surfaces exactly the UX
