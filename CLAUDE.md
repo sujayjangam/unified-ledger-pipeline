@@ -10,6 +10,12 @@ before re-reading source files to reconstruct context. Update it before ending a
 progress. Don't start implementation work unless the user asks for it in the current conversation,
 even if the roadmap lists it as next.
 
+## Response style
+
+Keep responses concise and easy to read: lead with the answer, use short paragraphs, and skip
+sprawling heading/section trees for simple questions. Prefer plain prose over heavy formatting;
+expand detail only when the task genuinely needs it.
+
 ## What this is
 
 A household expense ledger with two ingestion paths into one Postgres database:
