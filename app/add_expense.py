@@ -4,15 +4,19 @@ from datetime import datetime
 from sqlalchemy import text
 from app.database import get_connection
 
+def dollars_to_cents(amount_dollars) -> int:
+    """Converts a dollar amount to integer cents, raising
+    ValueError if not positive."""
+    amount_cents = int(round(float(amount_dollars) * 100))
+    if amount_cents <= 0:
+        raise ValueError("Amount must be greater than zero")
+    return amount_cents
+
 def add_expense(date_str, description, amount_dollars, category, currency="SGD", transaction_type="Expense", account_desc=None, account_owner=None, source="Manual CLI", idempotency_key=None):
     try:
         # 1. Validation: Convert to Integer Cents (Mathematical Precision)
-        # We convert to float first, then multiply by 100, then cast to int.
-        amount_cents = int(round(float(amount_dollars) * 100))
-        
-        if amount_cents <= 0:
-            print("❌ Error: Amount must be greater than zero.")
-            return False # return False so caller knows it has failed
+        # We call function dollars_to_cents to convert to cents for us
+        amount_cents = dollars_to_cents(amount_dollars)     
 
         # 2. Validation: Ensure date matches YYYY-MM-DD, if not, ValueError is raised, stopping code at this line
         datetime.strptime(date_str, '%Y-%m-%d')
@@ -79,6 +83,7 @@ def add_expense(date_str, description, amount_dollars, category, currency="SGD",
 
     except ValueError:
         print("❌ Error: Invalid input. Use YYYY-MM-DD for date and a number for amount (e.g., 15.50).")
+        return False
     except Exception as e:
         print(f"❌ An unexpected error occurred: {e}")
         return False # return False on error so caller knows it has failed
