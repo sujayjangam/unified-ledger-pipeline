@@ -218,8 +218,10 @@ sequenced in the Phase 0 checklist and aren't repeated here):
   would land with a NULL currency and corrupt every currency-grouped aggregate in
   `app/services/ledger_queries.py`. Latent rather than live — the Dockerfile runs `bot_webhook`,
   not `main` — but it's a live landmine for whenever the API is deployed.
-- `app/bot_core.py` hardcodes `ACCOUNT_OWNERS["Sujay"][0]`, which raises a bare `KeyError` if that
-  key is ever renamed in the env.
+- ~~`app/bot_core.py` hardcodes `ACCOUNT_OWNERS["Sujay"][0]`, which raises a bare `KeyError` if
+  that key is ever renamed in the env~~ — fixed 2026-09-03: the YouTrip-top-up funder is now the
+  configurable `PRIMARY_ACCOUNT_OWNER` env var, not a literal name, as part of extracting
+  `apply_payment_defaults()` for #33's test suite work.
 - No index on `date`. Irrelevant at current row counts; matters once Phase 1's statement staging
   table lands and date-window matching starts scanning.
 - Chat commands have no discoverability — `/month` and `/cat_month` were forgotten by their own
