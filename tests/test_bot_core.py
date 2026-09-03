@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock, MagicMock
+
 import app.bot_core as bot_core
 
 # ACCOUNT_OWNERS/ALLOWED_IDS/PRIMARY_ACCOUNT_OWNER are all parsed from env vars once, at
@@ -61,3 +63,27 @@ def test_unmatched_payment_method_falls_back_to_unknown_owner(monkeypatch):
     txn = {"category": "Food", "currency": "SGD", "payment_method": "Some Random Card"}
     result = bot_core.apply_payment_defaults(txn, "Alice")
     assert result["account_owner"] == "Unknown"
+
+
+# --- is_authorized ---
+# is_authorized() only reads update.effective_user.id and, on rejection, awaits
+# update.message.reply_text(...) - a MagicMock/AsyncMock is enough to stand in for a real
+# Telegram Update here, since we're just testing our own authorization check, not PTB's
+# behavior (contrast with test_routing.py, which does use real PTB objects).
+
+async def test_is_authorized_accepts_a_known_id(monkeypatch):
+    monkeypatch.setattr(bot_core, "ALLOWED_IDS", {"111"})
+    update = MagicMock()
+    update.effective_user.id = 111
+    assert await bot_core.is_authorized(update) is True
+
+
+async def test_is_authorized_rejects_an_unknown_id(monkeypatch):
+    monkeypatch.setattr(bot_core, "ALLOWED_IDS", {"111"})
+    update = MagicMock()
+    update.effective_user.id = 999
+    # is_authorized() awaits update.message.reply_text(...) on the rejection path, so this
+    # needs to be an AsyncMock (not a plain MagicMock) or the await would raise TypeError.
+    update.message.reply_text = AsyncMock()
+    assert await bot_core.is_authorized(update) is False
+    update.message.reply_text.assert_awaited_once()
