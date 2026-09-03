@@ -8,8 +8,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 import tempfile
 from openai import AsyncOpenAI
 from app.add_expense import add_expense
-from app.services.utils import get_sgt_now
-from datetime import timedelta
+from app.services.utils import get_sgt_now, get_week_start, get_month_start
 from app.services.ledger_queries import get_recent_entries, get_period_summary, get_category_summary
 
 # use the local windows persmissions
@@ -147,8 +146,8 @@ async def week_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return 
     
     today = get_sgt_now()
-    start_of_week = today - timedelta(days=today.weekday())
-    
+    start_of_week = get_week_start(today)
+
     start_str = start_of_week.strftime('%Y-%m-%d')
     end_str = today.strftime('%Y-%m-%d')
     
@@ -162,8 +161,8 @@ async def month_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return 
     
     today = get_sgt_now()
-    start_of_month = today.replace(day=1)
-    
+    start_of_month = get_month_start(today)
+
     start_str = start_of_month.strftime('%Y-%m-%d')
     end_str = today.strftime('%Y-%m-%d')
     
@@ -187,8 +186,8 @@ async def cat_week_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return 
     
     today = get_sgt_now()
-    start_of_week = today - timedelta(days=today.weekday())
-    
+    start_of_week = get_week_start(today)
+
     start_str = start_of_week.strftime('%Y-%m-%d')
     end_str = today.strftime('%Y-%m-%d')
     
@@ -202,8 +201,8 @@ async def cat_month_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return 
     
     today = get_sgt_now()
-    start_of_month = today.replace(day=1)
-    
+    start_of_month = get_month_start(today)
+
     start_str = start_of_month.strftime('%Y-%m-%d')
     end_str = today.strftime('%Y-%m-%d')
     
