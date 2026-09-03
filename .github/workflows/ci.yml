@@ -35,6 +35,11 @@ jobs:
             python -c "import $module"
           done
 
+      - name: run test suite
+        run: |
+          pip install -r requirements-dev.txt
+          pytest
+
       - name: lint check
         run: |
           pip install ruff
