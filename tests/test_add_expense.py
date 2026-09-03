@@ -21,7 +21,16 @@ def test_rejects_non_numeric_amount():
         dollars_to_cents("abc")
 
 def test_documents_float_rounding_edge_case():
-    # float(1.05) * 100 == 100.49999999994 in Python due to binary floating-point
-    # representation, so round() gives 267, not the mathematically expected 268.
-    # This us existing behaviour, not something this refactor introduced or fixed.
+    # float(1.005) * 100 == 100.49999999999999 in Python due to binary floating-point
+    # representation, so round() gives 100, not the mathematically expected 101.
+    # This is existing behavior, not something this refactor introduced or fixed - see #39.
     assert dollars_to_cents(1.005) == 100
+
+def test_converts_the_specific_amounts_named_in_issue_33():
+    # #33 named these three values explicitly as "the cases floats get wrong" - none of
+    # them actually break the current rounding (verified directly: 0.07 * 100 comes out
+    # as 7.000000000000001, but that still rounds to 7 correctly), but they're kept here
+    # as a literal, named regression check since the issue called them out by value.
+    assert dollars_to_cents(12.10) == 1210
+    assert dollars_to_cents(0.07) == 7
+    assert dollars_to_cents(1234.56) == 123456
