@@ -85,12 +85,22 @@ python -m app.add_expense --date 2026-07-29 --desc "Lunch" --amount 12.50 --cat 
 
 # View the ledger in a terminal table
 python -m app.view_ledger
+
+# Run the test suite (also runs in CI on every pull request)
+pip install -r requirements-dev.txt
+pytest
 ```
 
-There is no automated test suite yet (tracked in `ROADMAP.md`'s Phase 0 plan). The old
-`test_queries.py` — a one-off ad hoc script that ran `ALTER TABLE ... ADD COLUMN account_desc`
-directly against the pre-Postgres SQLite file — is gone; that schema change is now codified in
-`alembic/versions/0001_create_transactions_table.py` instead.
+`tests/` holds pure-logic tests (money conversion, period boundaries, handler routing, extraction
+schema parsing, payment-default inference, `is_authorized`) with no network calls and no database —
+test-only dependencies live in `requirements-dev.txt`, kept out of `requirements.txt` so that file
+still means "what production needs." `main` is protected by a repository ruleset requiring this
+suite (plus lint and an import smoke check) to pass before merge — see
+[ADR-0021](docs/decisions/0021-rulesets-over-classic-branch-protection.md). Migrations-against-a-
+real-Postgres-container and the `ON CONFLICT (idempotency_key)` path are not yet covered; see
+`ROADMAP.md`'s §3a checklist. The old `test_queries.py` — a one-off ad hoc script that ran
+`ALTER TABLE ... ADD COLUMN account_desc` directly against the pre-Postgres SQLite file — is gone;
+that schema change is now codified in `alembic/versions/0001_create_transactions_table.py` instead.
 
 Docker (Cloud Run deployment target): `Dockerfile` installs `requirements.txt` and runs
 `uvicorn app.bot_webhook:app_fastapi --host 0.0.0.0 --port 8080`.
