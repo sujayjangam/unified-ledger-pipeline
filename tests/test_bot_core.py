@@ -1,9 +1,10 @@
 import app.bot_core as bot_core
 
-# ACCOUNT_OWNERS/ALLOWED_IDS are parsed from env vars once, at module-import time (see
-# bot_core.py's top-level try/except block) - they're never re-read inside a function call.
-# So to fake their contents for a test, we have to monkeypatch the module-level attribute
-# directly; setting the underlying env var after import would have no effect.
+# ACCOUNT_OWNERS/ALLOWED_IDS/PRIMARY_ACCOUNT_OWNER are all parsed from env vars once, at
+# module-import time (see bot_core.py's top-level try/except block) - they're never re-read
+# inside a function call. So to fake their contents for a test, we have to monkeypatch the
+# module-level attribute directly; setting the underlying env var after import would have
+# no effect.
 
 
 # --- apply_payment_defaults ---
@@ -13,14 +14,12 @@ import app.bot_core as bot_core
 # matching logic itself doesn't care whose name or which card it is.
 
 def test_youtrip_topup_forces_transfer_and_payment_method(monkeypatch):
-    # apply_payment_defaults() currently hardcodes the literal key "Sujay" for this branch
-    # (see the ACCOUNT_OWNERS["Sujay"][0] lookup in bot_core.py) - tracked as a known issue
-    # in ROADMAP.md since it breaks if that key is ever renamed. This test intentionally
-    # mirrors that hardcoding rather than hiding it, so it fails loudly once the fix lands
-    # and the test needs updating alongside it.
-    monkeypatch.setattr(bot_core, "ACCOUNT_OWNERS", {"Sujay": ["Card A", "Cash"]})
+    # The YouTrip top-up branch always funds from PRIMARY_ACCOUNT_OWNER's account,
+    # regardless of who sent the message (spender_name below is deliberately someone else).
+    monkeypatch.setattr(bot_core, "ACCOUNT_OWNERS", {"Alice": ["Card A", "Cash"], "Bob": ["Card B"]})
+    monkeypatch.setattr(bot_core, "PRIMARY_ACCOUNT_OWNER", "Alice")
     txn = {"category": "YouTrip top-up", "currency": "SGD"}
-    result = bot_core.apply_payment_defaults(txn, "Sujay")
+    result = bot_core.apply_payment_defaults(txn, "Bob")
     assert result["payment_method"] == "Card A"
     assert result["transaction_type"] == "Transfer"
 

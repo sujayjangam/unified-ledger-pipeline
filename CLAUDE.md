@@ -102,6 +102,9 @@ Docker (Cloud Run deployment target): `Dockerfile` installs `requirements.txt` a
 - `ACCOUNT_OWNERS` — JSON object mapping a person's name → list of their payment accounts/cards,
   first entry is that person's default. Used to reverse-lookup `account_owner` from whatever
   payment method was extracted from the voice note.
+- `PRIMARY_ACCOUNT_OWNER` — must be one of the keys in `ACCOUNT_OWNERS`. Whoever funds shared
+  transfers (e.g. a YouTrip top-up) regardless of who sent the message. Configurable rather than
+  hardcoded so the codebase doesn't bake in one household's real name.
 - `OPENAI_API_KEY`
 - `DATABASE_URL` — Postgres connection string (`postgresql+psycopg://...`; note the `+psycopg`
   scheme — this project uses `psycopg` v3, a plain `postgresql://` URL makes SQLAlchemy default to
@@ -167,11 +170,13 @@ attempt. It does:
 3. If `amount` came back `None`, the entry is abandoned with a prompt to try again — the extraction
    prompt is deliberately told never to guess an amount, so a missing one means the input genuinely
    didn't contain a price. This is the branch a non-expense message ("hello") lands on.
-4. Payment method / account owner inference: if category is `YouTrip top-up` the payment method is
-   forced to the primary Sujay account and type is set to `Transfer`; otherwise a missing payment
-   method falls back to `YouTrip` for non-SGD amounts or the sender's default account (index 0 in
-   `ACCOUNT_OWNERS`) for SGD. `account_owner` is then derived by reverse-matching the payment
-   method against `ACCOUNT_OWNERS` (case-insensitive), except `Cash`, which is always attributed to
+4. Payment method / account owner inference (`app/bot_core.py::apply_payment_defaults`, a
+   standalone function so it can be unit-tested without a Telegram `Update`): if category is
+   `YouTrip top-up` the payment method is forced to `PRIMARY_ACCOUNT_OWNER`'s default account and
+   type is set to `Transfer`; otherwise a missing payment method falls back to `YouTrip` for
+   non-SGD amounts or the sender's default account (index 0 in `ACCOUNT_OWNERS`) for SGD.
+   `account_owner` is then derived by reverse-matching the payment method against
+   `ACCOUNT_OWNERS` (case-insensitive), except `Cash`, which is always attributed to
    the sender.
 5. The pending transaction is stashed in `context.user_data['pending_transaction']` and only
    written to the DB after the user taps the inline "Confirm" button (`handle_button_click`),

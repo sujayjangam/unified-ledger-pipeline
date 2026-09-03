@@ -17,12 +17,18 @@ truststore.inject_into_ssl()
 # Load the secrets into memory FIRST
 load_dotenv()
 
-try: 
+try:
     ALLOWED_TG_IDS = json.loads(os.getenv("ALLOWED_TG_IDS", "{}"))
     ACCOUNT_OWNERS = json.loads(os.getenv("ACCOUNT_OWNERS", "{}"))
 except json.JSONDecodeError:
     print("❌ Error: Invalid JSON format in .env file.")
     ALLOWED_TG_IDS, ACCOUNT_OWNERS = {}, {}
+
+# The ACCOUNT_OWNERS key that funds shared transfers (e.g. YouTrip top-ups), regardless of
+# who sent the message. Configurable rather than a hardcoded name so this repo doesn't bake
+# in one household's real name, and so renaming that key in ACCOUNT_OWNERS doesn't require
+# a code change.
+PRIMARY_ACCOUNT_OWNER = os.getenv("PRIMARY_ACCOUNT_OWNER")
 
 
 # NOW it is safe to import  custom services because the environment is ready (load_dotenv() already ran)
@@ -223,7 +229,7 @@ def apply_payment_defaults(transaction: dict, spender_name: str) -> dict:
         # YouTrip top-ups are always paid from the primary account and are a balance
         # transfer, not a spend - so the extracted category always wins over whatever
         # payment method (if any) the LLM guessed.
-        transaction['payment_method'] = ACCOUNT_OWNERS["Sujay"][0]
+        transaction['payment_method'] = ACCOUNT_OWNERS[PRIMARY_ACCOUNT_OWNER][0]
         transaction['transaction_type'] = 'Transfer'
 
     elif not transaction.get('payment_method'):
@@ -238,7 +244,9 @@ def apply_payment_defaults(transaction: dict, spender_name: str) -> dict:
             user_accounts = ACCOUNT_OWNERS.get(spender_name, ["Cash"])
             transaction['payment_method'] = user_accounts[0]
 
-    # now that we have the payment method, we will look up the account_owner, e.g. if Laura logs YouTrip txn, the account owner is Sujay
+    # now that we have the payment method, look up the account_owner - e.g. if one person
+    # logs a transaction on another household member's card, the account_owner is whoever
+    # owns that card, not whoever sent the message
     extracted_account = transaction.get('payment_method')
 
     if extracted_account and extracted_account.lower() == 'cash':
