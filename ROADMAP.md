@@ -28,26 +28,29 @@ friction before moving to Phase 1; see
 text ingestion ([#16](https://github.com/sujayjangam/unified-ledger-pipeline/issues/16)), 2026-08-21; CI on pull requests ([#32](https://github.com/sujayjangam/unified-ledger-pipeline/issues/32)), 2026-08-26;
 the case-study `README.md` rewrite with inline Mermaid architecture diagram (Phase 0 §4),
 2026-08-29 — pulled ahead of the remaining capture work deliberately, since it only claims
-what has already shipped; the demo GIF stays gated on capture reliability. The pytest suite
-([#33](https://github.com/sujayjangam/unified-ledger-pipeline/issues/33)) — money conversion,
-extraction schema parsing, period boundaries, payment-method/account-owner inference,
-`is_authorized`, and handler routing, plus wiring `pytest` into the CI workflow itself — closed
-2026-09-03, with the "a broken assertion turns the check red" criterion verified live in CI, not
-assumed.
+what has already shipped; the demo GIF stays gated on capture reliability; §3a in full
+([#31](https://github.com/sujayjangam/unified-ledger-pipeline/issues/31) parent,
+[#32](https://github.com/sujayjangam/unified-ledger-pipeline/issues/32),
+[#33](https://github.com/sujayjangam/unified-ledger-pipeline/issues/33),
+[#34](https://github.com/sujayjangam/unified-ledger-pipeline/issues/34)), 2026-09-03 — the pytest
+suite (money conversion, extraction schema parsing, period boundaries, payment-method/account-owner
+inference, `is_authorized`, and handler routing, wired into the CI workflow, with the "a broken
+assertion turns the check red" criterion verified live in CI, not assumed), and `main` is now a
+repository ruleset requiring `check-PR-before-merge`, verified against a throwaway PR rather than
+assumed from the settings page (see
+[ADR-0021](docs/decisions/0021-rulesets-over-classic-branch-protection.md) for why a ruleset
+rather than classic branch protection, and a since-fixed discrepancy in #34's own verification
+text).
 
-**Next action:** branch protection on `main` so it refuses a merge whose checks did not pass
-([#34](https://github.com/sujayjangam/unified-ledger-pipeline/issues/34)) — the last piece of
-[#31](https://github.com/sujayjangam/unified-ledger-pipeline/issues/31) §3a. Then back to capture:
-[#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) (backdated date parsing),
-[#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) (business date vs. ingestion
-timestamp), then the pending-transaction edit path. Full ordering in the Phase 0 checklist below.
+**Next action:** back to capture, per the original ordering: [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15)
+(backdated date parsing), [#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) (business date vs. ingestion timestamp), then the
+pending-transaction edit path. Full ordering in the Phase 0 checklist below.
 
 **Open top-level issues:** [#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) ordering · [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) backdated dates ·
 [#17](https://github.com/sujayjangam/unified-ledger-pipeline/issues/17) unused REST API · [#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22) entries can't be corrected ·
 [#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27) unpinned dependencies ·
 [#29](https://github.com/sujayjangam/unified-ledger-pipeline/issues/29) double-tap Confirm shows a
-false error · [#31](https://github.com/sujayjangam/unified-ledger-pipeline/issues/31) a red check
-doesn't yet block a merge.
+false error.
 Read the list without sub-issue noise with `gh issue list --search "no:parent-issue"`.
 
 ### Where things are written down
@@ -172,6 +175,19 @@ EXISTS`, the `account_desc` drift) a full migration cycle after the Neon Postgre
 horizons," "Build-in-public track," and other narrative asides, plus two Phase 5 plan items caught
 in a follow-up pass) — removed; this file now stays scoped to the engineering plan.
 
+Fixed 2026-09-03:
+
+- ~~No automated test suite, and no CI: a change is verified only by a person running the bot by
+hand once, and nothing gates a merge~~ — CI now runs lint, an import smoke check, and a pytest
+suite on every PR, and `main` is a repository ruleset that refuses a merge whose
+`check-PR-before-merge` check failed (admin bypass retained; not required reviewers/signed
+commits/CODEOWNERS, deliberately out of scope). Tracked as
+[#31](https://github.com/sujayjangam/unified-ledger-pipeline/issues/31) (parent, now closed) via
+[#32](https://github.com/sujayjangam/unified-ledger-pipeline/issues/32),
+[#33](https://github.com/sujayjangam/unified-ledger-pipeline/issues/33),
+[#34](https://github.com/sujayjangam/unified-ledger-pipeline/issues/34). Migration-against-a-real-
+database and idempotency-path coverage remain unaddressed — see the §3a checklist below.
+
 Still outstanding:
 
 - Duplicate Telegram update delivery is deduped only in memory (`_seen_update_ids` in
@@ -183,10 +199,6 @@ practice.
 structured logging — failures are invisible in production.
 - `needs_review` is extracted by `app/services/extraction.py` but never acted on anywhere — the
 human-in-the-loop claim doesn't hold until this actually gates bot behavior.
-- No automated test suite, and no CI: a change is verified only by a person running the bot by hand
-once, and nothing gates a merge. The in-memory-SQLite smoke test written during the migration was
-throwaway. Tracked as [#31](https://github.com/sujayjangam/unified-ledger-pipeline/issues/31);
-scope and sequencing in §3a/§3b of the Phase 0 plan.
 - A stray empty `ledger.db` sits at the repo root (untracked, harmless).
 - `.venv/` and `data/ledger.db` are untracked as of 2026-08-01 but **still present in git
 history** — purging needs a rewrite + force-push, deliberately deferred.
@@ -379,9 +391,16 @@ across [#38](https://github.com/sujayjangam/unified-ledger-pipeline/pull/38),
 (one category per PR); also covers `is_authorized` and payment-method/account-owner inference,
 beyond #33's original minimum slice.
 - [ ] Migrations apply from scratch (`alembic upgrade head` against a throwaway Postgres service
-container), plus `add_expense` validation and the `ON CONFLICT (idempotency_key)` path against it.
-- [ ] Branch protection on `main` requiring those checks — **last**, and only once they are green,
-or the branch becomes unmergeable.
+container), and the `ON CONFLICT (idempotency_key)` path against a real database — explicitly out
+of scope for #33 ("not part of the minimum slice"), still not covered by anything in `tests/`.
+`add_expense`'s pure-validation logic (amount conversion/rejection) is covered by
+`tests/test_add_expense.py`.
+- [x] Branch protection on `main` requiring `check-PR-before-merge`, enabled only once it had run
+green on real PRs. Shipped 2026-09-03 as a repository ruleset (not classic branch protection — see
+[ADR-0021](docs/decisions/0021-rulesets-over-classic-branch-protection.md)) with an admin bypass
+list, verified against a throwaway PR (#47): `mergeStateStatus` was `BLOCKED` and `gh pr merge` was
+rejected while the check failed, then flipped to `CLEAN` once fixed
+([#34](https://github.com/sujayjangam/unified-ledger-pipeline/issues/34)).
 
 **3b. After §1 completes** — coverage that has to run against the finished capture paths:
 

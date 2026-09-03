@@ -28,6 +28,7 @@ supersedes the old one rather than editing history.
 | [0018](0018-text-ingestion-before-date-parsing.md) | Ship text ingestion before backdated date parsing, and treat LLM cost as a non-constraint | Accepted | 2026-08-21 |
 | [0019](0019-separate-bot-token-for-local-testing.md) | Use a separate bot token and database branch for local testing | Accepted | 2026-08-21 |
 | [0020](0020-ci-scaffolding-before-remaining-capture-work.md) | Split the test-suite phase; land CI scaffolding before the rest of capture reliability | Accepted | 2026-08-21 |
+| [0021](0021-rulesets-over-classic-branch-protection.md) | Enforce the merge gate with a repository ruleset, not classic branch protection | Accepted | 2026-09-03 |
 
 ## Writing a new one
 
