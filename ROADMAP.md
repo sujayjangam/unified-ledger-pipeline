@@ -234,6 +234,22 @@ sequenced in the Phase 0 checklist and aren't repeated here):
   inline mode enabled on the bot, or sending the template as a tap-to-copy code block, which needs
   no bot configuration but costs the user an extra paste.
 
+Found 2026-09-03, while reviewing #33's test suite PRs, not yet actioned:
+
+- `app/services/extraction.py`'s `ALLOWED_ACCOUNTS` default and the YouTrip-top-up prompt text
+  both say `OCBC Infinity`, which is the wrong card name — it should be `OCBC Rewards`. Needs a
+  code fix (also touches the `OCBC Infinity` example value in `tests/test_extraction.py`) *and* a
+  one-off correction of existing rows already written with `OCBC Infinity` in the live Neon
+  database — the latter needs a specific, reviewed plan before running, not an ad hoc `UPDATE`.
+- Candidate future work: move payment methods/account owners (currently `ACCOUNT_OWNERS`,
+  hand-maintained JSON in `.env`) and categories into queryable/updatable Postgres tables instead
+  of static env-var config, so they can change without a redeploy, and so a user editing a
+  category could feed that back into future extraction automatically. This overlaps with Phase
+  2's already-planned auto-categorisation work below, which is the more natural home for it — see
+  that section rather than treating this as separate scope. Rough latency read: a lookup against
+  a small, indexed reference table adds low-single-digit milliseconds, negligible next to the
+  existing OpenAI extraction call (500ms–2s) — not yet benchmarked against a real implementation.
+
 ## Plan
 
 ### Phase 0 — Foundation & ownership
