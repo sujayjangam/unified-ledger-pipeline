@@ -50,7 +50,8 @@ pending-transaction edit path. Full ordering in the Phase 0 checklist below.
 [#17](https://github.com/sujayjangam/unified-ledger-pipeline/issues/17) unused REST API · [#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22) entries can't be corrected ·
 [#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27) unpinned dependencies ·
 [#29](https://github.com/sujayjangam/unified-ledger-pipeline/issues/29) double-tap Confirm shows a
-false error.
+false error · [#39](https://github.com/sujayjangam/unified-ledger-pipeline/issues/39) float
+rounding can silently lose a cent.
 Read the list without sub-issue noise with `gh issue list --search "no:parent-issue"`.
 
 ### Where things are written down
