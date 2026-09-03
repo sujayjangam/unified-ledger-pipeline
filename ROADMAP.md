@@ -187,6 +187,16 @@ commits/CODEOWNERS, deliberately out of scope). Tracked as
 [#33](https://github.com/sujayjangam/unified-ledger-pipeline/issues/33),
 [#34](https://github.com/sujayjangam/unified-ledger-pipeline/issues/34). Migration-against-a-real-
 database and idempotency-path coverage remain unaddressed — see the §3a checklist below.
+- Artifact Registry had no cleanup policy: 122 container image versions (3.5 GB) had accumulated
+since May 2026, one per deploy, forever — the actual cause of an unexplained $0.19 August charge
+(~30¢ Artifact Registry against ~6¢ Cloud Run), not the `pg_dump` backups initially suspected
+(the GCS backup bucket is 440 KiB total, several orders of magnitude too small to matter).
+`cloud-run-source-deploy` now has a cleanup policy keeping only the 3 most recent image versions,
+unconditionally — see
+[ADR-0022](docs/decisions/0022-artifact-registry-cleanup-policy.md) for why 3 (not 0, not 5, and
+no age condition). A BigQuery billing export dataset (`billing_export`) was also created so future
+charges are queryable by SKU without the Console UI; linking it as the live export target is a
+Console-only step with no public API, left for the user to complete.
 
 Still outstanding:
 
