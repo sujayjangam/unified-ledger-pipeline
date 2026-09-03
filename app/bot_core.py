@@ -211,6 +211,50 @@ async def cat_month_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = format_category_summary(f"📊 **This Month's Categories** ({start_str} to {end_str})", cat_data)
     await update.message.reply_text(text, parse_mode="Markdown")
 
+def apply_payment_defaults(transaction: dict, spender_name: str) -> dict:
+    """Fills in payment_method and account_owner on an extracted transaction dict, mutating
+    and returning it in place.
+
+    Pulled out of process_expense_text() as a standalone, synchronous function (no Update/
+    context, no `await`) specifically so this logic can be unit-tested directly on plain
+    dicts, without needing to fake a full Telegram Update.
+    """
+    if transaction.get('category') == 'YouTrip top-up':
+        # YouTrip top-ups are always paid from the primary account and are a balance
+        # transfer, not a spend - so the extracted category always wins over whatever
+        # payment method (if any) the LLM guessed.
+        transaction['payment_method'] = ACCOUNT_OWNERS["Sujay"][0]
+        transaction['transaction_type'] = 'Transfer'
+
+    elif not transaction.get('payment_method'):
+        # If no method was extracted, apply currency/user defaults
+        if transaction.get('currency', 'SGD') != 'SGD':
+            # Non-SGD spend with no stated payment method is almost always YouTrip in
+            # practice (a multi-currency wallet), so default to it rather than asking.
+            transaction['payment_method'] = 'YouTrip'
+        else:
+            # Dynamically pull the user's default card (Index 0)
+            # Fallback to ["Cash"] if the user isn't in the dictionary
+            user_accounts = ACCOUNT_OWNERS.get(spender_name, ["Cash"])
+            transaction['payment_method'] = user_accounts[0]
+
+    # now that we have the payment method, we will look up the account_owner, e.g. if Laura logs YouTrip txn, the account owner is Sujay
+    extracted_account = transaction.get('payment_method')
+
+    if extracted_account and extracted_account.lower() == 'cash':
+        # Cash isn't tied to any one account in ACCOUNT_OWNERS, so it's always attributed
+        # to whoever sent the message, regardless of what accounts they have on file.
+        transaction['account_owner'] = spender_name
+    else:
+        account_owner = "Unknown"
+        for owner, accounts_list in ACCOUNT_OWNERS.items():
+            if extracted_account.lower() in [account.lower() for account in accounts_list]:
+                account_owner = owner
+                break
+        transaction['account_owner'] = account_owner
+
+    return transaction
+
 # shared pipeline: raw text (transcript or typed) -> extraction -> pending confirmation card
 async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYPE, raw_text: str, status_msg):
     """Extracts structured data from raw text and presents it for confirmation.
@@ -258,32 +302,7 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
         return # Stop processing this transaction
 
     # if the transaction is in non SGD currency, for now we automatically assume it's made with YouTrip, unless payment method already mentioned e.g. Cash
-    if single_transaction.get('category') == 'YouTrip top-up':
-        single_transaction['payment_method'] = ACCOUNT_OWNERS["Sujay"][0]
-        single_transaction['transaction_type'] = 'Transfer'
-
-    elif not single_transaction.get('payment_method'):
-        # If no method was extracted, apply currency/user defaults
-        if single_transaction.get('currency', 'SGD') != 'SGD':
-            single_transaction['payment_method'] = 'YouTrip'
-        else:
-            # Dynamically pull the user's default card (Index 0)
-            # Fallback to ["Cash"] if the user isn't in the dictionary
-            user_accounts = ACCOUNT_OWNERS.get(spender_name, ["Cash"])
-            single_transaction['payment_method'] = user_accounts[0]
-
-    # now that we have the payment method, we will look up the account_owner, e.g. if Laura logs YouTrip txn, the account owner is Sujay
-    extracted_account = single_transaction.get('payment_method')
-
-    if extracted_account and extracted_account.lower() == 'cash':
-        single_transaction['account_owner'] = spender_name
-    else:
-        account_owner = "Unknown"
-        for owner, accounts_list in ACCOUNT_OWNERS.items():
-            if extracted_account.lower() in [account.lower() for account in accounts_list]:
-                account_owner = owner
-                break
-        single_transaction['account_owner'] = account_owner
+    single_transaction = apply_payment_defaults(single_transaction, spender_name)
 
     # One idempotency key per confirm prompt (not per save attempt) - reused on every
     # save attempt for this same prompt, so a double-tap or webhook retry can't insert twice.
