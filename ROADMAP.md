@@ -28,21 +28,26 @@ friction before moving to Phase 1; see
 text ingestion ([#16](https://github.com/sujayjangam/unified-ledger-pipeline/issues/16)), 2026-08-21; CI on pull requests ([#32](https://github.com/sujayjangam/unified-ledger-pipeline/issues/32)), 2026-08-26;
 the case-study `README.md` rewrite with inline Mermaid architecture diagram (Phase 0 §4),
 2026-08-29 — pulled ahead of the remaining capture work deliberately, since it only claims
-what has already shipped; the demo GIF stays gated on capture reliability.
+what has already shipped; the demo GIF stays gated on capture reliability. The pytest suite
+([#33](https://github.com/sujayjangam/unified-ledger-pipeline/issues/33)) — money conversion,
+extraction schema parsing, period boundaries, payment-method/account-owner inference,
+`is_authorized`, and handler routing, plus wiring `pytest` into the CI workflow itself — closed
+2026-09-03, with the "a broken assertion turns the check red" criterion verified live in CI, not
+assumed.
 
-**Next action:** the rest of [#31](https://github.com/sujayjangam/unified-ledger-pipeline/issues/31) §3a — CI now runs on every pull request, but it only
-proves the code loads, and nothing yet stops a red check being merged anyway. What remains is the
-test suite over the money and date invariants ([#33](https://github.com/sujayjangam/unified-ledger-pipeline/issues/33)) and branch protection so `main`
-refuses a merge whose checks did not pass ([#34](https://github.com/sujayjangam/unified-ledger-pipeline/issues/34)). Then back to capture: [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15)
-(backdated date parsing), [#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) (business date vs. ingestion timestamp), then the
-pending-transaction edit path. Full ordering in the Phase 0 checklist below.
+**Next action:** branch protection on `main` so it refuses a merge whose checks did not pass
+([#34](https://github.com/sujayjangam/unified-ledger-pipeline/issues/34)) — the last piece of
+[#31](https://github.com/sujayjangam/unified-ledger-pipeline/issues/31) §3a. Then back to capture:
+[#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) (backdated date parsing),
+[#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) (business date vs. ingestion
+timestamp), then the pending-transaction edit path. Full ordering in the Phase 0 checklist below.
 
 **Open top-level issues:** [#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) ordering · [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) backdated dates ·
 [#17](https://github.com/sujayjangam/unified-ledger-pipeline/issues/17) unused REST API · [#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22) entries can't be corrected ·
 [#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27) unpinned dependencies ·
 [#29](https://github.com/sujayjangam/unified-ledger-pipeline/issues/29) double-tap Confirm shows a
-false error · [#31](https://github.com/sujayjangam/unified-ledger-pipeline/issues/31) nothing
-verifies a change automatically.
+false error · [#31](https://github.com/sujayjangam/unified-ledger-pipeline/issues/31) a red check
+doesn't yet block a merge.
 Read the list without sub-issue noise with `gh issue list --search "no:parent-issue"`.
 
 ### Where things are written down
@@ -359,12 +364,20 @@ across `app/`. Shipped 2026-08-26 in `.github/workflows/ci.yml`
 ([#32](https://github.com/sujayjangam/unified-ledger-pipeline/issues/32)). The import check is what
 catches a merge that would take the deployed bot down on startup; the clean install doubles as the
 evidence [#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27) needs.
-- [ ] Pytest harness, with test-only dependencies in a separate `requirements-dev.txt` so
+- [x] Pytest harness, with test-only dependencies in a separate `requirements-dev.txt` so
 `requirements.txt` keeps meaning "what production needs" — otherwise the check above can't answer
-#27.
-- [ ] Stable-target tests: money conversion, the period boundaries in `app/services/utils.py` /
+#27. Shipped 2026-09-03: `pytest`/`pytest-asyncio` pinned in `requirements-dev.txt`, and
+`.github/workflows/ci.yml` installs it and runs `pytest` on every PR
+([#46](https://github.com/sujayjangam/unified-ledger-pipeline/pull/46)) — verified live in CI, not
+assumed, by deliberately breaking an assertion and watching the check go red, then reverting it.
+- [x] Stable-target tests: money conversion, the period boundaries in `app/services/utils.py` /
 `app/services/ledger_queries.py`, handler routing, and extraction schema parsing against recorded
-response JSON. No network and no billable API calls anywhere in the suite.
+response JSON. No network and no billable API calls anywhere in the suite. Shipped 2026-09-03
+across [#38](https://github.com/sujayjangam/unified-ledger-pipeline/pull/38),
+[#40](https://github.com/sujayjangam/unified-ledger-pipeline/pull/40)-[#42](https://github.com/sujayjangam/unified-ledger-pipeline/pull/42),
+[#44](https://github.com/sujayjangam/unified-ledger-pipeline/pull/44)-[#46](https://github.com/sujayjangam/unified-ledger-pipeline/pull/46)
+(one category per PR); also covers `is_authorized` and payment-method/account-owner inference,
+beyond #33's original minimum slice.
 - [ ] Migrations apply from scratch (`alembic upgrade head` against a throwaway Postgres service
 container), plus `add_expense` validation and the `ON CONFLICT (idempotency_key)` path against it.
 - [ ] Branch protection on `main` requiring those checks — **last**, and only once they are green,
