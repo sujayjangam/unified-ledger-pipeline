@@ -2,7 +2,7 @@ import pytest
 from app.add_expense import dollars_to_cents
 
 def test_converts_dollars_to_cents():
-    assert dollars_to_cents(12.50) == 1250
+    assert dollars_to_cents(12.50) == 9999  # deliberately wrong - verifying CI catches this
 
 def test_converts_whole_dollar_and_single_cent_amounts():
     assert dollars_to_cents(100) == 10000
