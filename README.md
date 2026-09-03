@@ -103,8 +103,9 @@ its context, rejected alternatives and cost. The ones that shaped the system mos
 - Confirmation-gated, idempotent writes to the Postgres ledger.
 - Read commands over the ledger (`/recent`, `/today`, `/week`, `/month` and per-category
   variants), aggregated per currency.
-- CI on every pull request: clean dependency install, lint, and an import smoke check across
-  `app/` — the class of check that stops a merge that would crash the bot on startup.
+- CI on every pull request: clean dependency install, lint, an import smoke check across `app/`,
+  and a pytest suite over the money and date invariants — required to pass before a merge to
+  `main`, enforced by a repository ruleset rather than merely reported on.
 - 6-hourly `pg_dump` backups to GCS with 30-day retention; restore procedure verified 2026-08-13.
 - A small FastAPI REST surface (`GET/POST /transactions`, `app/main.py`) for programmatic entry,
   currently local-only.
@@ -120,8 +121,7 @@ Forward-looking work, tracked in [`ROADMAP.md`](ROADMAP.md):
   ([ADR-0015](docs/decisions/0015-deterministic-matching-before-llm.md)).
 - **Evaluation harness** (Phase 2): a hand-labeled golden set of statement-line → ledger-entry
   matches, scored with precision/recall, used to tune the matcher instead of guessing constants.
-- Nearer-term: backdated date parsing ("yesterday", "last Tuesday"), edit/delete paths, and a
-  pytest suite over the money and date invariants.
+- Nearer-term: backdated date parsing ("yesterday", "last Tuesday") and edit/delete paths.
 
 ## Getting started
 
@@ -156,6 +156,8 @@ Deployment: `Dockerfile` installs `requirements.txt` and runs
   allowlist.
 - `ACCOUNT_OWNERS` — JSON object mapping a person's name → list of their payment
   accounts/cards, used to reverse-lookup `account_owner` from the extracted payment method.
+- `PRIMARY_ACCOUNT_OWNER` — must be one of the keys in `ACCOUNT_OWNERS`; whoever funds shared
+  transfers (e.g. a YouTrip top-up) regardless of who sent the message.
 - `OPENAI_API_KEY`
 - `DATABASE_URL` — Postgres connection string (`postgresql+psycopg://...`)
 - `WEBHOOK_URL` — optional, only used by `bot_webhook.py` to register the Telegram webhook.
