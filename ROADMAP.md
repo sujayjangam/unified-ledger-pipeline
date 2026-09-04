@@ -51,7 +51,8 @@ pending-transaction edit path. Full ordering in the Phase 0 checklist below.
 [#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27) unpinned dependencies ·
 [#29](https://github.com/sujayjangam/unified-ledger-pipeline/issues/29) double-tap Confirm shows a
 false error · [#39](https://github.com/sujayjangam/unified-ledger-pipeline/issues/39) float
-rounding can silently lose a cent.
+rounding can silently lose a cent · [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53)
+household accounts live in env secrets (Phase 1).
 Read the list without sub-issue noise with `gh issue list --search "no:parent-issue"`.
 
 ### Where things are written down
@@ -274,14 +275,13 @@ Found 2026-09-03, while reviewing #33's test suite PRs, not yet actioned:
   plan and a row count before running, not an ad hoc `UPDATE` — and it is a data fix only, with no
   code change left to make. Account names are intentionally kept out of this file: they live solely
   in gitignored `.env`, since this repo is public.
-- Candidate future work: move payment methods/account owners (currently `ACCOUNT_OWNERS`,
-  hand-maintained JSON in `.env`) and categories into queryable/updatable Postgres tables instead
-  of static env-var config, so they can change without a redeploy, and so a user editing a
-  category could feed that back into future extraction automatically. This overlaps with Phase
-  2's already-planned auto-categorisation work below, which is the more natural home for it — see
-  that section rather than treating this as separate scope. Rough latency read: a lookup against
-  a small, indexed reference table adds low-single-digit milliseconds, negligible next to the
-  existing OpenAI extraction call (500ms–2s) — not yet benchmarked against a real implementation.
+- Move household participants and accounts (currently the `ACCOUNT_OWNERS` and `ALLOWED_TG_IDS`
+  JSON objects plus the `PRIMARY_ACCOUNT_OWNER` string, all hand-maintained in `.env`) into
+  Postgres tables — filed as
+  [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53), scheduled for Phase 1
+  (decided 2026-09-04: the matcher needs accounts as rows with stable ids, so it is built against
+  that model from the start rather than migrated onto it). Moving *categories* into a table stays
+  a candidate tied to Phase 2's auto-categorisation work below, not part of #53.
 
 ## Plan
 
@@ -452,6 +452,11 @@ problems the capture work above is meant to fix — but the published artifact c
 - [ ] Receipt image capture (Telegram photo message) as a second ingestion path alongside voice
 notes — store the image (GCS) and link it to the transaction row; reuses the rule-based +
 LLM-fallback extraction architecture above rather than building a separate one-off pipeline.
+- [ ] Household participants and accounts as Postgres tables, replacing the `ACCOUNT_OWNERS` /
+`PRIMARY_ACCOUNT_OWNER` / `ALLOWED_TG_IDS` env vars —
+[#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53). Goes before the staging
+table so statement lines attach to an account row, not a string. The Phase 3 `participants` table
+below is this one.
 - [ ] Normalize parsed statement lines into a staging table (Postgres)
 - [ ] Deterministic matcher: amount + date window against existing ledger entries
 - [ ] Tie-breaking rule: auto-match only on a unique candidate; 0 or 2+ candidates → `needs_review`
@@ -475,7 +480,8 @@ reverse-lookup in `bot_core.py` is the same *shape* but is hand-maintained from 
 
 ### Phase 3 — Household splitting
 
-- [ ] Schema: `participants` table, `transaction_splits` child table, `split_type` enum
+- [ ] Schema: `transaction_splits` child table, `split_type` enum (the `participants` table itself
+lands in Phase 1 via [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53))
 - [ ] Application logic: even-split and one uneven-split mode to start (who-owes-who calculation)
 - [ ] Extend as real usage surfaces the need for more flexible splitting
 
