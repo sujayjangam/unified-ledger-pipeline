@@ -264,11 +264,16 @@ sequenced in the Phase 0 checklist and aren't repeated here):
 
 Found 2026-09-03, while reviewing #33's test suite PRs, not yet actioned:
 
-- `app/services/extraction.py`'s `ALLOWED_ACCOUNTS` default and the YouTrip-top-up prompt text
-  both say `OCBC Infinity`, which is the wrong card name — it should be `OCBC Rewards`. Needs a
-  code fix (also touches the `OCBC Infinity` example value in `tests/test_extraction.py`) *and* a
-  one-off correction of existing rows already written with `OCBC Infinity` in the live Neon
-  database — the latter needs a specific, reviewed plan before running, not an ad hoc `UPDATE`.
+- ~~`app/services/extraction.py` hardcoded a card name in two places — the `ALLOWED_ACCOUNTS`
+  default and the YouTrip-top-up prompt text — and the name it used was itself wrong~~ — code half
+  fixed 2026-09-04: `ALLOWED_ACCOUNTS` is deleted and the prompt's payment-method list is now
+  derived per call from `ACCOUNT_OWNERS` (`extraction.py::build_allowed_accounts`). No account name
+  exists in the repo any more, so this class of drift can't recur. **Still outstanding:** a one-off
+  correction of existing rows in the live Neon database that were written with the wrong
+  `account_desc` value while the hardcoded default was in force. That needs a specific, reviewed
+  plan and a row count before running, not an ad hoc `UPDATE` — and it is a data fix only, with no
+  code change left to make. Account names are intentionally kept out of this file: they live solely
+  in gitignored `.env`, since this repo is public.
 - Candidate future work: move payment methods/account owners (currently `ACCOUNT_OWNERS`,
   hand-maintained JSON in `.env`) and categories into queryable/updatable Postgres tables instead
   of static env-var config, so they can change without a redeploy, and so a user editing a

@@ -155,13 +155,13 @@ Deployment: `Dockerfile` installs `requirements.txt` and runs
 - `ALLOWED_TG_IDS` — JSON object mapping Telegram user ID (string) → display name; the bot's
   allowlist.
 - `ACCOUNT_OWNERS` — JSON object mapping a person's name → list of their payment
-  accounts/cards, used to reverse-lookup `account_owner` from the extracted payment method.
+  accounts/cards, used to reverse-lookup `account_owner` from the extracted payment method,
+  and flattened into the list of valid payment methods given to the extraction prompt.
 - `PRIMARY_ACCOUNT_OWNER` — must be one of the keys in `ACCOUNT_OWNERS`; whoever funds shared
   transfers (e.g. a YouTrip top-up) regardless of who sent the message.
 - `OPENAI_API_KEY`
 - `DATABASE_URL` — Postgres connection string (`postgresql+psycopg://...`)
 - `WEBHOOK_URL` — optional, only used by `bot_webhook.py` to register the Telegram webhook.
-- `ALLOWED_ACCOUNTS` — optional, feeds the extraction prompt's list of valid payment methods.
 
 ## Docs
 
