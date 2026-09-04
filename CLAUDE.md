@@ -111,7 +111,10 @@ Docker (Cloud Run deployment target): `Dockerfile` installs `requirements.txt` a
   bot's allowlist; anyone not in this map is rejected by `is_authorized()`.
 - `ACCOUNT_OWNERS` — JSON object mapping a person's name → list of their payment accounts/cards,
   first entry is that person's default. Used to reverse-lookup `account_owner` from whatever
-  payment method was extracted from the voice note.
+  payment method was extracted from the voice note, and flattened by
+  `extraction.py::build_allowed_accounts` into the list of valid payment methods the extraction
+  prompt is allowed to choose from. It is the **only** place accounts are defined — see the
+  Architecture note below for why that matters.
 - `PRIMARY_ACCOUNT_OWNER` — must be one of the keys in `ACCOUNT_OWNERS`. Whoever funds shared
   transfers (e.g. a YouTrip top-up) regardless of who sent the message. Configurable rather than
   hardcoded so the codebase doesn't bake in one household's real name.
@@ -120,7 +123,6 @@ Docker (Cloud Run deployment target): `Dockerfile` installs `requirements.txt` a
   scheme — this project uses `psycopg` v3, a plain `postgresql://` URL makes SQLAlchemy default to
   the uninstalled `psycopg2` dialect and fail).
 - `WEBHOOK_URL` — optional, only used by `bot_webhook.py` to register the Telegram webhook.
-- `ALLOWED_ACCOUNTS` — optional, feeds the extraction prompt's list of valid payment methods.
 
 `.env.local` (gitignored via the `.env.*` rule, which exists because git reads `.env` as a literal
 filename rather than a prefix) is the local-testing overlay: it holds only `TELEGRAM_BOT_TOKEN` for
@@ -169,6 +171,16 @@ works (voice echoes the transcript back, text has nothing to echo); every branch
 that one message rather than sending new ones, so a user is left with exactly one message per entry
 attempt. It does:
 
+0. The list of payment methods the model may choose from is built **per call**, by
+   `extraction.py::build_allowed_accounts` flattening `ACCOUNT_OWNERS` (de-duplicated
+   case-insensitively, plus `Cash`, which belongs to nobody so never appears there). It is
+   deliberately not a module constant: a Pydantic `Field` description is evaluated once at import
+   time, and this module is imported in paths with no `.env` loaded (CI's import smoke check,
+   `tests/test_extraction.py`), so the list goes into the system prompt instead. This replaced a
+   separate `ALLOWED_ACCOUNTS` env var that was never actually set — the prompt silently ran on a
+   hardcoded fallback that omitted one household member's card and named exactly one bank account,
+   so transfer-shaped messages were routinely attributed to the wrong `account_owner`. Never
+   reintroduce a second source of truth for this list.
 1. `app/services/extraction.py::extract_transactions` → GPT-4o-mini with structured output
    (`response_format=TransactionList`, a Pydantic model) to pull amount, currency, category,
    payment method, transaction type, and date out of the raw text. The raw input itself

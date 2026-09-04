@@ -21,6 +21,9 @@ data/ledger.db.pre-migration-backup
 # Private job-search/portfolio notes, not part of the public project docs
 claude-jobhunt-context.md
 claude-jobhunt-*
+# Working plans for in-flight changes. Kept local because drafts name real household
+# members and real card names - ROADMAP.md/the issue tracker are the public record.
+claude-plan-*.md
 .claude/agents/doc-checker.md
 *Resume*.docx
 *Resume*.pdf

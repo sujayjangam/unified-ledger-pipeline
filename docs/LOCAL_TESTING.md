@@ -47,7 +47,7 @@ TELEGRAM_BOT_TOKEN=<the token BotFather just gave you>
 DATABASE_URL=postgresql+psycopg://<neon branch connection string>
 ```
 
-Everything else — `OPENAI_API_KEY`, `ALLOWED_TG_IDS`, `ACCOUNT_OWNERS`, `ALLOWED_ACCOUNTS` — is
+Everything else — `OPENAI_API_KEY`, `ALLOWED_TG_IDS`, `ACCOUNT_OWNERS` — is
 deliberately **absent**, and keeps coming from `.env`. `app/bot_local.py` loads `.env.local` first
 with `override=True`; `bot_core`'s own `load_dotenv()` defaults to `override=False`, so it fills in
 the gaps without disturbing the overrides. One copy of each secret on disk, not two.
