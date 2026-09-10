@@ -200,9 +200,25 @@ attempt. It does:
    `account_owner` is then derived by reverse-matching the payment method against
    `ACCOUNT_OWNERS` (case-insensitive), except `Cash`, which is always attributed to
    the sender.
-5. The pending transaction is stashed in `context.user_data['pending_transaction']` and only
-   written to the DB after the user taps the inline "Confirm" button (`handle_button_click`),
-   which calls `app/add_expense.py::add_expense`.
+5. The pending transaction is stashed in `context.user_data['pending_cards']` — a bounded dict
+   keyed by the **`message_id` of the confirmation card**, not a single slot — and only written to
+   the DB after the user taps the inline "Confirm" button (`handle_button_click`), which calls
+   `app/add_expense.py::add_expense`. Keying per card is what lets two cards be on screen and
+   confirmable in any order, and is why dropping the one-expense-per-message guardrail (item 2
+   above) will need no change to `handle_button_click`. See
+   [ADR-0023](docs/decisions/0023-in-memory-confirm-card-state.md).
+
+   `handle_button_click` itself is shaped by one Telegram constraint: **a `callback_query_id` can
+   be answered exactly once**, so every branch decides what it wants to say before spending that
+   single `answer()`. On a valid confirm it answers, then swaps Confirm/Cancel for a
+   non-actionable `⏳ Adding to ledger...` button, *both before* the blocking `add_expense` call —
+   otherwise nothing on screen changes for the whole DB round trip, the button reads as dead, and
+   the user taps again. A second tap on a card whose outcome is already recorded in
+   `context.user_data['resolved_cards']` gets a toast and leaves the card alone; it must never
+   `edit_message_text`, which is the bug [#29](https://github.com/sujayjangam/unified-ledger-pipeline/issues/29)
+   fixed (a double tap replaced a correct "Saved to Ledger!" card with a false "session expired"
+   error). A failed save puts the entry back with its original `idempotency_key` and re-attaches
+   the buttons, so a transient Neon failure costs a retry rather than the entry.
 
 ### Storage
 - `app/database.py` owns a lazily-created, pooled SQLAlchemy Core engine (`get_engine()` /

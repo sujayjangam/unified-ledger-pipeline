@@ -263,6 +263,75 @@ def apply_payment_defaults(transaction: dict, spender_name: str) -> dict:
 
     return transaction
 
+# --- Confirmation-card state -------------------------------------------------------------
+#
+# Both caches below live in context.user_data (per Telegram user, pure process memory - the
+# bot configures no PTB persistence) and are keyed by the message_id of the card the buttons
+# are attached to. Keying by card rather than keeping a single "current" transaction is what
+# lets two cards be on screen and confirmable at the same time, in any order: today one
+# message produces one card, but dropping the one-expense-per-message guardrail will have a
+# single message fan out into several cards, and this handler needs no change for that.
+#
+# They are bounded for the same reason bot_webhook.py bounds its _seen_update_ids cache:
+# user_data survives for the whole life of the process and nothing else ever prunes it, so
+# an unbounded dict is a slow leak. Plain dicts are insertion-ordered (3.7+), so the oldest
+# key is simply the first one.
+_CARD_CACHE_MAXLEN = 20
+
+
+def _bounded_put(cache: dict, key, value):
+    """Stores key -> value, evicting oldest-first once the cache is over its bound."""
+    cache[key] = value
+    while len(cache) > _CARD_CACHE_MAXLEN:
+        del cache[next(iter(cache))]  # first key = oldest insertion
+
+
+def _remember_pending_card(context: ContextTypes.DEFAULT_TYPE, message_id: int, transaction: dict):
+    """Records a transaction as awaiting confirmation on the card with this message_id."""
+    _bounded_put(context.user_data.setdefault('pending_cards', {}), message_id, transaction)
+
+
+def _take_pending_card(context: ContextTypes.DEFAULT_TYPE, message_id: int):
+    """Removes and returns this card's pending transaction, or None if it has none.
+
+    Removing on read is what stops the same card being saved twice: whichever call gets here
+    first takes the transaction, and any later one sees None. It is a safety net rather than
+    the primary guard - PTB processes updates one at a time here (concurrent_updates is never
+    enabled, and add_expense is synchronous), and the real duplicate-write protection is the
+    idempotency_key, per ADR-0011.
+    """
+    return context.user_data.get('pending_cards', {}).pop(message_id, None)
+
+
+def _mark_card_resolved(context: ContextTypes.DEFAULT_TYPE, message_id: int, outcome: str):
+    """Records how this card ended - 'saved' or 'cancelled' - so a later tap on it can say
+    what actually happened instead of guessing that the entry was lost."""
+    _bounded_put(context.user_data.setdefault('resolved_cards', {}), message_id, outcome)
+
+
+def _card_outcome(context: ContextTypes.DEFAULT_TYPE, message_id: int):
+    """Returns 'saved'/'cancelled' if this card is already finished with, else None."""
+    return context.user_data.get('resolved_cards', {}).get(message_id)
+
+
+def _confirm_keyboard() -> InlineKeyboardMarkup:
+    """The Confirm/Cancel pair a pending card carries. Built by a function rather than held
+    as a constant because the failure path re-attaches it after it has been swapped out."""
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Confirm", callback_data="confirm_save"),
+        InlineKeyboardButton("❌ Cancel", callback_data="cancel_save"),
+    ]])
+
+
+def _saving_keyboard() -> InlineKeyboardMarkup:
+    """The placeholder shown while the save is in flight. It replaces Confirm/Cancel, so the
+    user gets an immediate reaction and can no longer tap Confirm at all (issue #55); its
+    callback_data exists only so an impatient tap on it can be answered with a toast."""
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("⏳ Adding to ledger...", callback_data="saving_in_progress")
+    ]])
+
+
 # shared pipeline: raw text (transcript or typed) -> extraction -> pending confirmation card
 async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYPE, raw_text: str, status_msg):
     """Extracts structured data from raw text and presents it for confirmation.
@@ -316,8 +385,6 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
     # save attempt for this same prompt, so a double-tap or webhook retry can't insert twice.
     single_transaction['idempotency_key'] = str(uuid.uuid4())
 
-    # Store the isolated transaction in memory, not the whole wrapper
-    context.user_data['pending_transaction'] = single_transaction
 
     # Reference 'single_transaction', in future this will read 'transactions' when support for multiple txn is added
     summary_message = (
@@ -330,17 +397,13 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
         f"📅 **Date:** {single_transaction.get('date')}\n"
     )
 
-    # Create the interactive buttons
-    keyboard = [
-        [
-            InlineKeyboardButton("✅ Confirm", callback_data="confirm_save"),
-            InlineKeyboardButton("❌ Cancel", callback_data="cancel_save")
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    # Send the clean summary with the Confirm/Cancel buttons attached
+    await status_msg.edit_text(summary_message, reply_markup=_confirm_keyboard(), parse_mode="Markdown")
 
-    # Send the clean summary with the buttons attached
-    await status_msg.edit_text(summary_message, reply_markup=reply_markup, parse_mode="Markdown")
+    # Stash the transaction against *this card's* message_id, only once the card exists - the
+    # button press that comes back carries the message_id and nothing else, so that is the
+    # only handle handle_button_click has for finding the right transaction again.
+    _remember_pending_card(context, status_msg.message_id, single_transaction)
 
 # get voice message, transcribe, then hand the transcript to the shared pipeline above
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -401,60 +464,114 @@ async def handle_unsupported(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 # buttons!
 async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Processes the Confirm or Cancel button presses."""
+    """Processes the Confirm/Cancel presses on a pending-transaction card.
+
+    A callback_query_id can be answered exactly once - a second answer() on the same query
+    fails outright - so every branch below works out what it wants to say *before* spending
+    that single answer. Getting this wrong is what made a double-tap overwrite a correct
+    "Saved to Ledger!" card with a false error (issue #29).
+    """
     query = update.callback_query
-    await query.answer() 
-    
-    # when the user clicks on the confirm button, we get the pending transaction and save it to our database
+    message_id = query.message.message_id
+
+    # The placeholder button shown while a save is in flight. Reaching it means the user got
+    # impatient, not that anything is wrong: say so in a toast and leave the card completely
+    # alone, because the save that is still running owns it.
+    if query.data == "saving_in_progress":
+        await query.answer("⏳ Adding your expense, one moment...")
+        return
+
     if query.data == "confirm_save":
-        # Atomic check-and-remove: whichever concurrent call (double-tap, webhook retry) gets
-        # here first wins the transaction; any other one sees None below instead of also saving it.
-        transaction_to_save = context.user_data.pop('pending_transaction', None)
+        # A card whose outcome is already settled must not be processed again, and - just as
+        # importantly - must not have its result message overwritten. This is the branch that
+        # used to claim the session had expired when the entry had in fact just been saved.
+        outcome = _card_outcome(context, message_id)
+        if outcome == "saved":
+            await query.answer("✅ Already saved to the ledger.")
+            return
+        if outcome == "cancelled":
+            await query.answer("❌ This entry was cancelled.")
+            return
 
-        if transaction_to_save: # checks if transaction_to_save variable actually contains data. If empty, returns None (False)
-            # await query.edit_message_text("✅ **Confirmed!** Transaction ready for the database.", parse_mode="Markdown")
-            # save success will return True if done, or False if failed
-            save_success = add_expense(
-                date_str=transaction_to_save.get('date'),
-                description=transaction_to_save.get('description'),
-                amount_dollars=transaction_to_save.get('amount'),
-                category=transaction_to_save.get('category'),
-                currency=transaction_to_save.get('currency', 'SGD'),
-                transaction_type=transaction_to_save.get('transaction_type', 'Expense'),
-                account_desc=transaction_to_save.get('payment_method'),
-                account_owner=transaction_to_save.get('account_owner'),
-                source="Telegram Bot",
-                idempotency_key=transaction_to_save.get('idempotency_key')
+        transaction_to_save = _take_pending_card(context, message_id)
+
+        if transaction_to_save is None:
+            # Genuinely nothing to save and no record of ever having saved it: the bot has
+            # restarted since this card was sent (user_data is process memory only), or the
+            # card is old enough to have been evicted from the cache.
+            await query.answer()
+            await query.edit_message_text(
+                "⚠️ This entry is no longer available - the bot restarted after it was sent. "
+                "Please send it again."
             )
+            return
 
-            if save_success: 
-                # Reconstruct the full summary message to keep it in the chat history
-                updated_summary = (
-                    f"✅ **Saved to Ledger!**\n\n"
-                    f"💰 **Amount:** {transaction_to_save.get('currency')} {float(transaction_to_save.get('amount')):.2f}\n"
-                    f"🏷️ **Category:** {transaction_to_save.get('category')}\n"
-                    f"📝 **Notes:** {transaction_to_save.get('description', 'None')}\n"
-                    f"📅 **Date:** {transaction_to_save.get('date')}\n"
-                )
-                # Editing the text. By omitting 'reply_markup', Telegram automatically removes the buttons.
-                await query.edit_message_text(updated_summary, parse_mode="Markdown")
-            else:
-                # CHANGED: Keep the summary visible even if the database fails, just change the header
-                error_summary = (
-                    f"❌ **Database Error! Could not save:**\n\n"
-                    f"💰 **Amount:** {transaction_to_save.get('currency')} {float(transaction_to_save.get('amount')):.2f}\n"
-                    f"🏷️ **Category:** {transaction_to_save.get('category')}\n"
-                    f"📝 **Notes:** {transaction_to_save.get('description', 'None')}\n"
-                    f"📅 **Date:** {transaction_to_save.get('date')}\n"
-                )
-                await query.edit_message_text(error_summary, parse_mode="Markdown")
+        # Answer first so the button's loading spinner clears, then swap Confirm/Cancel for a
+        # non-actionable progress label. Both of these land *before* the blocking add_expense
+        # call below, which is the whole point: the user sees an immediate reaction, and
+        # Confirm is physically gone from the card so it cannot be tapped twice (issue #55).
+        await query.answer()
+        await query.edit_message_reply_markup(reply_markup=_saving_keyboard())
 
+        # save success will return True if done, or False if failed
+        save_success = add_expense(
+            date_str=transaction_to_save.get('date'),
+            description=transaction_to_save.get('description'),
+            amount_dollars=transaction_to_save.get('amount'),
+            category=transaction_to_save.get('category'),
+            currency=transaction_to_save.get('currency', 'SGD'),
+            transaction_type=transaction_to_save.get('transaction_type', 'Expense'),
+            account_desc=transaction_to_save.get('payment_method'),
+            account_owner=transaction_to_save.get('account_owner'),
+            source="Telegram Bot",
+            idempotency_key=transaction_to_save.get('idempotency_key')
+        )
+
+        if save_success:
+            _mark_card_resolved(context, message_id, "saved")
+            # Reconstruct the full summary message to keep it in the chat history
+            updated_summary = (
+                f"✅ **Saved to Ledger!**\n\n"
+                f"💰 **Amount:** {transaction_to_save.get('currency')} {float(transaction_to_save.get('amount')):.2f}\n"
+                f"🏷️ **Category:** {transaction_to_save.get('category')}\n"
+                f"📝 **Notes:** {transaction_to_save.get('description', 'None')}\n"
+                f"📅 **Date:** {transaction_to_save.get('date')}\n"
+            )
+            # Editing the text. By omitting 'reply_markup', Telegram automatically removes the buttons.
+            await query.edit_message_text(updated_summary, parse_mode="Markdown")
         else:
-            await query.edit_message_text("⚠️ Session expired or data lost. Please send the voice note again.")
+            # Put the entry back and hand the buttons back with it, so a transient database
+            # failure costs a retry rather than the whole entry. It keeps its original
+            # idempotency_key, so retrying cannot write a second row even if the first attempt
+            # actually reached Postgres before failing. Deliberately not marked resolved - the
+            # card is live again.
+            _remember_pending_card(context, message_id, transaction_to_save)
+            # CHANGED: Keep the summary visible even if the database fails, just change the header
+            error_summary = (
+                f"❌ **Database Error! Could not save:**\n\n"
+                f"💰 **Amount:** {transaction_to_save.get('currency')} {float(transaction_to_save.get('amount')):.2f}\n"
+                f"🏷️ **Category:** {transaction_to_save.get('category')}\n"
+                f"📝 **Notes:** {transaction_to_save.get('description', 'None')}\n"
+                f"📅 **Date:** {transaction_to_save.get('date')}\n\n"
+                f"Tap **✅ Confirm** to try again."
+            )
+            await query.edit_message_text(error_summary, parse_mode="Markdown", reply_markup=_confirm_keyboard())
 
     elif query.data == "cancel_save":
+        # Same already-settled check as the confirm path, so a second tap on Cancel doesn't
+        # relabel a card that was in fact saved.
+        outcome = _card_outcome(context, message_id)
+        if outcome == "saved":
+            await query.answer("✅ This entry was already saved to the ledger.")
+            return
+        if outcome == "cancelled":
+            await query.answer("❌ Already cancelled.")
+            return
+
+        await query.answer()
+        _take_pending_card(context, message_id)
+        _mark_card_resolved(context, message_id, "cancelled")
         await query.edit_message_text("❌ **Cancelled.** Nothing was saved to the Ledger.", parse_mode="Markdown")
-        context.user_data.pop('pending_transaction', None)
 
 # Engine Factory
 def get_application():

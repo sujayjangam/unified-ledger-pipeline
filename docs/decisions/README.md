@@ -30,6 +30,7 @@ supersedes the old one rather than editing history.
 | [0020](0020-ci-scaffolding-before-remaining-capture-work.md) | Split the test-suite phase; land CI scaffolding before the rest of capture reliability | Accepted | 2026-08-21 |
 | [0021](0021-rulesets-over-classic-branch-protection.md) | Enforce the merge gate with a repository ruleset, not classic branch protection | Accepted | 2026-09-03 |
 | [0022](0022-artifact-registry-cleanup-policy.md) | Cap Artifact Registry to the 3 most recent container images, no age condition | Accepted | 2026-09-03 |
+| [0023](0023-in-memory-confirm-card-state.md) | Keep confirmation-card state in process memory, keyed by message id | Accepted | 2026-09-10 |
 
 ## Writing a new one
 

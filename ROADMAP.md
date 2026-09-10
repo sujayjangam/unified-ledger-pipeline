@@ -49,8 +49,7 @@ pending-transaction edit path. Full ordering in the Phase 0 checklist below.
 **Open top-level issues:** [#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) ordering · [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) backdated dates ·
 [#17](https://github.com/sujayjangam/unified-ledger-pipeline/issues/17) unused REST API · [#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22) entries can't be corrected ·
 [#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27) unpinned dependencies ·
-[#29](https://github.com/sujayjangam/unified-ledger-pipeline/issues/29) double-tap Confirm shows a
-false error · [#39](https://github.com/sujayjangam/unified-ledger-pipeline/issues/39) float
+[#39](https://github.com/sujayjangam/unified-ledger-pipeline/issues/39) float
 rounding can silently lose a cent · [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53)
 household accounts live in env secrets (Phase 1).
 Read the list without sub-issue noise with `gh issue list --search "no:parent-issue"`.
@@ -200,6 +199,22 @@ no age condition). A BigQuery billing export dataset (`billing_export`) was also
 charges are queryable by SKU without the Console UI; linking it as the live export target is a
 Console-only step with no public API, left for the user to complete.
 
+Fixed 2026-09-10:
+
+- ~~Tapping Confirm twice replaced the correct `✅ Saved to Ledger!` card with a false "session
+expired or data lost" error, telling the user their entry had failed when it had saved~~ —
+[#29](https://github.com/sujayjangam/unified-ledger-pipeline/issues/29) and its sub-issue
+[#55](https://github.com/sujayjangam/unified-ledger-pipeline/issues/55) (the card gave no feedback
+at all until the blocking DB write finished, which is what provoked the second tap). Confirm now
+swaps itself for a non-actionable `⏳ Adding to ledger...` button *before* the write, and a card
+whose outcome is already known answers with a toast instead of overwriting itself. Reported from
+real household use, not a test run. See
+[ADR-0023](docs/decisions/0023-in-memory-confirm-card-state.md) for why that state is process
+memory rather than a database lookup. The same change replaced the single
+`pending_transaction` slot with a per-card dict, which fixes an unreported bug (an unanswered
+older card saved the *newer* card's transaction) and means the "drop the one-expense-per-voice-note
+guardrail" item below needs no change to `handle_button_click`.
+
 Still outstanding:
 
 - Duplicate Telegram update delivery is deduped only in memory (`_seen_update_ids` in
@@ -209,6 +224,14 @@ see the Phase 0 checklist note on why usage is currently too low for the race wi
 practice.
 - Broad `except Exception` blocks throughout silently swallow errors via `print()` instead of
 structured logging — failures are invisible in production.
+- `app/add_expense.py` computes `was_duplicate` (whether `ON CONFLICT (idempotency_key)` suppressed
+the insert) but only `print`s it and returns a bare `True` either way, so no caller can tell a
+fresh insert from a duplicate. Left alone deliberately in the #29 fix — changing a signature shared
+with the CLI and `app/main.py` to report on a call that no longer happens is the wrong layer (see
+[ADR-0023](docs/decisions/0023-in-memory-confirm-card-state.md)) — but it is still a real gap.
+- `app/bot_core.py::handle_button_click` never calls `is_authorized()`, unlike every message
+handler. Authorization is enforced only when the card is created, so the callback surface itself is
+ungated. Found while fixing #29; deliberately not widened into that PR.
 - `needs_review` is extracted by `app/services/extraction.py` but never acted on anywhere — the
 human-in-the-loop claim doesn't hold until this actually gates bot behavior.
 - A stray empty `ledger.db` sits at the repo root (untracked, harmless).
