@@ -1,9 +1,15 @@
 from datetime import datetime
 from unittest.mock import MagicMock
 
-from telegram import Chat, Message, MessageEntity, Update, Voice
+from telegram import CallbackQuery, Chat, Message, MessageEntity, Update, User, Voice
 
-from app.bot_core import get_application, handle_text, handle_unsupported, handle_voice
+from app.bot_core import (
+    get_application,
+    handle_button_click,
+    handle_text,
+    handle_unsupported,
+    handle_voice,
+)
 
 # CommandHandler.check_update() calls message.get_bot().username to resolve the
 # /command@botname form - a fake bot with just a username is enough, no network involved.
@@ -50,3 +56,21 @@ def test_captioned_photo_routes_to_handle_unsupported():
     app = get_application()
     update = _make_update(caption="dinner", photo=())
     assert _first_matching_handler(app, update) is handle_unsupported
+
+
+def test_button_press_routes_to_handle_button_click():
+    # The CallbackQueryHandler is registered last and has no pattern=, so it must not be
+    # shadowed by any of the MessageHandlers above it.
+    app = get_application()
+    chat = Chat(id=1, type="private")
+    card = Message(message_id=1, date=datetime.now(), chat=chat, text="Please confirm")
+    card.set_bot(FAKE_BOT)
+    query = CallbackQuery(
+        id="1",
+        from_user=User(id=1, first_name="Test", is_bot=False),
+        chat_instance="1",
+        data="confirm_save",
+        message=card,
+    )
+    update = Update(update_id=1, callback_query=query)
+    assert _first_matching_handler(app, update) is handle_button_click
