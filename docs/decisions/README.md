@@ -31,6 +31,7 @@ supersedes the old one rather than editing history.
 | [0021](0021-rulesets-over-classic-branch-protection.md) | Enforce the merge gate with a repository ruleset, not classic branch protection | Accepted | 2026-09-03 |
 | [0022](0022-artifact-registry-cleanup-policy.md) | Cap Artifact Registry to the 3 most recent container images, no age condition | Accepted | 2026-09-03 |
 | [0023](0023-in-memory-confirm-card-state.md) | Keep confirmation-card state in process memory, keyed by message id | Accepted | 2026-09-10 |
+| [0024](0024-created-at-write-time-column.md) | Record write time in its own column, backfilled to midnight SGT | Accepted | 2026-09-10 |
 
 ## Writing a new one
 

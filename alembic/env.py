@@ -4,6 +4,7 @@ from logging.config import fileConfig
 from dotenv import load_dotenv
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
+from sqlalchemy.engine import make_url
 
 from alembic import context
 
@@ -21,6 +22,15 @@ if not database_url:
         "(see .env.example for the expected format)."
     )
 config.set_main_option("sqlalchemy.url", database_url)
+
+# Say which database this run touches. Plain load_dotenv() above reads .env - the PRODUCTION
+# connection string - and never .env.local, so `alembic upgrade head` from the repo root with
+# nothing else set migrates the real ledger. The host (never the password) is printed on every
+# run. It is a record, not a gate: to check *before* changing anything, run `alembic current`
+# first, which connects, prints this line, and writes nothing. To target a test branch, set
+# DATABASE_URL in the shell first - load_dotenv() never overrides a variable that is already
+# set. See docs/LOCAL_TESTING.md.
+print(f"Alembic target database host: {make_url(database_url).host}")
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.

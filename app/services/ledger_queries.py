@@ -2,13 +2,21 @@ from sqlalchemy import text
 from app.database import get_connection
 
 def get_recent_entries(limit=5):
-    """Fetches the latest transactions, including both expenses and transfers."""
+    """Fetches the most recently *entered* transactions, including both expenses and transfers.
+
+    Ordered by created_at (when the row was written), not date (when the spend happened) - see
+    docs/SCHEMA.md. "Recent" means "what was just logged": once backdated entries exist (#15), an
+    expense from last week that was logged a minute ago is still recent. transaction_id is a
+    random UUID, so as a tiebreaker it carries no meaning of its own; it only keeps rows that
+    share a created_at in a stable order, and rows that predate the column all share their
+    date's midnight (see alembic/versions/0002_add_created_at.py).
+    """
     try:
         with get_connection() as conn:
             result = conn.execute(text('''
                 SELECT date, description, amount, currency, category
                 FROM transactions
-                ORDER BY date DESC, transaction_id DESC
+                ORDER BY created_at DESC, transaction_id DESC
                 LIMIT :limit
             '''), {"limit": limit})
             return result.fetchall()
