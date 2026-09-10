@@ -220,3 +220,16 @@ def test_card_caches_evict_oldest_first(remember, cache_name):
     assert len(cache) == bot_core._CARD_CACHE_MAXLEN
     assert 0 not in cache  # the oldest went first
     assert overflow - 1 in cache  # the newest is still there
+
+
+# --- an unrecognised button still clears its spinner ---
+
+async def test_unknown_callback_data_is_still_answered():
+    # A card from an older deployment. An unanswered callback query leaves the button
+    # spinning on the user's screen forever, so every path has to answer exactly once.
+    update, context, query = _make_callback(data="some_retired_button")
+
+    await bot_core.handle_button_click(update, context)
+
+    query.answer.assert_awaited_once()
+    query.edit_message_text.assert_not_awaited()

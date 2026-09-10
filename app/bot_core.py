@@ -573,6 +573,12 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         _mark_card_resolved(context, message_id, "cancelled")
         await query.edit_message_text("❌ **Cancelled.** Nothing was saved to the Ledger.", parse_mode="Markdown")
 
+    else:
+        # An unrecognised callback_data - a card from an older deployment whose buttons this
+        # version no longer knows about. Answer anyway: an unanswered query leaves the button
+        # spinning on the user's screen indefinitely.
+        await query.answer("⚠️ This button is no longer supported. Please send the entry again.")
+
 # Engine Factory
 def get_application():
     """Builds and returns the configured bot application."""
