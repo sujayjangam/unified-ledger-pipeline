@@ -92,7 +92,9 @@ pytest
 ```
 
 `tests/` holds pure-logic tests (money conversion, period boundaries, handler routing, extraction
-schema parsing, payment-default inference, `is_authorized`) with no network calls and no database —
+schema parsing, payment-default inference, `is_authorized`, and the confirmation-card state machine
+in `test_button_callback.py` — double-tap safety, the progress keyboard landing before the write,
+per-card independence, cache eviction) with no network calls and no database —
 test-only dependencies live in `requirements-dev.txt`, kept out of `requirements.txt` so that file
 still means "what production needs." `main` is protected by a repository ruleset requiring this
 suite (plus lint and an import smoke check) to pass before merge — see
