@@ -42,13 +42,14 @@ assumed from the settings page (see
 rather than classic branch protection, and a since-fixed discrepancy in #34's own verification
 text).
 
-**Next action:** back to capture, per the original ordering: [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15)
-(backdated date parsing), [#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) (business date vs. ingestion timestamp), then the
-pending-transaction edit path. Full ordering in the Phase 0 checklist below.
+**Next action:** the duplicate-entry warning ([#58](https://github.com/sujayjangam/unified-ledger-pipeline/issues/58), under [#57](https://github.com/sujayjangam/unified-ledger-pipeline/issues/57)), built on the
+`created_at` column [#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) just added; then [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) (backdated date parsing),
+then the pending-transaction edit path. Full ordering in the Phase 0 checklist below.
 
-**Open top-level issues:** [#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) ordering · [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) backdated dates ·
+**Open top-level issues:** [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) backdated dates ·
 [#17](https://github.com/sujayjangam/unified-ledger-pipeline/issues/17) unused REST API · [#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22) entries can't be corrected ·
 [#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27) unpinned dependencies ·
+[#57](https://github.com/sujayjangam/unified-ledger-pipeline/issues/57) re-sent entries become duplicates ·
 [#39](https://github.com/sujayjangam/unified-ledger-pipeline/issues/39) float
 rounding can silently lose a cent · [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53)
 household accounts live in env secrets (Phase 1).
@@ -214,9 +215,18 @@ memory rather than a database lookup. The same change replaced the single
 `pending_transaction` slot with a per-card dict, which fixes an unreported bug (an unanswered
 older card saved the *newer* card's transaction) and means the "drop the one-expense-per-voice-note
 guardrail" item below needs no change to `handle_button_click`.
+- ~~No reliable "latest transaction" ordering — `transaction_id` is a random UUID and `date` has
+no time component~~ — [#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) via #10-#14. `created_at` now records write time;
+`/recent` orders by it and the ledger view uses it to break same-day ties.
 
 Still outstanding:
 
+- **Production migrations are manual, and `alembic` targets production by default.** The
+`Dockerfile` only starts the server, so each migration is a hand-run `alembic upgrade head` that
+must land before the code depending on it is merged (a merge auto-deploys). And `alembic/env.py`
+loads `.env` — production — never `.env.local`. Found while shipping #9's `0002`; mitigated by a
+printed target host and a `docs/LOCAL_TESTING.md` section, not guarded. A migrate-on-deploy step,
+or a confirmation prompt when the target is production, would close it.
 - Duplicate Telegram update delivery is deduped only in memory (`_seen_update_ids` in
 `bot_webhook.py`), which doesn't survive a Cloud Run restart or a second instance. Now that
 Postgres exists, this should become a persisted constraint. Deliberately deferred, not forgotten —
@@ -237,9 +247,6 @@ human-in-the-loop claim doesn't hold until this actually gates bot behavior.
 - A stray empty `ledger.db` sits at the repo root (untracked, harmless).
 - `.venv/` and `data/ledger.db` are untracked as of 2026-08-01 but **still present in git
 history** — purging needs a rewrite + force-push, deliberately deferred.
-- No reliable "latest transaction" ordering — `transaction_id` is a random UUID and `date` has no
-time component. Tracked as [#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9)
-(parent) + sub-issues #10-#14.
 - Voice notes always get today's date regardless of what's said ("yesterday", "last Tuesday",
 etc.). Tracked as [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15).
 - The backup workflow (`.github/workflows/backup.yml`) has no failure alerting yet — deliberately
@@ -338,9 +345,17 @@ them. Everything else keeps its place.
 - [ ] Backdated/relative date parsing from the transcript ("yesterday", "last Tuesday", explicit
 spoken dates) — [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15). Highest
 leverage of the group: without it every entry must be logged at the moment of spend.
-- [ ] Business date vs. system ingestion timestamp, and reliable ordering —
+- [x] Business date vs. system ingestion timestamp, and reliable ordering —
 [#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) (parent) + sub-issues
 [#10](https://github.com/sujayjangam/unified-ledger-pipeline/issues/10)-[#14](https://github.com/sujayjangam/unified-ledger-pipeline/issues/14).
+Shipped 2026-09-10: a `created_at` write-time column set only by the database default, existing
+rows backfilled to midnight SGT on their own `date`, and `/recent` ordered by it — see
+[ADR-0024](docs/decisions/0024-created-at-write-time-column.md). Pulled ahead of #15 because the
+duplicate-entry warning below needs a time of day to window on.
+- [ ] Warn before saving an entry that matches one saved in the last 5 minutes (same amount and
+currency, by either household member) — [#58](https://github.com/sujayjangam/unified-ledger-pipeline/issues/58), under [#57](https://github.com/sujayjangam/unified-ledger-pipeline/issues/57). A warning the user
+can override rather than a block, checked before the confirmation card is shown, and built on
+`created_at`.
 - [ ] Edit and delete path for *saved* rows — [#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22).
 No `UPDATE` or `DELETE` statement exists anywhere in `app/`, so a wrong extraction is permanent,
 which is also what hollows out the human-in-the-loop claim: the human is in the loop for a few
@@ -431,7 +446,11 @@ across [#38](https://github.com/sujayjangam/unified-ledger-pipeline/pull/38),
 beyond #33's original minimum slice.
 - [ ] Migrations apply from scratch (`alembic upgrade head` against a throwaway Postgres service
 container), and the `ON CONFLICT (idempotency_key)` path against a real database — explicitly out
-of scope for #33 ("not part of the minimum slice"), still not covered by anything in `tests/`.
+of scope for #33 ("not part of the minimum slice"), still not covered by anything in `tests/`
+that touches a real database. `tests/test_migrations.py` (2026-09-10) checks only the revision
+chain's structure — one root, one head — and executes no SQL. `0002_add_created_at` was run by
+hand against a Neon branch (upgrade, downgrade, upgrade), which is evidence, not automated
+coverage.
 `add_expense`'s pure-validation logic (amount conversion/rejection) is covered by
 `tests/test_add_expense.py`.
 - [x] Branch protection on `main` requiring `check-PR-before-merge`, enabled only once it had run

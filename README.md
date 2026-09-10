@@ -131,7 +131,8 @@ packages).
 ```bash
 pip install -r requirements.txt
 
-# Initialize the DB (Alembic creates the `transactions` table)
+# Initialize the DB (Alembic creates the `transactions` table). This targets DATABASE_URL
+# from .env; to migrate a test branch instead, see docs/LOCAL_TESTING.md.
 alembic upgrade head
 
 # Run the bot locally against a separate test bot (reads .env.local over .env) — recommended;

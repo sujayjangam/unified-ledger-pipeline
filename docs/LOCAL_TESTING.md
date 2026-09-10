@@ -89,6 +89,51 @@ Two guards run before the bot is even built:
 Stop the bot with `Ctrl+C`. There is nothing to undo afterwards — the production webhook was never
 touched.
 
+## Running migrations against the branch
+
+**`alembic` does not read `.env.local`.** `alembic/env.py` calls plain `load_dotenv()`, which loads
+`.env` - the **production** connection string. Run `alembic upgrade head` from the repo root with
+nothing else set, and it migrates the real ledger. The guards in `app/bot_local.py` don't apply;
+Alembic never goes through that file.
+
+Point it at the branch by setting `DATABASE_URL` in the shell first. `load_dotenv()` never
+overrides a variable that is already set, so the shell value wins.
+
+PowerShell (persists in that shell until removed):
+
+```powershell
+$env:DATABASE_URL = '<the branch connection string from .env.local>'
+alembic current            # connects, prints the target host and revision, changes nothing
+alembic upgrade head
+Remove-Item Env:DATABASE_URL
+```
+
+Git Bash (applies to that one command only):
+
+```bash
+DATABASE_URL='<the branch connection string>' alembic current
+DATABASE_URL='<the branch connection string>' alembic upgrade head
+```
+
+Every Alembic run prints `Alembic target database host: ...`. That line is a record, not a gate -
+by the time `upgrade` prints it, it is already running - which is why `alembic current` comes
+first: it prints the same line and writes nothing. Confirm the host is the branch's, not
+production's, before upgrading.
+
+### If the branch has disappeared
+
+Neon can delete an idle branch. The symptom is misleading: the connection string still resolves, so
+the error is not "host not found" but
+
+```
+password authentication failed for user 'neondb_owner'
+```
+
+which reads like a credentials bug. Create a new branch (step 4 above), paste its connection string
+into `.env.local`, and keep the `postgresql+psycopg://` scheme. A new branch is a copy of Neon's
+`main` branch as it is *at that moment*, schema included - so it has every migration production
+has, and needs `alembic upgrade head` only for migrations production doesn't have yet.
+
 ## If a token is ever exposed
 
 Message BotFather → `/revoke` → pick the bot. The old token dies immediately and you get a new one.

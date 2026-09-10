@@ -5,9 +5,12 @@ def view_transactions():
     """Fetches and displays transactions in a human-readable format."""
     # Query the database
     # We select specific columns to keep the view clean
+    # Ledger order is by date (when the spend happened); created_at (when it was logged) only
+    # breaks ties between rows on the same day, which previously came back in whatever order
+    # Postgres happened to return them. See docs/SCHEMA.md.
     with get_connection() as conn:
         rows = conn.execute(text(
-            "SELECT date, description, amount, category FROM transactions ORDER BY date DESC"
+            "SELECT date, description, amount, category FROM transactions ORDER BY date DESC, created_at DESC"
         )).fetchall()
 
     if not rows:

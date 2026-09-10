@@ -63,7 +63,10 @@ files, so packages rely on Python's implicit namespace packages).
 ```bash
 pip install -r requirements.txt
 
-# Initialize the DB (Alembic creates the `transactions` table in Postgres)
+# Initialize / migrate the DB (Alembic owns the `transactions` table in Postgres).
+# CAUTION: this targets DATABASE_URL from .env - i.e. PRODUCTION. alembic/env.py never reads
+# .env.local; to migrate a test branch, set DATABASE_URL in the shell first and run
+# `alembic current` to check the printed host. See docs/LOCAL_TESTING.md.
 alembic upgrade head
 
 # Run the Telegram bot locally (blocking long-poll loop, no ngrok/webhook needed)
@@ -94,7 +97,9 @@ pytest
 `tests/` holds pure-logic tests (money conversion, period boundaries, handler routing, extraction
 schema parsing, payment-default inference, `is_authorized`, and the confirmation-card state machine
 in `test_button_callback.py` — double-tap safety, the progress keyboard landing before the write,
-per-card independence, cache eviction) with no network calls and no database —
+per-card independence, cache eviction; and the Alembic revision chain in `test_migrations.py` —
+one root, one head, `0002` revises `0001`; structure only, no SQL executed) with no network calls
+and no database —
 test-only dependencies live in `requirements-dev.txt`, kept out of `requirements.txt` so that file
 still means "what production needs." `main` is protected by a repository ruleset requiring this
 suite (plus lint and an import smoke check) to pass before merge — see
@@ -234,6 +239,19 @@ attempt. It does:
   `ALTER TABLE` in the now-deleted `test_queries.py`, undocumented in `database.py`) is resolved.
   Schema changes go through a new Alembic revision (hand-written — this project uses Core, not the
   ORM, so there's no metadata for `--autogenerate` to diff against).
+- `created_at` (`TIMESTAMPTZ NOT NULL DEFAULT now()`, revision `0002_add_created_at`) is the
+  **write** time, set only by the Postgres default - no writer supplies it. `date` is the
+  **business** date (when the spend happened). Never substitute one for the other: `/recent`
+  orders by `created_at`, the ledger view by `date` then `created_at`, and anything meaning
+  "within the last N minutes" must use `created_at`, since `date` has no time of day. Rows that
+  predate the column were backfilled to midnight SGT on their own `date`, so an exact
+  `00:00:00+08` means "time unknown", not "logged at midnight". See `docs/SCHEMA.md` and
+  [ADR-0024](docs/decisions/0024-created-at-write-time-column.md).
+- **Production is never migrated automatically.** The `Dockerfile` only starts uvicorn and a
+  merge to `main` auto-deploys, so a migration is applied by hand (`alembic upgrade head`) and
+  must land *before* merging any code that depends on it. Additive migrations are safe to apply
+  first: no query uses `SELECT *` and every writer names its columns, so already-deployed code
+  can't see a new column.
 - The `transactions` table has an `idempotency_key` column with an `ON CONFLICT (idempotency_key)
   DO NOTHING` upsert in `app/add_expense.py`. `bot_core.py` generates this key when the confirm
   button is built, so a double-tap on "Confirm" (slow connection, impatient re-tap) can't insert
@@ -254,7 +272,8 @@ attempt. It does:
 - `app/services/ledger_queries.py` holds the read-side aggregate queries backing the bot's
   `/recent`, `/today`, `/week`, `/month`, `/cat_today`, `/cat_week`, `/cat_month` commands. All
   currency-related aggregation is grouped by currency (multi-currency ledger, no FX conversion is
-  performed anywhere in this codebase yet).
+  performed anywhere in this codebase yet). `/recent` orders by `created_at` - most recently
+  *logged* - not by `date`.
 - `app/services/utils.py::get_sgt_now()` is the canonical "now" for period boundaries — always use
   it instead of `datetime.now()` so week/month cutoffs stay anchored to Singapore time regardless
   of where the process runs (e.g. UTC on Cloud Run).
