@@ -32,6 +32,12 @@
   names its columns and omits this one). Rows that already existed when the column was added
   (migration `0002_add_created_at`) were backfilled to midnight Singapore time on their own `date`,
   so an exact `00:00:00+08` means "time of day unknown", not "logged at midnight".
+- **entered_by**: TEXT, nullable. The Telegram user ID of the household member whose message
+  created the row, in the same string form `ALLOWED_TG_IDS` uses for its keys (revision
+  `0003_add_entered_by`). Display names are never stored; they're looked up from the ID when
+  shown. NULL means "sender not recorded": every row that predates the column, and every row
+  from the CLI or REST API. Not to be confused with `account_owner`, which records whose card
+  paid, is inferred from the payment method, and is often not the sender.
 
 ## Business date vs. write time
 
