@@ -98,7 +98,9 @@ pytest
 schema parsing, payment-default inference, `is_authorized`, and the confirmation-card state machine
 in `test_button_callback.py` — double-tap safety, the progress keyboard landing before the write,
 per-card independence, cache eviction; and the Alembic revision chain in `test_migrations.py` —
-one root, one head, `0002` revises `0001`; structure only, no SQL executed) with no network calls
+one root, one head, `0002` revises `0001`; structure only, no SQL executed; and the webhook's
+secret-token gate in `test_webhook_secret.py` — accept/reject, the dedupe-cache interaction, startup
+refusal) with no network calls
 and no database —
 test-only dependencies live in `requirements-dev.txt`, kept out of `requirements.txt` so that file
 still means "what production needs." `main` is protected by a repository ruleset requiring this
@@ -130,6 +132,14 @@ Docker (Cloud Run deployment target): `Dockerfile` installs `requirements.txt` a
   scheme — this project uses `psycopg` v3, a plain `postgresql://` URL makes SQLAlchemy default to
   the uninstalled `psycopg2` dialect and fail).
 - `WEBHOOK_URL` — optional, only used by `bot_webhook.py` to register the Telegram webhook.
+- `WEBHOOK_SECRET_TOKEN` — required whenever `WEBHOOK_URL` is set; `bot_webhook.py` refuses to
+  start without a well-formed one (Telegram's format: 1-256 characters of `A-Z a-z 0-9 _ -`). It
+  is registered with Telegram via `setWebhook`'s `secret_token` on every startup, Telegram sends
+  it back in the `X-Telegram-Bot-Api-Secret-Token` header of every delivery, and `/webhook`
+  rejects anything without it (constant-time comparison) *before* parsing the body or recording
+  the `update_id`. This is what makes the sender ID inside an update trustworthy, which
+  `is_authorized()` depends on. From Secret Manager in production. See
+  [ADR-0025](docs/decisions/0025-webhook-secret-token.md).
 
 `.env.local` (gitignored via the `.env.*` rule, which exists because git reads `.env` as a literal
 filename rather than a prefix) is the local-testing overlay: it holds only `TELEGRAM_BOT_TOKEN` for

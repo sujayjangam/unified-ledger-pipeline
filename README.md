@@ -163,6 +163,9 @@ Deployment: `Dockerfile` installs `requirements.txt` and runs
 - `OPENAI_API_KEY`
 - `DATABASE_URL` — Postgres connection string (`postgresql+psycopg://...`)
 - `WEBHOOK_URL` — optional, only used by `bot_webhook.py` to register the Telegram webhook.
+- `WEBHOOK_SECRET_TOKEN` — required whenever `WEBHOOK_URL` is set. Registered with Telegram at
+  startup; `/webhook` rejects any request that doesn't carry it back in Telegram's
+  `X-Telegram-Bot-Api-Secret-Token` header.
 
 ## Docs
 

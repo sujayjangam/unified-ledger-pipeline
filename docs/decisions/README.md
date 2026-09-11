@@ -32,6 +32,7 @@ supersedes the old one rather than editing history.
 | [0022](0022-artifact-registry-cleanup-policy.md) | Cap Artifact Registry to the 3 most recent container images, no age condition | Accepted | 2026-09-03 |
 | [0023](0023-in-memory-confirm-card-state.md) | Keep confirmation-card state in process memory, keyed by message id | Accepted | 2026-09-10 |
 | [0024](0024-created-at-write-time-column.md) | Record write time in its own column, backfilled to midnight SGT | Accepted | 2026-09-10 |
+| [0025](0025-webhook-secret-token.md) | Authenticate webhook deliveries with Telegram's secret token | Accepted | 2026-09-10 |
 
 ## Writing a new one
 
