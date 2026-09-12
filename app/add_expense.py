@@ -12,7 +12,7 @@ def dollars_to_cents(amount_dollars) -> int:
         raise ValueError("Amount must be greater than zero")
     return amount_cents
 
-def add_expense(date_str, description, amount_dollars, category, currency="SGD", transaction_type="Expense", account_desc=None, account_owner=None, source="Manual CLI", idempotency_key=None):
+def add_expense(date_str, description, amount_dollars, category, currency="SGD", transaction_type="Expense", account_desc=None, account_owner=None, source="Manual CLI", idempotency_key=None, entered_by=None):
     try:
         # 1. Validation: Convert to Integer Cents (Mathematical Precision)
         # We call function dollars_to_cents to convert to cents for us
@@ -28,6 +28,8 @@ def add_expense(date_str, description, amount_dollars, category, currency="SGD",
         # save attempt for the same confirm prompt), the UNIQUE constraint silently skips the
         # insert instead of raising - rowcount tells us which happened. NULL idempotency_key
         # (CLI/API callers) never collides, since SQL treats every NULL as distinct.
+        # entered_by is the Telegram user ID of whoever sent the message (#60). The CLI and the
+        # REST API don't pass one, so their rows leave it NULL.
         query = text('''
             INSERT INTO transactions (
                 transaction_id,
@@ -42,12 +44,14 @@ def add_expense(date_str, description, amount_dollars, category, currency="SGD",
                 account_owner,
                 reconciliation_status,
                 source,
-                idempotency_key
+                idempotency_key,
+                entered_by
             )
             VALUES (
                 :transaction_id, :date, :description, :amount, :currency,
                 :base_amount, :category, :transaction_type, :account_desc,
-                :account_owner, :reconciliation_status, :source, :idempotency_key
+                :account_owner, :reconciliation_status, :source, :idempotency_key,
+                :entered_by
             )
             ON CONFLICT (idempotency_key) DO NOTHING
         ''')
@@ -68,6 +72,7 @@ def add_expense(date_str, description, amount_dollars, category, currency="SGD",
                 "reconciliation_status": 'unsettled',
                 "source": source,
                 "idempotency_key": idempotency_key,
+                "entered_by": entered_by,
             })
 
             was_duplicate = result.rowcount == 0

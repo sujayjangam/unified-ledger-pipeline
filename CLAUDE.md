@@ -97,8 +97,10 @@ pytest
 `tests/` holds pure-logic tests (money conversion, period boundaries, handler routing, extraction
 schema parsing, payment-default inference, `is_authorized`, and the confirmation-card state machine
 in `test_button_callback.py` — double-tap safety, the progress keyboard landing before the write,
-per-card independence, cache eviction; and the Alembic revision chain in `test_migrations.py` —
-one root, one head, `0002` revises `0001`; structure only, no SQL executed; and the webhook's
+per-card independence, cache eviction, the sender's ID reaching `add_expense`; and the Alembic
+revision chain in `test_migrations.py` —
+one root, one head, each revision revising the one before (`0002` → `0001`, `0003` → `0002`);
+structure only, no SQL executed; and the webhook's
 secret-token gate in `test_webhook_secret.py` — accept/reject, the dedupe-cache interaction, startup
 refusal) with no network calls
 and no database —
@@ -216,7 +218,9 @@ attempt. It does:
    non-SGD amounts or the sender's default account (index 0 in `ACCOUNT_OWNERS`) for SGD.
    `account_owner` is then derived by reverse-matching the payment method against
    `ACCOUNT_OWNERS` (case-insensitive), except `Cash`, which is always attributed to
-   the sender.
+   the sender. Note that `account_owner` is *whose card paid*, not who sent the message. The
+   sender is recorded separately: their Telegram user ID is stamped on the pending entry as
+   `entered_by` ([#60](https://github.com/sujayjangam/unified-ledger-pipeline/issues/60)).
 5. The pending transaction is stashed in `context.user_data['pending_cards']` — a bounded dict
    keyed by the **`message_id` of the confirmation card**, not a single slot — and only written to
    the DB after the user taps the inline "Confirm" button (`handle_button_click`), which calls
@@ -257,6 +261,13 @@ attempt. It does:
   predate the column were backfilled to midnight SGT on their own `date`, so an exact
   `00:00:00+08` means "time unknown", not "logged at midnight". See `docs/SCHEMA.md` and
   [ADR-0024](docs/decisions/0024-created-at-write-time-column.md).
+- `entered_by` (TEXT, nullable, revision `0003_add_entered_by`) is the **sender's Telegram user
+  ID**, as the string `ALLOWED_TG_IDS` keys on. It's stamped on the pending entry in
+  `process_expense_text` and passed to `add_expense` on Confirm. Store the ID, never a name:
+  names are looked up from it when shown, so renaming someone never rewrites history. NULL means
+  "sender not recorded" - all pre-`0003` rows (deliberately not backfilled from `account_owner`,
+  which is whose card paid, not who sent it) and all CLI/REST API rows. Tests use fictional IDs
+  only; real ones never enter this public repo. See [ADR-0026](docs/decisions/0026-entered-by-telegram-user-id.md).
 - **Production is never migrated automatically.** The `Dockerfile` only starts uvicorn and a
   merge to `main` auto-deploys, so a migration is applied by hand (`alembic upgrade head`) and
   must land *before* merging any code that depends on it. Additive migrations are safe to apply

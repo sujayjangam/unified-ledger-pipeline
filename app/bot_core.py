@@ -385,6 +385,12 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
     # save attempt for this same prompt, so a double-tap or webhook retry can't insert twice.
     single_transaction['idempotency_key'] = str(uuid.uuid4())
 
+    # Who sent this message, as their Telegram user ID - the same string form ALLOWED_TG_IDS uses
+    # for its keys. Saved on the row as entered_by (#60) so an entry can always be traced back to
+    # its sender; account_owner (whose card paid) is inferred and is not the same thing. The ID
+    # rather than a display name because it never changes - names are looked up from it when shown.
+    single_transaction['entered_by'] = user_id
+
 
     # Reference 'single_transaction', in future this will read 'transactions' when support for multiple txn is added
     summary_message = (
@@ -524,7 +530,8 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
             account_desc=transaction_to_save.get('payment_method'),
             account_owner=transaction_to_save.get('account_owner'),
             source="Telegram Bot",
-            idempotency_key=transaction_to_save.get('idempotency_key')
+            idempotency_key=transaction_to_save.get('idempotency_key'),
+            entered_by=transaction_to_save.get('entered_by')
         )
 
         if save_success:

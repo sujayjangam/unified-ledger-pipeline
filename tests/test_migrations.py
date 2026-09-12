@@ -48,3 +48,9 @@ def test_revision_chain_has_exactly_one_head():
 def test_exactly_one_revision_is_the_root():
     roots = [m.revision for m in _all_revisions() if m.down_revision is None]
     assert roots == ["0001_create_transactions"]
+
+
+def test_entered_by_revises_created_at():
+    created_at = _load(VERSIONS / "0002_add_created_at.py")
+    entered_by = _load(VERSIONS / "0003_add_entered_by.py")
+    assert entered_by.down_revision == created_at.revision

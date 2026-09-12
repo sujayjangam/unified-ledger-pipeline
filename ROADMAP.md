@@ -43,18 +43,17 @@ rather than classic branch protection, and a since-fixed discrepancy in #34's ow
 text); the Confirm double-tap fix ([#29](https://github.com/sujayjangam/unified-ledger-pipeline/issues/29), [#55](https://github.com/sujayjangam/unified-ledger-pipeline/issues/55)), 2026-09-10; the `created_at`
 write-time column with `/recent` ordered by it ([#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) via #10-#14, see
 [ADR-0024](docs/decisions/0024-created-at-write-time-column.md)), 2026-09-10; and authenticated webhook
-deliveries (see [ADR-0025](docs/decisions/0025-webhook-secret-token.md)), 2026-09-10.
+deliveries (see [ADR-0025](docs/decisions/0025-webhook-secret-token.md)), 2026-09-11; and
+`entered_by`, recording who sent each entry ([#60](https://github.com/sujayjangam/unified-ledger-pipeline/issues/60), see [ADR-0026](docs/decisions/0026-entered-by-telegram-user-id.md)), 2026-09-11.
 
-**Next action:** record who entered each row ([#60](https://github.com/sujayjangam/unified-ledger-pipeline/issues/60)), then the duplicate-entry warning
-([#58](https://github.com/sujayjangam/unified-ledger-pipeline/issues/58), under [#57](https://github.com/sujayjangam/unified-ledger-pipeline/issues/57)), which is built on it and on `created_at`; then
-[#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) (backdated date parsing), then the pending-transaction edit path. Full ordering in
-the Phase 0 checklist below.
+**Next action:** the duplicate-entry warning ([#58](https://github.com/sujayjangam/unified-ledger-pipeline/issues/58), under [#57](https://github.com/sujayjangam/unified-ledger-pipeline/issues/57)), built on
+`entered_by` and `created_at`; then [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) (backdated date parsing), then the
+pending-transaction edit path. Full ordering in the Phase 0 checklist below.
 
 **Open top-level issues:** [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) backdated dates ·
 [#17](https://github.com/sujayjangam/unified-ledger-pipeline/issues/17) unused REST API · [#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22) entries can't be corrected ·
 [#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27) unpinned dependencies ·
 [#57](https://github.com/sujayjangam/unified-ledger-pipeline/issues/57) re-sent entries become duplicates ·
-[#60](https://github.com/sujayjangam/unified-ledger-pipeline/issues/60) rows don't record who entered them ·
 [#61](https://github.com/sujayjangam/unified-ledger-pipeline/issues/61) git-history purge (Phase 5) ·
 [#39](https://github.com/sujayjangam/unified-ledger-pipeline/issues/39) float
 rounding can silently lose a cent · [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53)
@@ -224,9 +223,13 @@ guardrail" item below needs no change to `handle_button_click`.
 - ~~No reliable "latest transaction" ordering — `transaction_id` is a random UUID and `date` has
 no time component~~ — [#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) via #10-#14. `created_at` now records write time;
 `/recent` orders by it and the ledger view uses it to break same-day ties.
+
+Fixed 2026-09-11:
+
 - Webhook deliveries are now authenticated with Telegram's secret token: `/webhook` rejects any
 request that doesn't carry it, before parsing the body or recording its `update_id`, and the
-server refuses to start without a well-formed token. See [ADR-0025](docs/decisions/0025-webhook-secret-token.md).
+server refuses to start without a well-formed token. See [ADR-0025](docs/decisions/0025-webhook-secret-token.md). Deployed 2026-09-11; the
+full account is in [#63](https://github.com/sujayjangam/unified-ledger-pipeline/issues/63).
 
 Still outstanding:
 
@@ -364,9 +367,9 @@ Shipped 2026-09-10: a `created_at` write-time column set only by the database de
 rows backfilled to midnight SGT on their own `date`, and `/recent` ordered by it — see
 [ADR-0024](docs/decisions/0024-created-at-write-time-column.md). Pulled ahead of #15 because the
 duplicate-entry warning below needs a time of day to window on.
-- [ ] Record who entered each row — [#60](https://github.com/sujayjangam/unified-ledger-pipeline/issues/60): the sender's Telegram user ID in a new nullable
+- [x] Record who entered each row — [#60](https://github.com/sujayjangam/unified-ledger-pipeline/issues/60): the sender's Telegram user ID in a new nullable
 `entered_by` column, with existing rows left NULL ("not recorded"). Lands before #58, whose
-warning names who logged the earlier entry.
+warning names who logged the earlier entry. Shipped 2026-09-11; see [ADR-0026](docs/decisions/0026-entered-by-telegram-user-id.md).
 - [ ] Warn before saving an entry that matches one saved in the last 5 minutes (same amount and
 currency, by either household member) — [#58](https://github.com/sujayjangam/unified-ledger-pipeline/issues/58), under [#57](https://github.com/sujayjangam/unified-ledger-pipeline/issues/57). A warning the user
 can override rather than a block, checked before the confirmation card is shown, and built on
@@ -397,7 +400,7 @@ recovery paths over `context.user_data` with no DB write. No issue filed yet.
 - [ ] Drop the one-expense-per-voice-note guardrail in `app/bot_core.py` — `TransactionList`
 already models multiple; this is a product restriction, not a technical limit.
 - [x] Authenticate webhook deliveries with Telegram's secret token ([ADR-0025](docs/decisions/0025-webhook-secret-token.md)) — shipped
-2026-09-10. The prerequisite for trusting the sender ID that `is_authorized()` checks, and that
+2026-09-11 ([#63](https://github.com/sujayjangam/unified-ledger-pipeline/issues/63)). The prerequisite for trusting the sender ID that `is_authorized()` checks, and that
 [#60](https://github.com/sujayjangam/unified-ledger-pipeline/issues/60) will store.
 - [ ] Webhook idempotency — persist the `update_id` dedupe in Postgres instead of process memory.
 Previously deferred on the grounds that voice-only ingestion naturally caps volume. **That premise

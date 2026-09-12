@@ -233,3 +233,43 @@ async def test_unknown_callback_data_is_still_answered():
 
     query.answer.assert_awaited_once()
     query.edit_message_text.assert_not_awaited()
+
+
+# --- #60: the sender is carried through to the saved row ---
+
+async def test_confirm_passes_the_sender_through_to_add_expense(monkeypatch):
+    saves = MagicMock(return_value=True)
+    monkeypatch.setattr(bot_core, "add_expense", saves)
+
+    context = _fresh_context()
+    txn = _txn()
+    txn["entered_by"] = "111111"  # a fictional Telegram user ID
+    bot_core._remember_pending_card(context, 100, txn)
+
+    update, _, _ = _make_callback(message_id=100)
+    await bot_core.handle_button_click(update, context)
+
+    assert saves.call_args.kwargs["entered_by"] == "111111"
+
+
+async def test_new_entry_is_stamped_with_the_senders_telegram_id(monkeypatch):
+    # process_expense_text end to end, minus the network: extraction is faked and the card
+    # message is a mock. The pending entry must carry the sender's ID as a string - the same
+    # form ALLOWED_TG_IDS uses for its keys.
+    monkeypatch.setattr(bot_core, "ALLOWED_TG_IDS", {"111111": "Alice"})
+    monkeypatch.setattr(bot_core, "ACCOUNT_OWNERS", {"Alice": ["Card A"]})
+    monkeypatch.setattr(bot_core, "extract_transactions", AsyncMock(return_value={"transactions": [{
+        "amount": 5.0, "currency": "SGD", "category": "Food", "date": "2026-09-11",
+        "transaction_type": "Expense", "payment_method": None,
+    }]}))
+
+    update = MagicMock()
+    update.effective_user.id = 111111
+    status_msg = MagicMock()
+    status_msg.message_id = 500
+    status_msg.edit_text = AsyncMock()
+    context = _fresh_context()
+
+    await bot_core.process_expense_text(update, context, "coffee 5 dollars", status_msg)
+
+    assert context.user_data["pending_cards"][500]["entered_by"] == "111111"
