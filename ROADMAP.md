@@ -548,6 +548,17 @@ reverse-lookup in `bot_core.py` is the same *shape* but is hand-maintained from 
 lands in Phase 1 via [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53))
 - [ ] Application logic: even-split and one uneven-split mode to start (who-owes-who calculation)
 - [ ] Extend as real usage surfaces the need for more flexible splitting
+- [ ] A database view that shows each entry's sender by name: `entered_by` joined to the
+household-members table from [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53), so the base table keeps storing only the ID
+([ADR-0026](docs/decisions/0026-entered-by-telegram-user-id.md)) while anything reading the ledger sees names. Not possible before #53, since names
+live only in env secrets until then. Deliberately after Phase 2 (decided 2026-09-12).
+- [ ] Fewer false duplicate warnings. Today any two entries with the same amount and currency
+within 5 minutes are flagged, even unrelated ones
+([ADR-0027](docs/decisions/0027-duplicate-warning-before-the-card.md)). Candidates: also require the
+same category, or compare the descriptions' words after dropping filler words. Either should only
+soften the warning, not suppress it, because two people describing one shared bill differently is
+one of the cases it exists for. Measure against real entries the way Phase 2 measures the matcher
+before choosing (decided 2026-09-12).
 
 ### Phase 4 — Budgeting & visibility
 
