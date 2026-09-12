@@ -34,6 +34,7 @@ supersedes the old one rather than editing history.
 | [0024](0024-created-at-write-time-column.md) | Record write time in its own column, backfilled to midnight SGT | Accepted | 2026-09-10 |
 | [0025](0025-webhook-secret-token.md) | Authenticate webhook deliveries with Telegram's secret token | Accepted | 2026-09-10 |
 | [0026](0026-entered-by-telegram-user-id.md) | Record the sender as their Telegram user ID, and leave existing rows unrecorded | Accepted | 2026-09-11 |
+| [0027](0027-duplicate-warning-before-the-card.md) | Warn about a likely duplicate before the card is shown, matching on amount and currency | Accepted | 2026-09-12 |
 
 ## Writing a new one
 

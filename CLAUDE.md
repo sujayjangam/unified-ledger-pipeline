@@ -102,8 +102,11 @@ revision chain in `test_migrations.py` —
 one root, one head, each revision revising the one before (`0002` → `0001`, `0003` → `0002`);
 structure only, no SQL executed; and the webhook's
 secret-token gate in `test_webhook_secret.py` — accept/reject, the dedupe-cache interaction, startup
-refusal) with no network calls
-and no database —
+refusal; and the duplicate-entry warning in `test_duplicate_warning.py` — the banner's wording, a
+warning card vs. a normal one, Save anyway/Cancel, a failed check falling back to a normal card)
+with no network calls
+and no database — enforced, not just intended: an autouse fixture in `tests/conftest.py` makes
+any attempt to open a connection fail, because locally `.env`'s `DATABASE_URL` is production —
 test-only dependencies live in `requirements-dev.txt`, kept out of `requirements.txt` so that file
 still means "what production needs." `main` is protected by a repository ruleset requiring this
 suite (plus lint and an import smoke check) to pass before merge — see
@@ -221,7 +224,18 @@ attempt. It does:
    the sender. Note that `account_owner` is *whose card paid*, not who sent the message. The
    sender is recorded separately: their Telegram user ID is stamped on the pending entry as
    `entered_by` ([#60](https://github.com/sujayjangam/unified-ledger-pipeline/issues/60)).
-5. The pending transaction is stashed in `context.user_data['pending_cards']` — a bounded dict
+5. Duplicate check ([#58](https://github.com/sujayjangam/unified-ledger-pipeline/issues/58)):
+   `ledger_queries.py::find_recent_duplicate` looks for an entry with the same amount (cents) and
+   currency saved in the last `DUPLICATE_WINDOW_MINUTES` (5), by anyone, windowed on
+   `created_at`. A match is stored on the pending entry as `suspected_duplicate` and turns the card
+   into a warning: a banner naming who logged the earlier entry (looked up from `entered_by`) and
+   its wording, with "⚠️ Save anyway" / "❌ Cancel" buttons. Save anyway sends the same
+   `confirm_save`, so the save path is identical. It runs **before** the card is shown, never
+   inside the insert, because after Confirm the user can no longer decide. A failed check returns
+   `None` and gives a normal card - it must never block a save. It only sees saved rows, so two
+   still-unconfirmed cards for one spend don't warn each other (accepted). See
+   [ADR-0027](docs/decisions/0027-duplicate-warning-before-the-card.md).
+6. The pending transaction is stashed in `context.user_data['pending_cards']` — a bounded dict
    keyed by the **`message_id` of the confirmation card**, not a single slot — and only written to
    the DB after the user taps the inline "Confirm" button (`handle_button_click`), which calls
    `app/add_expense.py::add_expense`. Keying per card is what lets two cards be on screen and
@@ -294,7 +308,10 @@ attempt. It does:
   `/recent`, `/today`, `/week`, `/month`, `/cat_today`, `/cat_week`, `/cat_month` commands. All
   currency-related aggregation is grouped by currency (multi-currency ledger, no FX conversion is
   performed anywhere in this codebase yet). `/recent` orders by `created_at` - most recently
-  *logged* - not by `date`.
+  *logged* - not by `date`. It also holds `find_recent_duplicate`, which backs the duplicate
+  check above. Like every query in that module it catches its own errors; here that's load-bearing
+  rather than incidental, since `None` means "show a normal card", so a broken check can't block a
+  save.
 - `app/services/utils.py::get_sgt_now()` is the canonical "now" for period boundaries — always use
   it instead of `datetime.now()` so week/month cutoffs stay anchored to Singapore time regardless
   of where the process runs (e.g. UTC on Cloud Run).
