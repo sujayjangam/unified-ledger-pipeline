@@ -24,6 +24,44 @@ def get_recent_entries(limit=5):
         print(f"❌ Query Error: {e}")
         return []
 
+def find_recent_duplicate(amount_cents: int, currency: str, within_minutes: int):
+    """Returns the newest entry with exactly this amount and currency saved in the last
+    `within_minutes` minutes, or None if there isn't one.
+
+    Backs the duplicate warning (#58, ADR-0027). The bot calls this after extraction and before
+    showing the confirmation card, so the user can decide while nothing has been saved yet.
+
+    - Amount + currency only, never description: description is the raw input, and Whisper
+      words the same spoken sentence differently each time, so a description match would rarely
+      fire on voice notes.
+    - Anyone's entry, not just the sender's: two people logging the same shared bill is exactly
+      the case worth catching.
+    - Windowed on created_at (write time), never date, which has no time of day - see
+      docs/SCHEMA.md. Both now() and created_at come from the database clock, so the clock of
+      whichever machine runs the bot never enters into it.
+
+    The result is a dict of description, seconds_ago and entered_by (None for rows written
+    before that column existed, or by the CLI/API). Any error also returns None, deliberately:
+    a broken check must never stop an entry being saved, so the caller just shows a normal card.
+    """
+    try:
+        with get_connection() as conn:
+            row = conn.execute(text('''
+                SELECT description,
+                       CAST(EXTRACT(EPOCH FROM (now() - created_at)) AS integer) AS seconds_ago,
+                       entered_by
+                FROM transactions
+                WHERE amount = :amount
+                  AND currency = :currency
+                  AND created_at >= now() - make_interval(mins => CAST(:within_minutes AS integer))
+                ORDER BY created_at DESC
+                LIMIT 1
+            '''), {"amount": amount_cents, "currency": currency, "within_minutes": within_minutes}).mappings().first()
+            return dict(row) if row else None
+    except Exception as e:
+        print(f"❌ Duplicate check failed, showing a normal card: {e}")
+        return None
+
 def get_period_summary(start_date: str, end_date: str):
     """Fetches counts and totals grouped by currency, separating expenses and transfers."""
     try:

@@ -44,16 +44,15 @@ text); the Confirm double-tap fix ([#29](https://github.com/sujayjangam/unified-
 write-time column with `/recent` ordered by it ([#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) via #10-#14, see
 [ADR-0024](docs/decisions/0024-created-at-write-time-column.md)), 2026-09-10; and authenticated webhook
 deliveries (see [ADR-0025](docs/decisions/0025-webhook-secret-token.md)), 2026-09-11; and
-`entered_by`, recording who sent each entry ([#60](https://github.com/sujayjangam/unified-ledger-pipeline/issues/60), see [ADR-0026](docs/decisions/0026-entered-by-telegram-user-id.md)), 2026-09-11.
+`entered_by`, recording who sent each entry ([#60](https://github.com/sujayjangam/unified-ledger-pipeline/issues/60), see [ADR-0026](docs/decisions/0026-entered-by-telegram-user-id.md)), 2026-09-11; and the
+duplicate-entry warning ([#58](https://github.com/sujayjangam/unified-ledger-pipeline/issues/58), closing [#57](https://github.com/sujayjangam/unified-ledger-pipeline/issues/57), see [ADR-0027](docs/decisions/0027-duplicate-warning-before-the-card.md)), 2026-09-12.
 
-**Next action:** the duplicate-entry warning ([#58](https://github.com/sujayjangam/unified-ledger-pipeline/issues/58), under [#57](https://github.com/sujayjangam/unified-ledger-pipeline/issues/57)), built on
-`entered_by` and `created_at`; then [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) (backdated date parsing), then the
+**Next action:** [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) (backdated date parsing), then the
 pending-transaction edit path. Full ordering in the Phase 0 checklist below.
 
 **Open top-level issues:** [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) backdated dates ·
 [#17](https://github.com/sujayjangam/unified-ledger-pipeline/issues/17) unused REST API · [#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22) entries can't be corrected ·
 [#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27) unpinned dependencies ·
-[#57](https://github.com/sujayjangam/unified-ledger-pipeline/issues/57) re-sent entries become duplicates ·
 [#61](https://github.com/sujayjangam/unified-ledger-pipeline/issues/61) git-history purge (Phase 5) ·
 [#39](https://github.com/sujayjangam/unified-ledger-pipeline/issues/39) float
 rounding can silently lose a cent · [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53)
@@ -370,10 +369,12 @@ duplicate-entry warning below needs a time of day to window on.
 - [x] Record who entered each row — [#60](https://github.com/sujayjangam/unified-ledger-pipeline/issues/60): the sender's Telegram user ID in a new nullable
 `entered_by` column, with existing rows left NULL ("not recorded"). Lands before #58, whose
 warning names who logged the earlier entry. Shipped 2026-09-11; see [ADR-0026](docs/decisions/0026-entered-by-telegram-user-id.md).
-- [ ] Warn before saving an entry that matches one saved in the last 5 minutes (same amount and
+- [x] Warn before saving an entry that matches one saved in the last 5 minutes (same amount and
 currency, by either household member) — [#58](https://github.com/sujayjangam/unified-ledger-pipeline/issues/58), under [#57](https://github.com/sujayjangam/unified-ledger-pipeline/issues/57). A warning the user
 can override rather than a block, checked before the confirmation card is shown, and built on
-`created_at`.
+`created_at`. Shipped 2026-09-12; see [ADR-0027](docs/decisions/0027-duplicate-warning-before-the-card.md). Known gap, accepted: the check
+only sees saved rows, so two cards for the same spend that are both still unconfirmed don't warn
+each other.
 - [ ] Edit and delete path for *saved* rows — [#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22).
 No `UPDATE` or `DELETE` statement exists anywhere in `app/`, so a wrong extraction is permanent,
 which is also what hollows out the human-in-the-loop claim: the human is in the loop for a few
@@ -547,6 +548,17 @@ reverse-lookup in `bot_core.py` is the same *shape* but is hand-maintained from 
 lands in Phase 1 via [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53))
 - [ ] Application logic: even-split and one uneven-split mode to start (who-owes-who calculation)
 - [ ] Extend as real usage surfaces the need for more flexible splitting
+- [ ] A database view that shows each entry's sender by name: `entered_by` joined to the
+household-members table from [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53), so the base table keeps storing only the ID
+([ADR-0026](docs/decisions/0026-entered-by-telegram-user-id.md)) while anything reading the ledger sees names. Not possible before #53, since names
+live only in env secrets until then. Deliberately after Phase 2 (decided 2026-09-12).
+- [ ] Fewer false duplicate warnings. Today any two entries with the same amount and currency
+within 5 minutes are flagged, even unrelated ones
+([ADR-0027](docs/decisions/0027-duplicate-warning-before-the-card.md)). Candidates: also require the
+same category, or compare the descriptions' words after dropping filler words. Either should only
+soften the warning, not suppress it, because two people describing one shared bill differently is
+one of the cases it exists for. Measure against real entries the way Phase 2 measures the matcher
+before choosing (decided 2026-09-12).
 
 ### Phase 4 — Budgeting & visibility
 

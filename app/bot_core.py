@@ -7,9 +7,9 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 import tempfile
 from openai import AsyncOpenAI
-from app.add_expense import add_expense
+from app.add_expense import add_expense, dollars_to_cents
 from app.services.utils import get_sgt_now, get_week_start, get_month_start
-from app.services.ledger_queries import get_recent_entries, get_period_summary, get_category_summary
+from app.services.ledger_queries import get_recent_entries, get_period_summary, get_category_summary, find_recent_duplicate
 
 # use the local windows persmissions
 truststore.inject_into_ssl()
@@ -332,6 +332,81 @@ def _saving_keyboard() -> InlineKeyboardMarkup:
     ]])
 
 
+# --- Duplicate warning (#58) -------------------------------------------------------------
+#
+# An entry with the same amount and currency as one saved in the last few minutes - by anyone
+# in the household - gets a warning card instead of a normal one. The check runs before the
+# card is shown rather than inside the insert, because by the time add_expense runs the user
+# has already tapped Confirm and can no longer decide. See ADR-0027.
+DUPLICATE_WINDOW_MINUTES = 5
+
+
+def _find_duplicate_of(transaction: dict):
+    """Returns the recently saved entry this one looks like a repeat of, or None.
+
+    Never raises. An amount that can't be converted to cents (the save would reject it anyway)
+    and a failed query both come back as None, meaning "show a normal card" - a broken check
+    must never stop an entry being saved.
+    """
+    try:
+        amount_cents = dollars_to_cents(transaction.get('amount'))
+    except (TypeError, ValueError):
+        return None
+    # Same currency default as the add_expense call in handle_button_click, so the check looks
+    # for exactly what would be saved.
+    return find_recent_duplicate(amount_cents, transaction.get('currency', 'SGD'), DUPLICATE_WINDOW_MINUTES)
+
+
+def _format_age(seconds: int) -> str:
+    """How long ago the earlier entry was saved: 'just now', '40 seconds ago', '2 minutes ago'."""
+    seconds = max(0, int(seconds))  # clamped so a rounding quirk can never read "-1 seconds ago"
+    if seconds == 0:
+        return "just now"
+    if seconds < 60:
+        return "1 second ago" if seconds == 1 else f"{seconds} seconds ago"
+    minutes = seconds // 60
+    return "1 minute ago" if minutes == 1 else f"{minutes} minutes ago"
+
+
+def _duplicate_banner(duplicate: dict, amount_text: str, sender_id: str) -> str:
+    """The warning that goes above a flagged card's summary.
+
+    Only the Telegram ID is stored (ADR-0026), so the name is looked up in ALLOWED_TG_IDS here,
+    at display time. It says "You" when the same person logged the earlier entry, and names
+    nobody when the earlier row has no entered_by (written before #60, or by the CLI/API) or its
+    ID isn't in the allowlist - the ID itself is never shown.
+    """
+    entered_by = duplicate.get('entered_by')
+    age = _format_age(duplicate.get('seconds_ago', 0))
+
+    if entered_by is not None and entered_by == sender_id:
+        who = f"You logged {amount_text} {age}."
+    elif entered_by in ALLOWED_TG_IDS:
+        who = f"{ALLOWED_TG_IDS[entered_by]} logged {amount_text} {age}."
+    else:
+        who = f"{amount_text} was logged {age}."
+
+    return (
+        f"⚠️ **Possible duplicate.** {who}\n"
+        f"📝 **Earlier entry:** {duplicate.get('description')}\n\n"
+    )
+
+
+def _duplicate_keyboard() -> InlineKeyboardMarkup:
+    """A flagged card's buttons. They send the same callback_data as the normal pair, so
+    "Save anyway" goes through exactly the same confirm path - progress label, double-tap
+    guard, idempotency key - and only the labels differ."""
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("⚠️ Save anyway", callback_data="confirm_save"),
+        InlineKeyboardButton("❌ Cancel", callback_data="cancel_save"),
+    ]])
+
+
+def _keyboard_for(transaction: dict) -> InlineKeyboardMarkup:
+    """The buttons a pending card carries: the warning pair if it was flagged, else Confirm/Cancel."""
+    return _duplicate_keyboard() if transaction.get('suspected_duplicate') else _confirm_keyboard()
+
+
 # shared pipeline: raw text (transcript or typed) -> extraction -> pending confirmation card
 async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYPE, raw_text: str, status_msg):
     """Extracts structured data from raw text and presents it for confirmation.
@@ -391,11 +466,20 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
     # rather than a display name because it never changes - names are looked up from it when shown.
     single_transaction['entered_by'] = user_id
 
+    # Does this look like a repeat of something saved moments ago, by anyone? (#58) Kept on the
+    # pending entry itself because a button tap carries only the card's message_id - this is how
+    # handle_button_click later tells a flagged card from a normal one on Cancel or a failed save.
+    single_transaction['suspected_duplicate'] = _find_duplicate_of(single_transaction)
+
+    amount_text = f"{single_transaction.get('currency')} {float(single_transaction.get('amount')):.2f}"
+    banner = ""
+    if single_transaction['suspected_duplicate']:
+        banner = _duplicate_banner(single_transaction['suspected_duplicate'], amount_text, user_id)
 
     # Reference 'single_transaction', in future this will read 'transactions' when support for multiple txn is added
-    summary_message = (
+    summary_message = banner + (
         f"Please confirm your **{single_transaction.get('transaction_type', 'Expense')}**:\n\n"
-        f"💰 **Amount:** {single_transaction.get('currency')} {float(single_transaction.get('amount')):.2f}\n"
+        f"💰 **Amount:** {amount_text}\n"
         f"🏷️ **Category:** {single_transaction.get('category')}\n"
         f"💳 **Account:** {single_transaction.get('payment_method', 'Unspecified')}\n"
         f"💳 **Account Owner:** {single_transaction.get('account_owner', 'Unspecified')}\n"
@@ -403,8 +487,8 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
         f"📅 **Date:** {single_transaction.get('date')}\n"
     )
 
-    # Send the clean summary with the Confirm/Cancel buttons attached
-    await status_msg.edit_text(summary_message, reply_markup=_confirm_keyboard(), parse_mode="Markdown")
+    # Send the clean summary with its buttons attached - Confirm/Cancel, or Save anyway/Cancel if flagged
+    await status_msg.edit_text(summary_message, reply_markup=_keyboard_for(single_transaction), parse_mode="Markdown")
 
     # Stash the transaction against *this card's* message_id, only once the card exists - the
     # button press that comes back carries the message_id and nothing else, so that is the
@@ -553,6 +637,8 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
             # actually reached Postgres before failing. Deliberately not marked resolved - the
             # card is live again.
             _remember_pending_card(context, message_id, transaction_to_save)
+            # The retry hint names whichever button the card is about to get back
+            retry_label = "⚠️ Save anyway" if transaction_to_save.get('suspected_duplicate') else "✅ Confirm"
             # CHANGED: Keep the summary visible even if the database fails, just change the header
             error_summary = (
                 f"❌ **Database Error! Could not save:**\n\n"
@@ -560,9 +646,10 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
                 f"🏷️ **Category:** {transaction_to_save.get('category')}\n"
                 f"📝 **Notes:** {transaction_to_save.get('description', 'None')}\n"
                 f"📅 **Date:** {transaction_to_save.get('date')}\n\n"
-                f"Tap **✅ Confirm** to try again."
+                f"Tap **{retry_label}** to try again."
             )
-            await query.edit_message_text(error_summary, parse_mode="Markdown", reply_markup=_confirm_keyboard())
+            # _keyboard_for, not _confirm_keyboard: a flagged card gets its warning buttons back
+            await query.edit_message_text(error_summary, parse_mode="Markdown", reply_markup=_keyboard_for(transaction_to_save))
 
     elif query.data == "cancel_save":
         # Same already-settled check as the confirm path, so a second tap on Cancel doesn't
@@ -576,9 +663,15 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
 
         await query.answer()
-        _take_pending_card(context, message_id)
+        cancelled = _take_pending_card(context, message_id)
         _mark_card_resolved(context, message_id, "cancelled")
-        await query.edit_message_text("❌ **Cancelled.** Nothing was saved to the Ledger.", parse_mode="Markdown")
+        # A flagged card says which kind of cancel this was (#58). cancelled can be None (a card
+        # from before a restart), which just gets the plain wording.
+        if cancelled and cancelled.get('suspected_duplicate'):
+            cancel_text = "❌ **Duplicate transaction cancelled.** Nothing was saved to the Ledger."
+        else:
+            cancel_text = "❌ **Cancelled.** Nothing was saved to the Ledger."
+        await query.edit_message_text(cancel_text, parse_mode="Markdown")
 
     else:
         # An unrecognised callback_data - a card from an older deployment whose buttons this
