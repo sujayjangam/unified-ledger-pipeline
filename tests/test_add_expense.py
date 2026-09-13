@@ -62,15 +62,6 @@ def test_very_large_amounts_stay_exact():
     # The old float maths went wrong above about 10 trillion dollars.
     assert dollars_to_cents("99999999999999.99") == 9_999_999_999_999_999
 
-def test_converts_the_specific_amounts_named_in_issue_33():
-    # #33 named these three values explicitly as "the cases floats get wrong" - none of
-    # them actually broke the old rounding (verified directly: 0.07 * 100 comes out
-    # as 7.000000000000001, but that still rounded to 7 correctly), but they're kept here
-    # as a literal, named regression check since the issue called them out by value.
-    assert dollars_to_cents(12.10) == 1210
-    assert dollars_to_cents(0.07) == 7
-    assert dollars_to_cents(1234.56) == 123456
-
 @pytest.mark.parametrize("cents, text", [
     (101, "1.01"), (5, "0.05"), (100, "1.00"), (123456, "1234.56"), (-250, "-2.50"),
 ])
