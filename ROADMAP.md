@@ -45,17 +45,18 @@ write-time column with `/recent` ordered by it ([#9](https://github.com/sujayjan
 [ADR-0024](docs/decisions/0024-created-at-write-time-column.md)), 2026-09-10; and authenticated webhook
 deliveries (see [ADR-0025](docs/decisions/0025-webhook-secret-token.md)), 2026-09-11; and
 `entered_by`, recording who sent each entry ([#60](https://github.com/sujayjangam/unified-ledger-pipeline/issues/60), see [ADR-0026](docs/decisions/0026-entered-by-telegram-user-id.md)), 2026-09-11; and the
-duplicate-entry warning ([#58](https://github.com/sujayjangam/unified-ledger-pipeline/issues/58), closing [#57](https://github.com/sujayjangam/unified-ledger-pipeline/issues/57), see [ADR-0027](docs/decisions/0027-duplicate-warning-before-the-card.md)), 2026-09-12.
+duplicate-entry warning ([#58](https://github.com/sujayjangam/unified-ledger-pipeline/issues/58), closing [#57](https://github.com/sujayjangam/unified-ledger-pipeline/issues/57), see [ADR-0027](docs/decisions/0027-duplicate-warning-before-the-card.md)), 2026-09-12; and exact cent conversion, with half a cent rounding up and one
+conversion shared by the bot, CLI and REST API ([#39](https://github.com/sujayjangam/unified-ledger-pipeline/issues/39), see [ADR-0028](docs/decisions/0028-exact-cent-conversion-half-up.md)), 2026-09-13.
 
-**Next action:** [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) (backdated date parsing), then the
-pending-transaction edit path. Full ordering in the Phase 0 checklist below.
+**Next action:** the Confirm / Edit / Cancel card ([#66](https://github.com/sujayjangam/unified-ledger-pipeline/issues/66), the first step of [#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22)),
+then Phase 1. [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) (backdated date parsing) is not urgent and waits (decided 2026-09-12).
+Full ordering in the Phase 0 checklist below.
 
 **Open top-level issues:** [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) backdated dates ·
 [#17](https://github.com/sujayjangam/unified-ledger-pipeline/issues/17) unused REST API · [#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22) entries can't be corrected ·
 [#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27) unpinned dependencies ·
 [#61](https://github.com/sujayjangam/unified-ledger-pipeline/issues/61) git-history purge (Phase 5) ·
-[#39](https://github.com/sujayjangam/unified-ledger-pipeline/issues/39) float
-rounding can silently lose a cent · [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53)
+[#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53)
 household accounts live in env secrets (Phase 1).
 Read the list without sub-issue noise with `gh issue list --search "no:parent-issue"`.
 
@@ -389,8 +390,8 @@ dropping them silently.
 extraction can be corrected before saving rather than only accepted whole or discarded. This is
 `context.user_data` state only, no DB write, which is what makes it separable from
 [#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22) (editing *saved* rows, which
-needs a hard-vs-soft-delete decision first). The field picker built here is reusable for #22. No
-issue filed yet.
+needs a hard-vs-soft-delete decision first). The field picker built here is reusable for #22.
+Filed 2026-09-12 as [#66](https://github.com/sujayjangam/unified-ledger-pipeline/issues/66), the first sub-issue of #22.
 - [ ] Missing-amount recovery — when extraction returns no amount, `process_expense_text` abandons
 the entry with a text prompt, so the user has to start over from scratch. Offer
 `[Manual Entry]` / `[New Voice Note]` buttons instead, keeping the raw text already captured.
@@ -548,6 +549,14 @@ reverse-lookup in `bot_core.py` is the same *shape* but is hand-maintained from 
 lands in Phase 1 via [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53))
 - [ ] Application logic: even-split and one uneven-split mode to start (who-owes-who calculation)
 - [ ] Extend as real usage surfaces the need for more flexible splitting
+- [ ] Split in whole cents, so the parts always add up to the entry's amount (reconciliation
+depends on it; the rule is recorded in [ADR-0028](docs/decisions/0028-exact-cent-conversion-half-up.md)). Store each person's share as integer
+cents in `transaction_splits`, with a check that the shares sum to the entry. Work the shares out by
+rounding every share down and handing the leftover cents out one at a time, never by rounding each
+share: SGD 5.55 split two ways would otherwise be 2.78 + 2.78 = 5.56. This replaces the
+`split_ratio` Decimal column, which nothing writes today. Who gets a leftover cent must be a fixed
+rule, not random, so the same entry always splits the same way; decide it here (suggested:
+whoever's card paid).
 - [ ] A database view that shows each entry's sender by name: `entered_by` joined to the
 household-members table from [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53), so the base table keeps storing only the ID
 ([ADR-0026](docs/decisions/0026-entered-by-telegram-user-id.md)) while anything reading the ledger sees names. Not possible before #53, since names

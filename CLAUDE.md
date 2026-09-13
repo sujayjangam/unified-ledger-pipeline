@@ -97,13 +97,15 @@ pytest
 `tests/` holds pure-logic tests (money conversion, period boundaries, handler routing, extraction
 schema parsing, payment-default inference, `is_authorized`, and the confirmation-card state machine
 in `test_button_callback.py` — double-tap safety, the progress keyboard landing before the write,
-per-card independence, cache eviction, the sender's ID reaching `add_expense`; and the Alembic
+per-card independence, cache eviction, the sender's ID reaching `add_expense`, every card showing
+the amount that is actually saved; and the Alembic
 revision chain in `test_migrations.py` —
 one root, one head, each revision revising the one before (`0002` → `0001`, `0003` → `0002`);
 structure only, no SQL executed; and the webhook's
 secret-token gate in `test_webhook_secret.py` — accept/reject, the dedupe-cache interaction, startup
 refusal; and the duplicate-entry warning in `test_duplicate_warning.py` — the banner's wording, a
-warning card vs. a normal one, Save anyway/Cancel, a failed check falling back to a normal card)
+warning card vs. a normal one, Save anyway/Cancel, a failed check falling back to a normal card;
+and the REST API's `POST /transactions` amount handling in `test_rest_api.py`)
 with no network calls
 and no database — enforced, not just intended: an autouse fixture in `tests/conftest.py` makes
 any attempt to open a connection fail, because locally `.env`'s `DATABASE_URL` is production —
@@ -260,7 +262,13 @@ attempt. It does:
   `get_connection()`) reading `DATABASE_URL`. The ledger runs on Neon Postgres; the engine is not
   created at import time so loading this module (Alembic, `--help`, etc.) never hard-fails on a
   missing `.env`. Money is always stored as **integer cents**, never floats, per `docs/SCHEMA.md`
-  — conversions to/from dollars happen only at the display/API boundary.
+  — conversions to/from dollars happen only at the display/API boundary. The only way in is
+  `app/add_expense.py::dollars_to_cents` (exact `Decimal` maths from `str(amount)`, half a cent
+  rounds up, `ValueError` for anything not a positive finite amount); the bot, CLI and REST API
+  all call it. The only way out for display is `format_cents` - never format the float amount
+  yourself, or a card can show a different amount from the one saved. Never split an amount by
+  rounding each share (5.55 / 2 → 2.78 + 2.78); splits share out whole cents so the parts add
+  up. See [ADR-0028](docs/decisions/0028-exact-cent-conversion-half-up.md).
 - Alembic (`alembic/versions/`) owns the schema, not `database.py` — there is no `CREATE TABLE` in
   application code. `0001_create_transactions_table.py` is the baseline and already includes
   `account_desc`; the old SQLite-era schema drift (that column existing only via a manual

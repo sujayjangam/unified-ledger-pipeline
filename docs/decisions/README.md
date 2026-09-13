@@ -35,6 +35,7 @@ supersedes the old one rather than editing history.
 | [0025](0025-webhook-secret-token.md) | Authenticate webhook deliveries with Telegram's secret token | Accepted | 2026-09-10 |
 | [0026](0026-entered-by-telegram-user-id.md) | Record the sender as their Telegram user ID, and leave existing rows unrecorded | Accepted | 2026-09-11 |
 | [0027](0027-duplicate-warning-before-the-card.md) | Warn about a likely duplicate before the card is shown, matching on amount and currency | Accepted | 2026-09-12 |
+| [0028](0028-exact-cent-conversion-half-up.md) | Convert amounts to cents with exact decimal maths, rounding half a cent up; split in whole cents | Accepted | 2026-09-13 |
 
 ## Writing a new one
 

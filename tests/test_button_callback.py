@@ -273,3 +273,45 @@ async def test_new_entry_is_stamped_with_the_senders_telegram_id(monkeypatch):
     await bot_core.process_expense_text(update, context, "coffee 5 dollars", status_msg)
 
     assert context.user_data["pending_cards"][500]["entered_by"] == "111111"
+
+
+# --- #39: every card shows the amount that is actually saved ---
+
+async def test_the_confirmation_card_shows_the_amount_that_will_be_saved(monkeypatch):
+    # The card used to format the float itself, so 1.005 showed as "1.00" while the save rounded
+    # it to 101 cents. Both now come from the same cents value.
+    monkeypatch.setattr(bot_core, "ALLOWED_TG_IDS", {"111111": "Alice"})
+    monkeypatch.setattr(bot_core, "ACCOUNT_OWNERS", {"Alice": ["Card A"]})
+    monkeypatch.setattr(bot_core, "find_recent_duplicate", MagicMock(return_value=None))
+    monkeypatch.setattr(bot_core, "extract_transactions", AsyncMock(return_value={"transactions": [{
+        "amount": 1.005, "currency": "SGD", "category": "Food", "date": "2026-09-13",
+        "transaction_type": "Expense", "payment_method": None,
+    }]}))
+
+    update = MagicMock()
+    update.effective_user.id = 111111
+    status_msg = MagicMock()
+    status_msg.message_id = 500
+    status_msg.edit_text = AsyncMock()
+
+    await bot_core.process_expense_text(update, _fresh_context(), "coffee 1.005", status_msg)
+
+    text = status_msg.edit_text.await_args.args[0]
+    assert "SGD 1.01" in text
+    assert "SGD 1.00" not in text
+
+
+@pytest.mark.parametrize("save_result, header", [(True, "Saved to Ledger"), (False, "Database Error")])
+async def test_the_saved_and_error_cards_show_the_saved_amount(monkeypatch, save_result, header):
+    monkeypatch.setattr(bot_core, "add_expense", MagicMock(return_value=save_result))
+    context = _fresh_context()
+    txn = _txn()
+    txn["amount"] = 1.005
+    bot_core._remember_pending_card(context, 100, txn)
+
+    update, _, query = _make_callback(message_id=100)
+    await bot_core.handle_button_click(update, context)
+
+    text = query.edit_message_text.await_args.args[0]
+    assert header in text
+    assert "SGD 1.01" in text
