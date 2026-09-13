@@ -26,33 +26,29 @@ A household expense ledger with two ingestion paths into one Postgres database:
 
 Design decisions live in `docs/decisions/` as numbered ADRs (`docs/decisions/README.md` is the
 index) — read the relevant one before re-opening a settled choice, and add a new record rather
-than editing an accepted one. `docs/SCHEMA.md` is the canonical schema reference — read it before changing table columns.
+than editing an accepted one. This file says *what* the rules are; the ADRs say *why*.
+`docs/SCHEMA.md` is the canonical schema reference — read it before changing table columns.
 
 ## Keeping the docs current
 
-`README.md`, `ROADMAP.md`, and this file (`CLAUDE.md`) drift out of sync with the code if they
-aren't actively checked, in two different directions — and both have bitten this project already:
+`README.md`, `ROADMAP.md` and this file drift from the code unless they're checked, in two
+directions, and both have happened here:
 
-- **Staleness**: a past session left this file describing the pre-Postgres SQLite schema (`data/
-  ledger.db`, `CREATE TABLE IF NOT EXISTS`, the `account_desc` drift) for a full migration cycle
-  after the Neon Postgres cutover shipped, because nothing prompted a re-check of `CLAUDE.md`
-  itself when the DB layer changed.
-- **Aspirational drift**: a separate past session copied `ROADMAP.md`'s forward-looking "About"
-  blurb (reconciliation pipeline, eval harness) into `README.md` before that work existed.
-  Forward-looking language belongs in `ROADMAP.md` only, and moves into `README.md` once the
-  corresponding phase actually ships — never before.
+- **Staleness**: this file once described the pre-Postgres SQLite schema for a whole migration
+  cycle after the Neon cutover shipped.
+- **Aspirational drift**: `ROADMAP.md`'s forward-looking "About" blurb was once copied into
+  `README.md` before that work existed. Forward-looking language belongs in `ROADMAP.md` only, and
+  moves into `README.md` once the phase ships — never before.
 
-So: every new build, feature, or bug fix should include a check of whether `README.md`,
-`ROADMAP.md`, and `CLAUDE.md` each need a corresponding update — a new capability worth mentioning,
-a claim that's now inaccurate, a command that changed, or a description of internals (schema,
-architecture, env vars) that no longer matches the code. `README.md` specifically should only ever
-describe what is actually shipped, never planned/in-progress work.
+So every build, feature or bug fix includes a check of whether `README.md`, `ROADMAP.md` and
+`CLAUDE.md` need updating: a new capability, a claim that's now wrong, a changed command, or
+internals (schema, architecture, env vars) that no longer match the code. `README.md` only ever
+describes what has shipped.
 
 The `doc-checker` subagent (`.claude/agents/doc-checker.md`) automates the README-vs-code-vs-roadmap
-half of this check, plus scanning `CLAUDE.md`/`ROADMAP.md` for non-engineering content that
-shouldn't be in either (both files are checked into a public repo). Run it —
-`@agent-doc-checker run the check` — before committing doc changes or when picking work back up
-after a gap.
+half of this check, and scans `CLAUDE.md`/`ROADMAP.md` for non-engineering content (both are in a
+public repo). Run it — `@agent-doc-checker run the check` — before committing doc changes or when
+picking work back up after a gap.
 
 ## Commands
 
@@ -90,251 +86,169 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-`tests/` holds pure-logic tests (money conversion, period boundaries, handler routing, extraction
-schema parsing, payment-default inference, `is_authorized`, and the confirmation-card state machine
-in `test_button_callback.py` — double-tap safety, the progress keyboard landing before the write,
-per-card independence, cache eviction, the sender's ID reaching `add_expense`, every card showing
-the amount that is actually saved; and the Alembic
-revision chain in `test_migrations.py` —
-one root, one head, each revision revising the one before (`0002` → `0001`, `0003` → `0002`);
-structure only, no SQL executed; and the webhook's
-secret-token gate in `test_webhook_secret.py` — accept/reject, the dedupe-cache interaction, startup
-refusal; and the duplicate-entry warning in `test_duplicate_warning.py` — the banner's wording, a
-warning card vs. a normal one, Save anyway/Cancel, a failed check falling back to a normal card;
-and the REST API's `POST /transactions` amount handling in `test_rest_api.py`)
-with no network calls
-and no database — enforced, not just intended: an autouse fixture in `tests/conftest.py` makes
-any attempt to open a connection fail, because locally `.env`'s `DATABASE_URL` is production —
-test-only dependencies live in `requirements-dev.txt`, kept out of `requirements.txt` so that file
-still means "what production needs." `main` is protected by a repository ruleset requiring this
-suite (plus lint and an import smoke check) to pass before merge — see
-[ADR-0021](docs/decisions/0021-rulesets-over-classic-branch-protection.md). Migrations-against-a-
-real-Postgres-container and the `ON CONFLICT (idempotency_key)` path are not yet covered; see
-`ROADMAP.md`'s §3a checklist. The old `test_queries.py` — a one-off ad hoc script that ran
-`ALTER TABLE ... ADD COLUMN account_desc` directly against the pre-Postgres SQLite file — is gone;
-that schema change is now codified in `alembic/versions/0001_create_transactions_table.py` instead.
+`tests/` is pure logic, with no network calls and no database — enforced, not just intended: an
+autouse fixture in `tests/conftest.py` makes any attempt to open a connection fail, because
+locally `.env`'s `DATABASE_URL` is production. Stub queries and Telegram objects instead
+(`tests/test_button_callback.py` and `tests/test_duplicate_warning.py` show the pattern).
+Test-only dependencies live in `requirements-dev.txt`, so `requirements.txt` still means "what
+production needs". Not covered yet: migrations against a real Postgres, and the
+`ON CONFLICT (idempotency_key)` path — see the test-suite checklist in `ROADMAP.md`. `main` is
+protected by a repository ruleset requiring the suite, lint and an import smoke check to pass
+before merge ([ADR-0021](docs/decisions/0021-rulesets-over-classic-branch-protection.md)).
 
 Docker (Cloud Run deployment target): `Dockerfile` installs `requirements.txt` and runs
 `uvicorn app.bot_webhook:app_fastapi --host 0.0.0.0 --port 8080`.
 
 ### Required environment (`.env`, loaded via `python-dotenv`)
+
+`.env.example` shows the format of each one.
+
 - `TELEGRAM_BOT_TOKEN`
-- `ALLOWED_TG_IDS` — JSON object mapping Telegram user ID (string) → display name. Acts as the
-  bot's allowlist; anyone not in this map is rejected by `is_authorized()`.
-- `ACCOUNT_OWNERS` — JSON object mapping a person's name → list of their payment accounts/cards,
-  first entry is that person's default. Used to reverse-lookup `account_owner` from whatever
-  payment method was extracted from the voice note, and flattened by
-  `extraction.py::build_allowed_accounts` into the list of valid payment methods the extraction
-  prompt is allowed to choose from. It is the **only** place accounts are defined — see the
-  Architecture note below for why that matters.
-- `PRIMARY_ACCOUNT_OWNER` — must be one of the keys in `ACCOUNT_OWNERS`. Whoever funds shared
-  transfers (e.g. a YouTrip top-up) regardless of who sent the message. Configurable rather than
-  hardcoded so the codebase doesn't bake in one household's real name.
+- `ALLOWED_TG_IDS` — JSON object, Telegram user ID (string) → display name. The allowlist
+  `is_authorized()` checks.
+- `ACCOUNT_OWNERS` — JSON object, person → list of their accounts/cards, first entry is their
+  default. The **only** place accounts are defined (see step 0 of the ingestion pipeline below).
+- `PRIMARY_ACCOUNT_OWNER` — one of the keys in `ACCOUNT_OWNERS`; funds shared transfers (e.g. a
+  YouTrip top-up) whoever sent the message. Configurable so no real name is hardcoded.
 - `OPENAI_API_KEY`
-- `DATABASE_URL` — Postgres connection string (`postgresql+psycopg://...`; note the `+psycopg`
-  scheme — this project uses `psycopg` v3, a plain `postgresql://` URL makes SQLAlchemy default to
-  the uninstalled `psycopg2` dialect and fail).
+- `DATABASE_URL` — must use the `postgresql+psycopg://` scheme. This project uses `psycopg` v3; a
+  plain `postgresql://` URL makes SQLAlchemy look for the uninstalled `psycopg2`
+  ([ADR-0006](docs/decisions/0006-psycopg3-url-scheme.md)).
 - `WEBHOOK_URL` — optional, only used by `bot_webhook.py` to register the Telegram webhook.
 - `WEBHOOK_SECRET_TOKEN` — required whenever `WEBHOOK_URL` is set; `bot_webhook.py` refuses to
-  start without a well-formed one (Telegram's format: 1-256 characters of `A-Z a-z 0-9 _ -`). It
-  is registered with Telegram via `setWebhook`'s `secret_token` on every startup, Telegram sends
-  it back in the `X-Telegram-Bot-Api-Secret-Token` header of every delivery, and `/webhook`
-  rejects anything without it (constant-time comparison) *before* parsing the body or recording
-  the `update_id`. This is what makes the sender ID inside an update trustworthy, which
-  `is_authorized()` depends on. From Secret Manager in production. See
-  [ADR-0025](docs/decisions/0025-webhook-secret-token.md).
+  start without a well-formed one. `/webhook` rejects any delivery that doesn't carry it back,
+  *before* parsing the body or recording the `update_id` — that is what makes the sender ID
+  `is_authorized()` trusts actually trustworthy. From Secret Manager in production
+  ([ADR-0025](docs/decisions/0025-webhook-secret-token.md)).
 
-`.env.local` (gitignored via the `.env.*` rule, which exists because git reads `.env` as a literal
-filename rather than a prefix) is the local-testing overlay: it holds only `TELEGRAM_BOT_TOKEN` for
-a second BotFather bot and a Neon-branch `DATABASE_URL`. `app/bot_local.py` loads it with
-`override=True` *before* importing `bot_core`, whose own `load_dotenv()` defaults to
-`override=False` and so fills in the remaining keys from `.env` without disturbing the overrides —
-one copy of each secret on disk. See `docs/LOCAL_TESTING.md`.
+`.env.local` (gitignored by the `.env.*` rule) is the local-testing overlay: only a test bot's
+`TELEGRAM_BOT_TOKEN` and a Neon-branch `DATABASE_URL`. `app/bot_local.py` loads it with
+`override=True` *before* importing `bot_core`, whose own `load_dotenv()` then fills in the rest
+from `.env` — one copy of each secret on disk. See `docs/LOCAL_TESTING.md` and
+[ADR-0019](docs/decisions/0019-separate-bot-token-for-local-testing.md).
 
 ## Architecture
 
 ### Bot: transport vs. logic split
-The Telegram bot is deliberately split so the same business logic can run under two different
-transports:
+
+The same business logic runs under two transports
+([ADR-0003](docs/decisions/0003-split-bot-transport-from-logic.md)):
 - `app/bot_core.py` — the factory (`get_application()`), all command/message handlers, and the
   `is_authorized()` gatekeeper. Builds and configures the bot but never starts a network loop.
 - `app/bot_local.py` — local runner; loads `.env.local` over `.env`, refuses to start with the
   production bot token, then calls `run_polling()` against a separate test bot.
-- `app/bot_webhook.py` — production runner; wraps the same `bot_core` app in FastAPI, exposing a
-  `POST /webhook` endpoint and managing PTB init/shutdown via a `lifespan` context manager (needed
-  because Cloud Run sleeps idle containers, so polling isn't viable there).
+- `app/bot_webhook.py` — production runner; wraps the same app in FastAPI behind `POST /webhook`,
+  managing PTB init/shutdown in a `lifespan` context manager (Cloud Run sleeps idle containers, so
+  polling isn't viable there).
 
 ### Ingestion pipeline (`bot_core.py`)
 
-Two entry points converge on one shared function. **Put new extraction/inference logic in
-`process_expense_text`, not in a handler** — anything added to a handler only works for that one
-input type.
+**Put new extraction/inference logic in `process_expense_text`, not in a handler** — anything added
+to a handler only works for that one input type.
 
-- `handle_voice` (`filters.VOICE`) — downloads the voice file to a temp `.ogg` (closed immediately
-  after creation to avoid a Windows file-lock before Telegram writes to it), transcribes it via
-  `app/services/transcription.py::transcribe_audio` → OpenAI Whisper (`language="en"` is pinned
-  deliberately — omitting it caused the model to randomly switch transcription languages), then
-  hands the transcript to `process_expense_text`. The `try/finally` temp-file cleanup lives here
-  and is voice-specific.
-- `handle_text` (`filters.TEXT & ~filters.COMMAND`) — no transcription step; the message body goes
-  straight to `process_expense_text`. `~filters.COMMAND` is what keeps `/recent`, `/today` etc. on
-  their `CommandHandler`s.
-- `handle_unsupported` (`~filters.VOICE & ~filters.TEXT`) — photos, video, stickers, documents and
-  locations. Before this existed they matched no handler at all, so PTB dropped them silently and
-  the user got no reply, which is indistinguishable from the bot being down. A photo *with* a
-  caption lands here too: `filters.TEXT` matches `message.text`, and a captioned photo carries
-  `caption`, not `text`.
+- `handle_voice` downloads the voice note, transcribes it with Whisper (`language="en"` is pinned —
+  [ADR-0009](docs/decisions/0009-pin-whisper-language-en.md)), and passes the transcript on.
+- `handle_text` passes the message body straight on. `~filters.COMMAND` keeps `/recent` etc. on
+  their own handlers.
+- `handle_unsupported` replies to everything else (photos, stickers, documents), which PTB would
+  otherwise drop silently. A captioned photo lands here too: it carries `caption`, not `text`.
 
-`process_expense_text(update, context, raw_text, status_msg)` is the shared pipeline. `status_msg`
-is a parameter rather than created inside because each transport shows a different message while it
-works (voice echoes the transcript back, text has nothing to echo); every branch inside then *edits*
-that one message rather than sending new ones, so a user is left with exactly one message per entry
-attempt. It does:
+`process_expense_text` edits one status message throughout, so each attempt leaves exactly one
+message. In order:
 
-0. The list of payment methods the model may choose from is built **per call**, by
-   `extraction.py::build_allowed_accounts` flattening `ACCOUNT_OWNERS` (de-duplicated
-   case-insensitively, plus `Cash`, which belongs to nobody so never appears there). It is
-   deliberately not a module constant: a Pydantic `Field` description is evaluated once at import
-   time, and this module is imported in paths with no `.env` loaded (CI's import smoke check,
-   `tests/test_extraction.py`), so the list goes into the system prompt instead. This replaced a
-   separate `ALLOWED_ACCOUNTS` env var that was never actually set — the prompt silently ran on a
-   hardcoded fallback that omitted one household member's card and named exactly one bank account,
-   so transfer-shaped messages were routinely attributed to the wrong `account_owner`. Never
-   reintroduce a second source of truth for this list.
-1. `app/services/extraction.py::extract_transactions` → GPT-4o-mini with structured output
-   (`response_format=TransactionList`, a Pydantic model) to pull amount, currency, category,
-   payment method, transaction type, and date out of the raw text. The raw input itself
-   is kept as `description` rather than an LLM-generated summary — earlier versions summarized and
-   that drifted into non-English languages.
-2. V1 intentionally rejects input containing more than one detected expense (asks the user to
-   resend one at a time) — `TransactionList` already supports multiple, this is just a product
-   guardrail, not a technical limit.
-3. If `amount` came back `None`, the entry is abandoned with a prompt to try again — the extraction
-   prompt is deliberately told never to guess an amount, so a missing one means the input genuinely
-   didn't contain a price. This is the branch a non-expense message ("hello") lands on.
-4. Payment method / account owner inference (`app/bot_core.py::apply_payment_defaults`, a
-   standalone function so it can be unit-tested without a Telegram `Update`): if category is
-   `YouTrip top-up` the payment method is forced to `PRIMARY_ACCOUNT_OWNER`'s default account and
-   type is set to `Transfer`; otherwise a missing payment method falls back to `YouTrip` for
-   non-SGD amounts or the sender's default account (index 0 in `ACCOUNT_OWNERS`) for SGD.
-   `account_owner` is then derived by reverse-matching the payment method against
-   `ACCOUNT_OWNERS` (case-insensitive), except `Cash`, which is always attributed to
-   the sender. Note that `account_owner` is *whose card paid*, not who sent the message. The
-   sender is recorded separately: their Telegram user ID is stamped on the pending entry as
-   `entered_by` ([#60](https://github.com/sujayjangam/unified-ledger-pipeline/issues/60)).
-5. Duplicate check ([#58](https://github.com/sujayjangam/unified-ledger-pipeline/issues/58)):
-   `ledger_queries.py::find_recent_duplicate` looks for an entry with the same amount (cents) and
-   currency saved in the last `DUPLICATE_WINDOW_MINUTES` (5), by anyone, windowed on
-   `created_at`. A match is stored on the pending entry as `suspected_duplicate` and turns the card
-   into a warning: a banner naming who logged the earlier entry (looked up from `entered_by`) and
-   its wording, with "⚠️ Save anyway" / "❌ Cancel" buttons. Save anyway sends the same
-   `confirm_save`, so the save path is identical. It runs **before** the card is shown, never
-   inside the insert, because after Confirm the user can no longer decide. A failed check returns
-   `None` and gives a normal card - it must never block a save. It only sees saved rows, so two
-   still-unconfirmed cards for one spend don't warn each other (accepted). See
-   [ADR-0027](docs/decisions/0027-duplicate-warning-before-the-card.md).
-6. The pending transaction is stashed in `context.user_data['pending_cards']` — a bounded dict
-   keyed by the **`message_id` of the confirmation card**, not a single slot — and only written to
-   the DB after the user taps the inline "Confirm" button (`handle_button_click`), which calls
-   `app/add_expense.py::add_expense`. Keying per card is what lets two cards be on screen and
-   confirmable in any order, and is why dropping the one-expense-per-message guardrail (item 2
-   above) will need no change to `handle_button_click`. See
-   [ADR-0023](docs/decisions/0023-in-memory-confirm-card-state.md).
+0. The payment methods the model may choose from are built **per call** by
+   `extraction.py::build_allowed_accounts`, flattening `ACCOUNT_OWNERS` plus `Cash`. Never
+   reintroduce a second source of truth for this list: a separate, never-set `ALLOWED_ACCOUNTS`
+   var once made the prompt run on a hardcoded fallback and attribute entries to the wrong owner.
+1. `extraction.py::extract_transactions` → GPT-4o-mini structured output (`TransactionList`). The
+   raw input is kept as `description`, never an LLM summary
+   ([ADR-0008](docs/decisions/0008-raw-transcript-as-description.md)).
+2. More than one expense in a message is rejected — a product guardrail, not a technical limit
+   ([ADR-0010](docs/decisions/0010-one-expense-per-message.md)).
+3. No amount → the entry is abandoned with a prompt to retry. The prompt tells the model never to
+   guess an amount, so this is where a non-expense message ("hello") lands.
+4. `apply_payment_defaults` (standalone so it can be unit-tested): a YouTrip top-up is forced to
+   `PRIMARY_ACCOUNT_OWNER`'s default account and type `Transfer`; otherwise a missing payment
+   method becomes `YouTrip` for non-SGD or the sender's default account for SGD. `account_owner`
+   is then reverse-matched from the payment method (case-insensitive; `Cash` → the sender). It
+   means *whose card paid*, not who sent the message — the sender is `entered_by`.
+5. Duplicate check: `ledger_queries.py::find_recent_duplicate` looks for the same amount (cents)
+   and currency saved by anyone in the last `DUPLICATE_WINDOW_MINUTES` (5), windowed on
+   `created_at`. A match turns the card into a warning with "⚠️ Save anyway" / "❌ Cancel" (same
+   `confirm_save` path). It runs before the card is shown, never inside the insert, and a failed
+   check gives a normal card — it must never block a save
+   ([ADR-0027](docs/decisions/0027-duplicate-warning-before-the-card.md)).
+6. The pending entry is stashed in `context.user_data['pending_cards']`, keyed by the card's
+   `message_id`, and written only when Confirm is tapped
+   ([ADR-0023](docs/decisions/0023-in-memory-confirm-card-state.md)).
 
-   `handle_button_click` itself is shaped by one Telegram constraint: **a `callback_query_id` can
-   be answered exactly once**, so every branch decides what it wants to say before spending that
-   single `answer()`. On a valid confirm it answers, then swaps Confirm/Cancel for a
-   non-actionable `⏳ Adding to ledger...` button, *both before* the blocking `add_expense` call —
-   otherwise nothing on screen changes for the whole DB round trip, the button reads as dead, and
-   the user taps again. A second tap on a card whose outcome is already recorded in
-   `context.user_data['resolved_cards']` gets a toast and leaves the card alone; it must never
-   `edit_message_text`, which is the bug [#29](https://github.com/sujayjangam/unified-ledger-pipeline/issues/29)
-   fixed (a double tap replaced a correct "Saved to Ledger!" card with a false "session expired"
-   error). A failed save puts the entry back with its original `idempotency_key` and re-attaches
-   the buttons, so a transient Neon failure costs a retry rather than the entry.
+`handle_button_click` rules:
+- **A callback query can be answered exactly once**, so every branch decides what to say before
+  calling `answer()`.
+- On a valid confirm, answer and swap in the non-actionable `⏳ Adding to ledger...` button
+  *before* the blocking `add_expense` call, or the button looks dead and gets tapped again.
+- A tap on a card already in `context.user_data['resolved_cards']` gets a toast and nothing else.
+  Never `edit_message_text` it — that is the bug
+  [#29](https://github.com/sujayjangam/unified-ledger-pipeline/issues/29) fixed.
+- A failed save puts the entry back with its original `idempotency_key` and buttons, so a
+  transient Neon failure costs a retry, not the entry.
 
 ### Storage
-- `app/database.py` owns a lazily-created, pooled SQLAlchemy Core engine (`get_engine()` /
-  `get_connection()`) reading `DATABASE_URL`. The ledger runs on Neon Postgres; the engine is not
-  created at import time so loading this module (Alembic, `--help`, etc.) never hard-fails on a
-  missing `.env`. Money is always stored as **integer cents**, never floats, per `docs/SCHEMA.md`
-  — conversions to/from dollars happen only at the display/API boundary. The only way in is
-  `app/add_expense.py::dollars_to_cents` (exact `Decimal` maths from `str(amount)`, half a cent
-  rounds up, `ValueError` for anything not a positive finite amount); the bot, CLI and REST API
-  all call it. The only way out for display is `format_cents` - never format the float amount
-  yourself, or a card can show a different amount from the one saved. Never split an amount by
-  rounding each share (5.55 / 2 → 2.78 + 2.78); splits share out whole cents so the parts add
-  up. See [ADR-0028](docs/decisions/0028-exact-cent-conversion-half-up.md).
-- Alembic (`alembic/versions/`) owns the schema, not `database.py` — there is no `CREATE TABLE` in
-  application code. `0001_create_transactions_table.py` is the baseline and already includes
-  `account_desc`; the old SQLite-era schema drift (that column existing only via a manual
-  `ALTER TABLE` in the now-deleted `test_queries.py`, undocumented in `database.py`) is resolved.
-  Schema changes go through a new Alembic revision (hand-written — this project uses Core, not the
-  ORM, so there's no metadata for `--autogenerate` to diff against).
-- `created_at` (`TIMESTAMPTZ NOT NULL DEFAULT now()`, revision `0002_add_created_at`) is the
-  **write** time, set only by the Postgres default - no writer supplies it. `date` is the
-  **business** date (when the spend happened). Never substitute one for the other: `/recent`
-  orders by `created_at`, the ledger view by `date` then `created_at`, and anything meaning
-  "within the last N minutes" must use `created_at`, since `date` has no time of day. Rows that
-  predate the column were backfilled to midnight SGT on their own `date`, so an exact
-  `00:00:00+08` means "time unknown", not "logged at midnight". See `docs/SCHEMA.md` and
-  [ADR-0024](docs/decisions/0024-created-at-write-time-column.md).
-- `entered_by` (TEXT, nullable, revision `0003_add_entered_by`) is the **sender's Telegram user
-  ID**, as the string `ALLOWED_TG_IDS` keys on. It's stamped on the pending entry in
-  `process_expense_text` and passed to `add_expense` on Confirm. Store the ID, never a name:
-  names are looked up from it when shown, so renaming someone never rewrites history. NULL means
-  "sender not recorded" - all pre-`0003` rows (deliberately not backfilled from `account_owner`,
-  which is whose card paid, not who sent it) and all CLI/REST API rows. Tests use fictional IDs
-  only; real ones never enter this public repo. See [ADR-0026](docs/decisions/0026-entered-by-telegram-user-id.md).
-- **Production is never migrated automatically.** The `Dockerfile` only starts uvicorn and a
-  merge to `main` auto-deploys, so a migration is applied by hand (`alembic upgrade head`) and
-  must land *before* merging any code that depends on it. Additive migrations are safe to apply
-  first: no query uses `SELECT *` and every writer names its columns, so already-deployed code
-  can't see a new column.
-- The `transactions` table has an `idempotency_key` column with an `ON CONFLICT (idempotency_key)
-  DO NOTHING` upsert in `app/add_expense.py`. `bot_core.py` generates this key when the confirm
-  button is built, so a double-tap on "Confirm" (slow connection, impatient re-tap) can't insert
-  the same transaction twice. This is separate from — and already solves a narrower case than —
-  the still-open webhook `update_id` dedupe below; don't conflate the two when reading the "Still
-  outstanding" list in `ROADMAP.md`.
-- Deduping duplicate Telegram webhook deliveries (`update_id`) is deliberately deferred rather than
-  persisted as its own table/column: it's currently handled only in memory (`_seen_update_ids` in
-  `bot_webhook.py`), which doesn't survive a restart. The original reasoning was that persisting it
-  is low-value while voice-only ingestion keeps transaction volume low. **That reasoning is now on
-  a clock**: as of 2026-08-20 the capture-friction work (backdated dates, edit/delete, text
-  ingestion) is early Phase 0 and exists specifically to raise capture volume, so persisting the
-  dedupe is scheduled in the same phase as the work that invalidates the deferral. See
-  `ROADMAP.md`'s Phase 0 checklist for the full reasoning.
-- `app/services/ledger_queries.py` holds the read-side aggregate queries backing the bot's
-  `/recent`, `/today`, `/week`, `/month`, `/cat_today`, `/cat_week`, `/cat_month` commands. All
-  currency-related aggregation is grouped by currency (multi-currency ledger, no FX conversion is
-  performed anywhere in this codebase yet). `/recent` orders by `created_at` - most recently
-  *logged* - not by `date`. It also holds `find_recent_duplicate`, which backs the duplicate
-  check above. Like every query in that module it catches its own errors; here that's load-bearing
-  rather than incidental, since `None` means "show a normal card", so a broken check can't block a
-  save.
-- `app/services/utils.py::get_sgt_now()` is the canonical "now" for period boundaries — always use
-  it instead of `datetime.now()` so week/month cutoffs stay anchored to Singapore time regardless
-  of where the process runs (e.g. UTC on Cloud Run).
+
+- `app/database.py` owns a lazily created, pooled SQLAlchemy Core engine (`get_engine()` /
+  `get_connection()`). It isn't created at import time, so importing never fails on a missing
+  `.env`.
+- **Money is integer cents.** The only way in is `app/add_expense.py::dollars_to_cents`, used by
+  the bot, CLI and REST API; the only way out for display is `format_cents`. Never format a float
+  amount yourself, and never split an amount by rounding each share — splits hand out whole cents
+  ([ADR-0004](docs/decisions/0004-money-as-integer-cents.md),
+  [ADR-0028](docs/decisions/0028-exact-cent-conversion-half-up.md)).
+- Alembic (`alembic/versions/`) owns the schema; there is no `CREATE TABLE` in application code.
+  Revisions are hand-written, since Core has no metadata for `--autogenerate`
+  ([ADR-0007](docs/decisions/0007-alembic-hand-written-migrations.md)).
+- `created_at` is the **write** time, set only by the Postgres default. `date` is the **business**
+  date. Never substitute one for the other: anything meaning "within the last N minutes" uses
+  `created_at`. An exact `00:00:00+08` on an old row means "time unknown"
+  ([ADR-0024](docs/decisions/0024-created-at-write-time-column.md)).
+- `entered_by` is the **sender's Telegram user ID**, as the string `ALLOWED_TG_IDS` keys on. Store
+  the ID, never a name — names are looked up when shown. NULL means "not recorded" (old rows,
+  CLI/REST API rows). Tests use fictional IDs only
+  ([ADR-0026](docs/decisions/0026-entered-by-telegram-user-id.md)).
+- **Production is never migrated automatically.** A merge to `main` auto-deploys, so run
+  `alembic upgrade head` by hand *before* merging code that depends on a migration. Additive
+  migrations are safe to apply first: no query uses `SELECT *` and every writer names its columns.
+- `idempotency_key` with `ON CONFLICT (idempotency_key) DO NOTHING` in `add_expense` stops a
+  double-tapped Confirm inserting twice ([ADR-0011](docs/decisions/0011-idempotency-key-over-update-id.md)).
+  That is a different problem from duplicate webhook deliveries (`update_id`), which are deduped
+  only in memory (`_seen_update_ids` in `bot_webhook.py`) and scheduled to be persisted in
+  Phase 0 — see `ROADMAP.md`.
+- `app/services/ledger_queries.py` backs `/recent`, `/today`, `/week`, `/month` and the `/cat_*`
+  commands, plus `find_recent_duplicate`. Aggregates are grouped by currency (no FX conversion
+  anywhere). Each query catches its own errors; for the duplicate check that's load-bearing, since
+  `None` means "show a normal card".
+- `app/services/utils.py::get_sgt_now()` is the canonical "now" for period boundaries — never
+  `datetime.now()`, so cutoffs stay in Singapore time on a UTC Cloud Run host.
 
 ### Backups
-Neon's free-tier point-in-time recovery only covers the last 6 hours (capped at 1GB of changes),
-so `.github/workflows/backup.yml` runs a separate, independent backup every 6 hours: `pg_dump -Fc`
-(custom format, chosen over plain SQL for TOC-based inspection and selective/parallel restore as
-the schema grows past one table) uploaded to `gs://unified-ledger-pg-backups-458614017842/`, with
-a 30-day rolling retention enforced by a GCS Object Lifecycle rule (not application code). Auth is
-Workload Identity Federation — no long-lived GCP credential is stored in GitHub, deliberately,
-since this repo is public. This is a GitHub Actions workflow rather than a GCP-side Cloud
-Scheduler job specifically so the schedule stays versioned and reviewable in the repo, avoiding
-the kind of invisible-GCP-config blind spot that caused the `DATABASE_URL` gap (see
-`ROADMAP.md`'s "What happened today (2026-08-05)"). See `docs/BACKUP_RESTORE.md` for the restore
-procedure — a `pg_dump` backup is a full-database snapshot, not a per-transaction undo tool, and
-production is never restored into directly.
+
+`.github/workflows/backup.yml` runs `pg_dump -Fc` every 6 hours to GCS, with 30-day retention by a
+bucket lifecycle rule and keyless auth through Workload Identity Federation (this repo is public).
+Neon's free-tier point-in-time recovery only covers 6 hours, so this is the real backup. It is a
+full snapshot, not a per-transaction undo, and production is never restored into directly — see
+`docs/BACKUP_RESTORE.md` and ADRs
+[0012](docs/decisions/0012-github-actions-over-cloud-scheduler.md)-[0014](docs/decisions/0014-pg-dump-custom-format.md).
 
 ### REST API (`app/main.py`)
-Independent of the bot — a minimal FastAPI CRUD surface (`GET/POST /transactions`) using its own
-Pydantic `Transaction` model. Defaults `account_owner` to `"Shared"` when unspecified, specifically
-to avoid leaking a real owner's name when the caller doesn't provide one.
+
+Independent of the bot — a minimal FastAPI surface (`GET/POST /transactions`) with its own Pydantic
+`Transaction` model. Defaults `account_owner` to `"Shared"`, so a caller that omits it never leaks
+a real owner's name.
+
+### `scripts/`
+
+`scripts/migrate_to_postgres.py` is the one-off SQLite → Postgres copy, run on 2026-08-01. Its
+source file no longer exists, so it can't run again. It is kept on purpose as a reference — don't
+delete it.
 
 ## GitHub issue conventions
 
