@@ -258,7 +258,6 @@ since webhook deliveries are authenticated ([ADR-0025](docs/decisions/0025-webho
 through Telegram.
 - `needs_review` is extracted by `app/services/extraction.py` but never acted on anywhere — the
 human-in-the-loop claim doesn't hold until this actually gates bot behavior.
-- A stray empty `ledger.db` sits at the repo root (untracked, harmless).
 - `.venv/` and `data/ledger.db` are untracked as of 2026-08-01 but **still present in git
 history** — purging needs a rewrite + force-push, deliberately deferred. Tracked as
 [#61](https://github.com/sujayjangam/unified-ledger-pipeline/issues/61).

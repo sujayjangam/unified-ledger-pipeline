@@ -9,7 +9,7 @@ the test bot's token, and ideally a Neon branch `DATABASE_URL`. `OPENAI_API_KEY`
 of each secret on disk.
 
 Import order matters: `bot_core` reads `TELEGRAM_BOT_TOKEN` at module import time
-(`bot_core.py:33`), so the override has to happen before that import - which is why
+(a top-level `os.getenv` near the top of `bot_core.py`), so the override has to happen before that import - which is why
 `from app.bot_core import get_application` sits below this module's setup code instead of
 at the top of the file.
 

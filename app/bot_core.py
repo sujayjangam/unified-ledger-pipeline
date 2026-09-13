@@ -6,7 +6,6 @@ from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 import tempfile
-from openai import AsyncOpenAI
 from app.add_expense import add_expense, dollars_to_cents, format_cents
 from app.services.utils import get_sgt_now, get_week_start, get_month_start
 from app.services.ledger_queries import get_recent_entries, get_period_summary, get_category_summary, find_recent_duplicate
@@ -36,17 +35,12 @@ from app.services.transcription import transcribe_audio # noqa: E402 - load_dote
 from app.services.extraction import extract_transactions # noqa: E402 - load_dotenv() is required before this import
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-# Initialize OpenAI client (it automatically looks for OPENAI_API_KEY in your environment)
-openai_client = AsyncOpenAI()
-
-raw_allowed_ids = os.getenv("ALLOWED_TG_IDS", "")
-ALLOWED_IDS = ALLOWED_TG_IDS.keys()
 
 # The Gatekeeper (Authorization Check)
 async def is_authorized(update: Update):
-    """Check if the user is in our allowed list."""
+    """Check if the user is in our allowed list - the keys of ALLOWED_TG_IDS."""
     user_id = str(update.effective_user.id)
-    if user_id not in ALLOWED_IDS:
+    if user_id not in ALLOWED_TG_IDS:
         print(f"🚫 Unauthorized access attempt by ID: {user_id}")
         await update.message.reply_text("You are not authorized to use this ledger. 🛑")
         return False

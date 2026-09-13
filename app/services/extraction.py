@@ -21,7 +21,7 @@ def _load_account_owners() -> dict:
     tests/test_extraction.py, which never imports bot_core. Both must keep working, so a
     missing or malformed value returns {} instead of blowing up the import.
 
-    Mirrors the same guard bot_core.py:20-25 already applies to this variable.
+    Mirrors the try/except guard bot_core.py already applies when it parses this variable.
     """
     try:
         return json.loads(os.getenv("ACCOUNT_OWNERS", "{}"))

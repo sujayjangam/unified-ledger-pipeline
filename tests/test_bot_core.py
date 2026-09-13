@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import app.bot_core as bot_core
 
-# ACCOUNT_OWNERS/ALLOWED_IDS/PRIMARY_ACCOUNT_OWNER are all parsed from env vars once, at
+# ACCOUNT_OWNERS/ALLOWED_TG_IDS/PRIMARY_ACCOUNT_OWNER are all parsed from env vars once, at
 # module-import time (see bot_core.py's top-level try/except block) - they're never re-read
 # inside a function call. So to fake their contents for a test, we have to monkeypatch the
 # module-level attribute directly; setting the underlying env var after import would have
@@ -72,14 +72,14 @@ def test_unmatched_payment_method_falls_back_to_unknown_owner(monkeypatch):
 # behavior (contrast with test_routing.py, which does use real PTB objects).
 
 async def test_is_authorized_accepts_a_known_id(monkeypatch):
-    monkeypatch.setattr(bot_core, "ALLOWED_IDS", {"111"})
+    monkeypatch.setattr(bot_core, "ALLOWED_TG_IDS", {"111": "Alice"})
     update = MagicMock()
     update.effective_user.id = 111
     assert await bot_core.is_authorized(update) is True
 
 
 async def test_is_authorized_rejects_an_unknown_id(monkeypatch):
-    monkeypatch.setattr(bot_core, "ALLOWED_IDS", {"111"})
+    monkeypatch.setattr(bot_core, "ALLOWED_TG_IDS", {"111": "Alice"})
     update = MagicMock()
     update.effective_user.id = 999
     # is_authorized() awaits update.message.reply_text(...) on the rejection path, so this
