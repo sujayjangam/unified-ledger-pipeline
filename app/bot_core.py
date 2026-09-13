@@ -7,7 +7,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 import tempfile
 from openai import AsyncOpenAI
-from app.add_expense import add_expense, dollars_to_cents
+from app.add_expense import add_expense, dollars_to_cents, format_cents
 from app.services.utils import get_sgt_now, get_week_start, get_month_start
 from app.services.ledger_queries import get_recent_entries, get_period_summary, get_category_summary, find_recent_duplicate
 
@@ -357,6 +357,21 @@ def _find_duplicate_of(transaction: dict):
     return find_recent_duplicate(amount_cents, transaction.get('currency', 'SGD'), DUPLICATE_WINDOW_MINUTES)
 
 
+def _display_amount(transaction: dict) -> str:
+    """The amount as a card shows it, e.g. 'SGD 1.01'.
+
+    Worked out from the same cents value add_expense will save, so a card can never show one
+    amount and save another. Formatting the float directly used to show 1.005 as '1.00' while the
+    save rounded it to 101 cents (#39). An amount the save would reject anyway (zero, negative)
+    falls back to the raw value, so the card still appears and Confirm fails as it always has.
+    """
+    currency = transaction.get('currency')
+    try:
+        return f"{currency} {format_cents(dollars_to_cents(transaction.get('amount')))}"
+    except ValueError:
+        return f"{currency} {float(transaction.get('amount')):.2f}"
+
+
 def _format_age(seconds: int) -> str:
     """How long ago the earlier entry was saved: 'just now', '40 seconds ago', '2 minutes ago'."""
     seconds = max(0, int(seconds))  # clamped so a rounding quirk can never read "-1 seconds ago"
@@ -471,7 +486,7 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
     # handle_button_click later tells a flagged card from a normal one on Cancel or a failed save.
     single_transaction['suspected_duplicate'] = _find_duplicate_of(single_transaction)
 
-    amount_text = f"{single_transaction.get('currency')} {float(single_transaction.get('amount')):.2f}"
+    amount_text = _display_amount(single_transaction)
     banner = ""
     if single_transaction['suspected_duplicate']:
         banner = _duplicate_banner(single_transaction['suspected_duplicate'], amount_text, user_id)
@@ -623,7 +638,7 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
             # Reconstruct the full summary message to keep it in the chat history
             updated_summary = (
                 f"✅ **Saved to Ledger!**\n\n"
-                f"💰 **Amount:** {transaction_to_save.get('currency')} {float(transaction_to_save.get('amount')):.2f}\n"
+                f"💰 **Amount:** {_display_amount(transaction_to_save)}\n"
                 f"🏷️ **Category:** {transaction_to_save.get('category')}\n"
                 f"📝 **Notes:** {transaction_to_save.get('description', 'None')}\n"
                 f"📅 **Date:** {transaction_to_save.get('date')}\n"
@@ -642,7 +657,7 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
             # CHANGED: Keep the summary visible even if the database fails, just change the header
             error_summary = (
                 f"❌ **Database Error! Could not save:**\n\n"
-                f"💰 **Amount:** {transaction_to_save.get('currency')} {float(transaction_to_save.get('amount')):.2f}\n"
+                f"💰 **Amount:** {_display_amount(transaction_to_save)}\n"
                 f"🏷️ **Category:** {transaction_to_save.get('category')}\n"
                 f"📝 **Notes:** {transaction_to_save.get('description', 'None')}\n"
                 f"📅 **Date:** {transaction_to_save.get('date')}\n\n"

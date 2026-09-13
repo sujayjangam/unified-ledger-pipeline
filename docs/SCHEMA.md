@@ -4,7 +4,9 @@
 1. **Multi-Entity Tracking**: Records ownership (account_owner) vs. beneficiary (benefit_of).
 2. **Flexible Splitting**: 'split_ratio' handles shared (0.5) or personal (1.0) allocation.
 3. **Multi-Currency Support**: Tracks raw transaction data vs. base SGD amount.
-4. **Integer Cents**: All money stored as integers for mathematical precision.
+4. **Integer Cents**: All money stored as integers for mathematical precision. Dollars are
+   converted only by `app/add_expense.py::dollars_to_cents` (exact decimal maths; half a cent
+   rounds up) - see [ADR-0028](decisions/0028-exact-cent-conversion-half-up.md).
 
 ## Fields
 - **transaction_id**: UUID (Primary Key)
@@ -16,7 +18,10 @@
 - **base_amount**: Final value in SGD (Integer Cents)
 - **account_owner**: Card owner (e.g., 'Sujay', 'Wife')
 - **benefit_of**: Beneficiary (e.g., 'Sujay', 'Wife', 'Shared')
-- **split_ratio**: Decimal (e.g., 0.5)
+- **split_ratio**: Decimal (e.g., 0.5). Written by no code today. Phase 3 plans to replace it
+  with each person's share stored as whole cents that add up to `amount`, because a ratio
+  multiplied out later can't guarantee that: 0.5 of SGD 5.55 rounds to 2.78 for both people
+  (ADR-0028).
 - **category**: Budget group
 - **transaction_type**: 'income' or 'expense'
 - **source**: Data origin

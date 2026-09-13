@@ -53,7 +53,8 @@ starts a network loop; `app/bot_polling.py` runs it as a local long-poll loop, a
 for Cloud Run, where idle containers sleep and polling isn't viable.
 
 **Storage.** Neon Postgres via a pooled SQLAlchemy Core engine. Money is always stored as
-integer cents — floats never touch an amount. Alembic owns the schema; there is no
+integer cents, converted from dollars by one shared function using exact decimal maths (half a
+cent rounds up), so float rounding never reaches a stored amount. Alembic owns the schema; there is no
 `CREATE TABLE` in application code. Aggregates are grouped by currency (no FX conversion is
 performed anywhere).
 
@@ -69,9 +70,11 @@ Every significant decision is recorded as an ADR in [`docs/decisions/`](docs/dec
 its context, rejected alternatives and cost. The ones that shaped the system most:
 
 - **Money as integer cents, never floats**
-  ([ADR-0004](docs/decisions/0004-money-as-integer-cents.md)). Dollar conversion happens only at
-  the display/API boundary. Costs a conversion step everywhere; buys exact arithmetic on
-  financial data.
+  ([ADR-0004](docs/decisions/0004-money-as-integer-cents.md),
+  [ADR-0028](docs/decisions/0028-exact-cent-conversion-half-up.md)). Dollar conversion happens only at
+  the display/API boundary, through one function with exact decimal maths, and every card shows
+  the amount from the same cents that are saved. Costs a conversion step everywhere; buys exact
+  arithmetic on financial data.
 - **Neon Postgres over SQLite, with hand-written Alembic migrations**
   ([ADR-0005](docs/decisions/0005-neon-postgres-over-sqlite.md),
   [ADR-0007](docs/decisions/0007-alembic-hand-written-migrations.md)). A file DB can't serve a

@@ -3,6 +3,7 @@ from pydantic import BaseModel
 import uuid
 from sqlalchemy import text
 from app.database import get_connection
+from app.add_expense import dollars_to_cents
 
 app = FastAPI()
 
@@ -42,8 +43,16 @@ def get_transactions():
 @app.post("/transactions")
 def add_transaction(item: Transaction):
     """Adds a new transaction via the API."""
+    # The same conversion the bot and CLI use (#39). This endpoint used to keep its own float
+    # copy, so the two paths could store different cents for the same input. Done before the
+    # try below, because that block turns every exception - an HTTPException included - into a
+    # 500, and a bad amount is the caller's mistake (422), not a server error.
     try:
-        amount_cents = int(round(item.amount * 100))
+        amount_cents = dollars_to_cents(item.amount)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    try:
         transaction_id = str(uuid.uuid4())
         
         # 🏗️ The SQL query now handles the owner field
