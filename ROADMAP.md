@@ -236,6 +236,23 @@ Found 2026-09-03, while reviewing #33's test suite PRs, not yet actioned:
   that model from the start rather than migrated onto it). Moving *categories* into a table stays
   a candidate tied to Phase 2's auto-categorisation work below, not part of #53.
 
+## Bugs (not urgent)
+
+Real bugs, but scheduled for Phase 4-5. Phases 1-3 come first.
+
+- **Transfers are counted as expenses in the summary commands.** `/today`, `/week`, `/month`, the
+  `/cat_*` commands and `/recent` decide what is a transfer by checking `category = 'Transfer'`
+  (`get_period_summary` and `get_category_summary` in `app/services/ledger_queries.py`,
+  `recent_command` in `app/bot_core.py`). The bot never writes that category: it records a
+  transfer as `transaction_type = 'Transfer'` with category `'YouTrip top-up'`
+  (`apply_payment_defaults` in `app/bot_core.py`), and `'Transfer'` isn't one of the categories
+  the extractor can pick (`ExpenseCategory` in `app/services/extraction.py`). So a YouTrip top-up
+  is added to the expense totals, the Transfers line always reads "No transfers", `/cat_*` lists
+  top-ups as a spending category, and `/recent` never shows the transfer label. Fix: check
+  `transaction_type` instead in those places — `/recent` also needs it added to
+  `get_recent_entries`' `SELECT`, which currently returns only the category. Found by reading the
+  code on 2026-09-13; not yet confirmed against production rows.
+
 ## Plan
 
 ### Phase 0 — Foundation & ownership
