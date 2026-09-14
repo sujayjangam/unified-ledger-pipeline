@@ -26,8 +26,7 @@ A household expense ledger with two ingestion paths into one Postgres database:
 
 Design decisions live in `docs/decisions/` as numbered ADRs (`docs/decisions/README.md` is the
 index) — read the relevant one before re-opening a settled choice, and add a new record rather
-than editing an accepted one. `ARCHITECTURE.md` is now just an index into them.
-`docs/SCHEMA.md` is the canonical schema reference — read it before changing table columns.
+than editing an accepted one. `docs/SCHEMA.md` is the canonical schema reference — read it before changing table columns.
 
 ## Keeping the docs current
 
@@ -69,12 +68,9 @@ pip install -r requirements.txt
 # `alembic current` to check the printed host. See docs/LOCAL_TESTING.md.
 alembic upgrade head
 
-# Run the Telegram bot locally (blocking long-poll loop, no ngrok/webhook needed)
-# NOTE: this uses TELEGRAM_BOT_TOKEN from .env - i.e. the PRODUCTION bot - and polling
-# deletes that bot's registered webhook. Use app.bot_local below for testing instead.
-python -m app.bot_polling
-
-# Run against the separate test bot (reads .env.local over .env) - see docs/LOCAL_TESTING.md
+# Run the bot locally against the separate test bot (reads .env.local over .env) - see
+# docs/LOCAL_TESTING.md. There is deliberately no runner that polls the production token:
+# polling deletes that bot's registered webhook.
 python -m app.bot_local
 
 # Run the production-style webhook server locally
@@ -162,8 +158,8 @@ The Telegram bot is deliberately split so the same business logic can run under 
 transports:
 - `app/bot_core.py` — the factory (`get_application()`), all command/message handlers, and the
   `is_authorized()` gatekeeper. Builds and configures the bot but never starts a network loop.
-- `app/bot_polling.py` — local dev runner; imports the app from `bot_core` and calls
-  `run_polling()`.
+- `app/bot_local.py` — local runner; loads `.env.local` over `.env`, refuses to start with the
+  production bot token, then calls `run_polling()` against a separate test bot.
 - `app/bot_webhook.py` — production runner; wraps the same `bot_core` app in FastAPI, exposing a
   `POST /webhook` endpoint and managing PTB init/shutdown via a `lifespan` context manager (needed
   because Cloud Run sleeps idle containers, so polling isn't viable there).
@@ -309,9 +305,6 @@ attempt. It does:
   ingestion) is early Phase 0 and exists specifically to raise capture volume, so persisting the
   dedupe is scheduled in the same phase as the work that invalidates the deferral. See
   `ROADMAP.md`'s Phase 0 checklist for the full reasoning.
-- A stray, empty `ledger.db` SQLite file sits at the repo root (untracked, harmless leftover from
-  before the Postgres migration) — the real ledger is always the Postgres database at
-  `DATABASE_URL`.
 - `app/services/ledger_queries.py` holds the read-side aggregate queries backing the bot's
   `/recent`, `/today`, `/week`, `/month`, `/cat_today`, `/cat_week`, `/cat_month` commands. All
   currency-related aggregation is grouped by currency (multi-currency ledger, no FX conversion is

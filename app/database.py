@@ -3,7 +3,7 @@ import os
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
 
-# Loaded here rather than relying on callers: view_ledger/sample_data/main.py never call
+# Loaded here rather than relying on callers: view_ledger/main.py never call
 # load_dotenv() themselves, and they all need DATABASE_URL to reach the database.
 load_dotenv()
 

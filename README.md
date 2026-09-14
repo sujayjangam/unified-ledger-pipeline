@@ -48,8 +48,8 @@ Unsupported message types (photos, stickers, documents) get an explicit reply ra
 silence.
 
 **Transport/logic split.** `app/bot_core.py` holds all handlers and business logic but never
-starts a network loop; `app/bot_polling.py` runs it as a local long-poll loop, and
-`app/bot_webhook.py` wraps the same application in FastAPI behind a `POST /webhook` endpoint
+starts a network loop; `app/bot_local.py` runs it as a local long-poll loop against a separate
+test bot, and `app/bot_webhook.py` wraps the same application in FastAPI behind a `POST /webhook` endpoint
 for Cloud Run, where idle containers sleep and polling isn't viable.
 
 **Storage.** Neon Postgres via a pooled SQLAlchemy Core engine. Money is always stored as
@@ -177,7 +177,6 @@ Deployment: `Dockerfile` installs `requirements.txt` and runs
 
 - [`docs/decisions/`](docs/decisions/) — numbered Architecture Decision Records: why each
   choice was made, what was rejected, and what it cost
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) — index into the decision records, grouped by area
 - [`docs/SCHEMA.md`](docs/SCHEMA.md) — canonical schema reference
 - [`docs/BACKUP_RESTORE.md`](docs/BACKUP_RESTORE.md) — backup cadence/retention and the restore
   procedure

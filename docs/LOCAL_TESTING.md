@@ -2,7 +2,7 @@
 
 How to exercise the bot end to end on your own machine without touching production.
 
-## Why this is not just `python -m app.bot_polling`
+## Why a separate test bot
 
 `run_polling()` **deletes whatever webhook is registered against the token it runs with** —
 `telegram/ext/_updater.py` passes `webhook_url=""` into `_bootstrap`, which unconditionally calls
