@@ -23,30 +23,30 @@ doesn't map to anything in the actual system. Use, and refine once Phase 1/2 lan
 friction before moving to Phase 1; see
 [ADR-0017](docs/decisions/0017-extend-phase-0-for-capture-friction.md).
 
-**Shipped:** the Neon Postgres migration ([#2](https://github.com/sujayjangam/unified-ledger-pipeline/issues/2)) and Cloud Run cutover ([#4](https://github.com/sujayjangam/unified-ledger-pipeline/issues/4)); the
-6-hourly `pg_dump` → GCS backup ([#7](https://github.com/sujayjangam/unified-ledger-pipeline/issues/7)), infra-verified and restore-verified 2026-08-13;
-text ingestion ([#16](https://github.com/sujayjangam/unified-ledger-pipeline/issues/16)), 2026-08-21; CI on pull requests ([#32](https://github.com/sujayjangam/unified-ledger-pipeline/issues/32)), 2026-08-26;
-the case-study `README.md` rewrite with inline Mermaid architecture diagram (Phase 0 §4),
-2026-08-29 — pulled ahead of the remaining capture work deliberately, since it only claims
-what has already shipped; the demo GIF stays gated on capture reliability; §3a in full
-([#31](https://github.com/sujayjangam/unified-ledger-pipeline/issues/31) parent,
-[#32](https://github.com/sujayjangam/unified-ledger-pipeline/issues/32),
-[#33](https://github.com/sujayjangam/unified-ledger-pipeline/issues/33),
-[#34](https://github.com/sujayjangam/unified-ledger-pipeline/issues/34)), 2026-09-03 — the pytest
-suite (money conversion, extraction schema parsing, period boundaries, payment-method/account-owner
-inference, `is_authorized`, and handler routing, wired into the CI workflow, with the "a broken
-assertion turns the check red" criterion verified live in CI, not assumed), and `main` is now a
-repository ruleset requiring `check-PR-before-merge`, verified against a throwaway PR rather than
-assumed from the settings page (see
-[ADR-0021](docs/decisions/0021-rulesets-over-classic-branch-protection.md) for why a ruleset
-rather than classic branch protection, and a since-fixed discrepancy in #34's own verification
-text); the Confirm double-tap fix ([#29](https://github.com/sujayjangam/unified-ledger-pipeline/issues/29), [#55](https://github.com/sujayjangam/unified-ledger-pipeline/issues/55)), 2026-09-10; the `created_at`
-write-time column with `/recent` ordered by it ([#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) via #10-#14, see
-[ADR-0024](docs/decisions/0024-created-at-write-time-column.md)), 2026-09-10; and authenticated webhook
-deliveries (see [ADR-0025](docs/decisions/0025-webhook-secret-token.md)), 2026-09-11; and
-`entered_by`, recording who sent each entry ([#60](https://github.com/sujayjangam/unified-ledger-pipeline/issues/60), see [ADR-0026](docs/decisions/0026-entered-by-telegram-user-id.md)), 2026-09-11; and the
-duplicate-entry warning ([#58](https://github.com/sujayjangam/unified-ledger-pipeline/issues/58), closing [#57](https://github.com/sujayjangam/unified-ledger-pipeline/issues/57), see [ADR-0027](docs/decisions/0027-duplicate-warning-before-the-card.md)), 2026-09-12; and exact cent conversion, with half a cent rounding up and one
-conversion shared by the bot, CLI and REST API ([#39](https://github.com/sujayjangam/unified-ledger-pipeline/issues/39), see [ADR-0028](docs/decisions/0028-exact-cent-conversion-half-up.md)), 2026-09-13.
+**Shipped** (the linked issues and ADRs hold the detail):
+
+- Neon Postgres migration ([#2](https://github.com/sujayjangam/unified-ledger-pipeline/issues/2)) and Cloud Run cutover ([#4](https://github.com/sujayjangam/unified-ledger-pipeline/issues/4)), 2026-08-05
+- 6-hourly `pg_dump` → GCS backup ([#7](https://github.com/sujayjangam/unified-ledger-pipeline/issues/7)), restore-verified 2026-08-13
+- Text ingestion ([#16](https://github.com/sujayjangam/unified-ledger-pipeline/issues/16)), 2026-08-21
+- CI on pull requests ([#32](https://github.com/sujayjangam/unified-ledger-pipeline/issues/32)), 2026-08-26
+- Case-study `README.md` with an inline Mermaid diagram, 2026-08-29 — ahead of the remaining
+  capture work, since it only claims what has shipped; the demo GIF still waits for capture
+  reliability
+- The pytest suite, and `main` protected by a ruleset that requires it to pass
+  ([#31](https://github.com/sujayjangam/unified-ledger-pipeline/issues/31) via #32-#34,
+  [ADR-0021](docs/decisions/0021-rulesets-over-classic-branch-protection.md)), 2026-09-03
+- Confirm double-tap fix ([#29](https://github.com/sujayjangam/unified-ledger-pipeline/issues/29), [#55](https://github.com/sujayjangam/unified-ledger-pipeline/issues/55)), 2026-09-10
+- `created_at` write-time column, with `/recent` ordered by it ([#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) via #10-#14,
+  [ADR-0024](docs/decisions/0024-created-at-write-time-column.md)), 2026-09-10
+- Authenticated webhook deliveries ([#63](https://github.com/sujayjangam/unified-ledger-pipeline/issues/63), [ADR-0025](docs/decisions/0025-webhook-secret-token.md)), 2026-09-11
+- `entered_by`, recording who sent each entry ([#60](https://github.com/sujayjangam/unified-ledger-pipeline/issues/60), [ADR-0026](docs/decisions/0026-entered-by-telegram-user-id.md)), 2026-09-11
+- Duplicate-entry warning ([#58](https://github.com/sujayjangam/unified-ledger-pipeline/issues/58), closing [#57](https://github.com/sujayjangam/unified-ledger-pipeline/issues/57), [ADR-0027](docs/decisions/0027-duplicate-warning-before-the-card.md)), 2026-09-12
+- Exact cent conversion, half a cent rounding up, one conversion shared by the bot, CLI and REST
+  API ([#39](https://github.com/sujayjangam/unified-ledger-pipeline/issues/39), [ADR-0028](docs/decisions/0028-exact-cent-conversion-half-up.md)), 2026-09-13
+
+**In review (2026-09-13):** cleanup from a whole-repo bloat review — dead and risky files removed
+([#68](https://github.com/sujayjangam/unified-ledger-pipeline/pull/68)), and `CLAUDE.md` /
+`ROADMAP.md` trimmed.
 
 **Next action:** the Confirm / Edit / Cancel card ([#66](https://github.com/sujayjangam/unified-ledger-pipeline/issues/66), the first step of [#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22)),
 then Phase 1. [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) (backdated date parsing) is not urgent and waits (decided 2026-09-12).
@@ -76,8 +76,7 @@ Read the list without sub-issue noise with `gh issue list --search "no:parent-is
 
 The working environment is **`ledger-env`**, a micromamba env at
 `~/AppData/Roaming/mamba/envs/ledger-env` (Python 3.11.15, plus the Postgres client tools). Run
-`micromamba activate ledger-env`. The project-local `.venv/` is a **stale, broken leftover** —
-never activate it.
+`micromamba activate ledger-env`; there is no project-local environment.
 
 Always run project commands **from the repo root**: implicit namespace packages with an `app.`
 prefix, no `__init__.py` files, and relative paths (`alembic.ini`, `.env`) all assume it.
@@ -147,89 +146,8 @@ fractional phases or renumbering.
 
 ## Known issues
 
-Fixed as part of the Postgres migration (2026-08-01):
-
-- ~~`app/database.py`'s `CREATE TABLE` is missing the `account_desc` column~~ — the Alembic
-baseline now records the true schema, and `test_queries.py` (the ad hoc `ALTER TABLE` that caused
-the drift) is deleted.
-- ~~`app/bot_core.py`: on `JSONDecodeError`, the except block sets `TG_USERS` instead of
-`ALLOWED_TG_IDS`~~.
-- ~~`app/sample_data.py` imports `from database import get_connection`~~ — import fixed, and its
-positional `INSERT` (which silently depended on column order) now names its columns.
-- ~~No connection pooling anywhere `get_connection()` is used~~ — SQLAlchemy `QueuePool`,
-`pool_size=5`, `pool_pre_ping=True` for Neon's idle auto-suspend.
-- ~~No migrations tooling~~ — Alembic, with the convention that migrations are hand-written
-(Core, not ORM, so there's no metadata for `--autogenerate` to diff against).
-
-Fixed 2026-08-05:
-
-- ~~Cloud Run service missing the `DATABASE_URL` secret~~ — Secret Manager secret created, attached
-via `--update-secrets`, corrected to the `postgresql+psycopg://` scheme (this project uses
-`psycopg` v3, not `psycopg2`), IAM re-granted after a secret delete/recreate. See "What happened
-today" in Current status and the verification checklist below (all items closed).
-
-Fixed 2026-08-07:
-
-- ~~`README.md` currently contains accidental `requirements.txt` content, not real
-documentation~~ — rewritten with the corrected About blurb, stack, commands, and links to
-`ARCHITECTURE.md`/`docs/`/this file.
-- ~~`CLAUDE.md` described the pre-Postgres SQLite schema~~ (`data/ledger.db`, `CREATE TABLE IF NOT
-EXISTS`, the `account_desc` drift) a full migration cycle after the Neon Postgres cutover shipped
-— updated to describe the actual `app/database.py` engine + Alembic-owned schema, and added a
-`DATABASE_URL` entry to its env var list. Also added the `doc-checker` subagent
-(`.claude/agents/doc-checker.md`) to catch this class of drift going forward.
-- ~~Non-engineering framing was mixed into `ROADMAP.md`~~ ("Why this project exists," "Two
-horizons," "Build-in-public track," and other narrative asides, plus two Phase 5 plan items caught
-in a follow-up pass) — removed; this file now stays scoped to the engineering plan.
-
-Fixed 2026-09-03:
-
-- ~~No automated test suite, and no CI: a change is verified only by a person running the bot by
-hand once, and nothing gates a merge~~ — CI now runs lint, an import smoke check, and a pytest
-suite on every PR, and `main` is a repository ruleset that refuses a merge whose
-`check-PR-before-merge` check failed (admin bypass retained; not required reviewers/signed
-commits/CODEOWNERS, deliberately out of scope). Tracked as
-[#31](https://github.com/sujayjangam/unified-ledger-pipeline/issues/31) (parent, now closed) via
-[#32](https://github.com/sujayjangam/unified-ledger-pipeline/issues/32),
-[#33](https://github.com/sujayjangam/unified-ledger-pipeline/issues/33),
-[#34](https://github.com/sujayjangam/unified-ledger-pipeline/issues/34). Migration-against-a-real-
-database and idempotency-path coverage remain unaddressed — see the §3a checklist below.
-- Artifact Registry had no cleanup policy: 122 container image versions (3.5 GB) had accumulated
-since May 2026, one per deploy, forever — the actual cause of an unexplained $0.19 August charge
-(~30¢ Artifact Registry against ~6¢ Cloud Run), not the `pg_dump` backups initially suspected
-(the GCS backup bucket is 440 KiB total, several orders of magnitude too small to matter).
-`cloud-run-source-deploy` now has a cleanup policy keeping only the 3 most recent image versions,
-unconditionally — see
-[ADR-0022](docs/decisions/0022-artifact-registry-cleanup-policy.md) for why 3 (not 0, not 5, and
-no age condition). A BigQuery billing export dataset (`billing_export`) was also created so future
-charges are queryable by SKU without the Console UI; linking it as the live export target is a
-Console-only step with no public API, left for the user to complete.
-
-Fixed 2026-09-10:
-
-- ~~Tapping Confirm twice replaced the correct `✅ Saved to Ledger!` card with a false "session
-expired or data lost" error, telling the user their entry had failed when it had saved~~ —
-[#29](https://github.com/sujayjangam/unified-ledger-pipeline/issues/29) and its sub-issue
-[#55](https://github.com/sujayjangam/unified-ledger-pipeline/issues/55) (the card gave no feedback
-at all until the blocking DB write finished, which is what provoked the second tap). Confirm now
-swaps itself for a non-actionable `⏳ Adding to ledger...` button *before* the write, and a card
-whose outcome is already known answers with a toast instead of overwriting itself. Reported from
-real household use, not a test run. See
-[ADR-0023](docs/decisions/0023-in-memory-confirm-card-state.md) for why that state is process
-memory rather than a database lookup. The same change replaced the single
-`pending_transaction` slot with a per-card dict, which fixes an unreported bug (an unanswered
-older card saved the *newer* card's transaction) and means the "drop the one-expense-per-voice-note
-guardrail" item below needs no change to `handle_button_click`.
-- ~~No reliable "latest transaction" ordering — `transaction_id` is a random UUID and `date` has
-no time component~~ — [#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) via #10-#14. `created_at` now records write time;
-`/recent` orders by it and the ledger view uses it to break same-day ties.
-
-Fixed 2026-09-11:
-
-- Webhook deliveries are now authenticated with Telegram's secret token: `/webhook` rejects any
-request that doesn't carry it, before parsing the body or recording its `update_id`, and the
-server refuses to start without a well-formed token. See [ADR-0025](docs/decisions/0025-webhook-secret-token.md). Deployed 2026-09-11; the
-full account is in [#63](https://github.com/sujayjangam/unified-ledger-pipeline/issues/63).
+Fixed items are removed from this list once they ship — the linked issue, PR or ADR is the
+record of the fix.
 
 Still outstanding:
 
@@ -291,10 +209,6 @@ sequenced in the Phase 0 checklist and aren't repeated here):
   would land with a NULL currency and corrupt every currency-grouped aggregate in
   `app/services/ledger_queries.py`. Latent rather than live — the Dockerfile runs `bot_webhook`,
   not `main` — but it's a live landmine for whenever the API is deployed.
-- ~~`app/bot_core.py` hardcodes `ACCOUNT_OWNERS["Sujay"][0]`, which raises a bare `KeyError` if
-  that key is ever renamed in the env~~ — fixed 2026-09-03: the YouTrip-top-up funder is now the
-  configurable `PRIMARY_ACCOUNT_OWNER` env var, not a literal name, as part of extracting
-  `apply_payment_defaults()` for #33's test suite work.
 - No index on `date`. Irrelevant at current row counts; matters once Phase 1's statement staging
   table lands and date-window matching starts scanning.
 - Chat commands have no discoverability — `/month` and `/cat_month` were forgotten by their own
@@ -309,16 +223,11 @@ sequenced in the Phase 0 checklist and aren't repeated here):
 
 Found 2026-09-03, while reviewing #33's test suite PRs, not yet actioned:
 
-- ~~`app/services/extraction.py` hardcoded a card name in two places — the `ALLOWED_ACCOUNTS`
-  default and the YouTrip-top-up prompt text — and the name it used was itself wrong~~ — code half
-  fixed 2026-09-04: `ALLOWED_ACCOUNTS` is deleted and the prompt's payment-method list is now
-  derived per call from `ACCOUNT_OWNERS` (`extraction.py::build_allowed_accounts`). No account name
-  exists in the repo any more, so this class of drift can't recur. **Still outstanding:** a one-off
-  correction of existing rows in the live Neon database that were written with the wrong
-  `account_desc` value while the hardcoded default was in force. That needs a specific, reviewed
-  plan and a row count before running, not an ad hoc `UPDATE` — and it is a data fix only, with no
-  code change left to make. Account names are intentionally kept out of this file: they live solely
-  in gitignored `.env`, since this repo is public.
+- A one-off correction of rows in the live Neon database written with the wrong `account_desc`
+  while a hardcoded payment-method default was in force. The code cause was removed on 2026-09-04,
+  when the prompt's list started coming from `ACCOUNT_OWNERS`. Needs a specific, reviewed plan and
+  a row count before running, not an ad hoc `UPDATE`; it is a data fix only. Account names stay out
+  of this file — they live only in gitignored `.env`, since this repo is public.
 - Move household participants and accounts (currently the `ACCOUNT_OWNERS` and `ALLOWED_TG_IDS`
   JSON objects plus the `PRIMARY_ACCOUNT_OWNER` string, all hand-maintained in `.env`) into
   Postgres tables — filed as
@@ -327,64 +236,68 @@ Found 2026-09-03, while reviewing #33's test suite PRs, not yet actioned:
   that model from the start rather than migrated onto it). Moving *categories* into a table stays
   a candidate tied to Phase 2's auto-categorisation work below, not part of #53.
 
+## Bugs (not urgent)
+
+Real bugs, but scheduled for Phase 4-5. Phases 1-3 come first.
+
+- **Transfers are counted as expenses in the summary commands.** `/today`, `/week`, `/month`, the
+  `/cat_*` commands and `/recent` decide what is a transfer by checking `category = 'Transfer'`
+  (`get_period_summary` and `get_category_summary` in `app/services/ledger_queries.py`,
+  `recent_command` in `app/bot_core.py`). The bot never writes that category: it records a
+  transfer as `transaction_type = 'Transfer'` with category `'YouTrip top-up'`
+  (`apply_payment_defaults` in `app/bot_core.py`), and `'Transfer'` isn't one of the categories
+  the extractor can pick (`ExpenseCategory` in `app/services/extraction.py`). So a YouTrip top-up
+  is added to the expense totals, the Transfers line always reads "No transfers", `/cat_*` lists
+  top-ups as a spending category, and `/recent` never shows the transfer label. Fix: check
+  `transaction_type` instead in those places — `/recent` also needs it added to
+  `get_recent_entries`' `SELECT`, which currently returns only the category. Found by reading the
+  code on 2026-09-13; not yet confirmed against production rows.
+
 ## Plan
 
 ### Phase 0 — Foundation & ownership
 
-- [x] **Postgres migration (Neon)** — code-complete 2026-08-01, merged into `main` 2026-08-03
-(SQLAlchemy Core, all SQL converted to `text()` with named binds). Fully live on Cloud Run as of
-2026-08-05 — the missing `DATABASE_URL` secret and the `psycopg` scheme bug are both closed, issue
-[#4](https://github.com/sujayjangam/unified-ledger-pipeline/issues/4) closed with it.
-- [x] Fix the DB-layer "Known issues" as part of the migration, not after it
-- [x] Connection pooling — SQLAlchemy `QueuePool`
-- [x] Migrations tooling — **Alembic** (schema will keep changing: staging table next phase,
-splits tables after that)
-- [x] Scheduled logical backup: `pg_dump` → GCS free tier, rolling retention (e.g. 30 days) —
-tracked in [#7](https://github.com/sujayjangam/unified-ledger-pipeline/issues/7). Built
-2026-08-12 as a GitHub Actions scheduled workflow (`.github/workflows/backup.yml`), not a
-GCP-side Cloud Scheduler job — see "What happened today (2026-08-12)" above for why, and
-`docs/BACKUP_RESTORE.md` for the restore procedure.
+- [x] **Postgres migration (Neon)**, live on Cloud Run 2026-08-05 —
+[#2](https://github.com/sujayjangam/unified-ledger-pipeline/issues/2),
+[#4](https://github.com/sujayjangam/unified-ledger-pipeline/issues/4)
+([ADR-0005](docs/decisions/0005-neon-postgres-over-sqlite.md)). SQLAlchemy Core with a pooled
+engine, and Alembic for migrations ([ADR-0007](docs/decisions/0007-alembic-hand-written-migrations.md)).
+- [x] Scheduled `pg_dump` → GCS backup with 30-day retention —
+[#7](https://github.com/sujayjangam/unified-ledger-pipeline/issues/7), built 2026-08-12 as a GitHub
+Actions workflow ([ADR-0012](docs/decisions/0012-github-actions-over-cloud-scheduler.md)); restore
+procedure in `docs/BACKUP_RESTORE.md`.
 
-**Ordering within the rest of Phase 0 (set 2026-08-20, amended 2026-08-21):** capture reliability
-first, then correctness/observability, then the test suite, then packaging. The suite proves the
-recording paths work; the packaging items publish that claim, so the evidence is produced before
-the claim.
+**Ordering for the rest of Phase 0:** capture reliability first, then correctness/observability,
+then the test suite, then packaging — the suite proves the recording paths work before the
+packaging publishes that claim. The CI scaffolding and the tests over code the capture work won't
+touch moved ahead of capture
+([ADR-0020](docs/decisions/0020-ci-scaffolding-before-remaining-capture-work.md)).
 
-Amended 2026-08-21: the CI scaffolding and the tests that don't depend on the capture paths move
-*ahead* of the rest of capture reliability — see §3a for why the original reasoning doesn't reach
-them. Everything else keeps its place.
-
-**1. Capture reliability** — the binding constraint on data quality; see 2026-08-20 above.
+**1. Capture reliability** — the binding constraint on data quality
+([ADR-0017](docs/decisions/0017-extend-phase-0-for-capture-friction.md)).
 
 - [ ] Backdated/relative date parsing from the transcript ("yesterday", "last Tuesday", explicit
 spoken dates) — [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15). Highest
 leverage of the group: without it every entry must be logged at the moment of spend.
-- [x] Business date vs. system ingestion timestamp, and reliable ordering —
-[#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) (parent) + sub-issues
-[#10](https://github.com/sujayjangam/unified-ledger-pipeline/issues/10)-[#14](https://github.com/sujayjangam/unified-ledger-pipeline/issues/14).
-Shipped 2026-09-10: a `created_at` write-time column set only by the database default, existing
-rows backfilled to midnight SGT on their own `date`, and `/recent` ordered by it — see
-[ADR-0024](docs/decisions/0024-created-at-write-time-column.md). Pulled ahead of #15 because the
-duplicate-entry warning below needs a time of day to window on.
-- [x] Record who entered each row — [#60](https://github.com/sujayjangam/unified-ledger-pipeline/issues/60): the sender's Telegram user ID in a new nullable
-`entered_by` column, with existing rows left NULL ("not recorded"). Lands before #58, whose
-warning names who logged the earlier entry. Shipped 2026-09-11; see [ADR-0026](docs/decisions/0026-entered-by-telegram-user-id.md).
-- [x] Warn before saving an entry that matches one saved in the last 5 minutes (same amount and
-currency, by either household member) — [#58](https://github.com/sujayjangam/unified-ledger-pipeline/issues/58), under [#57](https://github.com/sujayjangam/unified-ledger-pipeline/issues/57). A warning the user
-can override rather than a block, checked before the confirmation card is shown, and built on
-`created_at`. Shipped 2026-09-12; see [ADR-0027](docs/decisions/0027-duplicate-warning-before-the-card.md). Known gap, accepted: the check
-only sees saved rows, so two cards for the same spend that are both still unconfirmed don't warn
-each other.
+- [x] Business date vs. write time, and reliable ordering —
+[#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) via #10-#14, shipped
+2026-09-10 ([ADR-0024](docs/decisions/0024-created-at-write-time-column.md)). Pulled ahead of #15
+because the duplicate warning needed a time of day.
+- [x] Record who entered each row (`entered_by`) —
+[#60](https://github.com/sujayjangam/unified-ledger-pipeline/issues/60), shipped 2026-09-11
+([ADR-0026](docs/decisions/0026-entered-by-telegram-user-id.md)).
+- [x] Warn before saving an entry that matches one saved in the last 5 minutes —
+[#58](https://github.com/sujayjangam/unified-ledger-pipeline/issues/58), under
+[#57](https://github.com/sujayjangam/unified-ledger-pipeline/issues/57), shipped 2026-09-12
+([ADR-0027](docs/decisions/0027-duplicate-warning-before-the-card.md)). Known gap, accepted: two
+still-unconfirmed cards for the same spend don't warn each other.
 - [ ] Edit and delete path for *saved* rows — [#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22).
 No `UPDATE` or `DELETE` statement exists anywhere in `app/`, so a wrong extraction is permanent,
 which is also what hollows out the human-in-the-loop claim: the human is in the loop for a few
 seconds at confirm time and never again. Needs a hard-vs-soft-delete decision first, which is what
 separates it from the two `context.user_data`-only recovery paths below.
-- [x] Text ingestion alongside voice. Voice is unusable in most real spending moments (restaurant,
-office, public transport), so voice-only capture caps volume by design — [#16](https://github.com/sujayjangam/unified-ledger-pipeline/issues/16).
-Shipped 2026-08-21: `handle_voice` and the new `handle_text` both feed one shared
-`process_expense_text`, and a third handler replies to input types the bot can't read instead of
-dropping them silently.
+- [x] Text ingestion alongside voice, since voice is unusable in most real spending moments —
+[#16](https://github.com/sujayjangam/unified-ledger-pipeline/issues/16), shipped 2026-08-21.
 - [ ] Pending-transaction **edit** path — the confirm card should be Confirm/Edit/Cancel, so a wrong
 extraction can be corrected before saving rather than only accepted whole or discarded. This is
 `context.user_data` state only, no DB write, which is what makes it separable from
@@ -400,9 +313,10 @@ before deleting it, so the idea outlives the file. Belongs with the edit path ab
 recovery paths over `context.user_data` with no DB write. No issue filed yet.
 - [ ] Drop the one-expense-per-voice-note guardrail in `app/bot_core.py` — `TransactionList`
 already models multiple; this is a product restriction, not a technical limit.
-- [x] Authenticate webhook deliveries with Telegram's secret token ([ADR-0025](docs/decisions/0025-webhook-secret-token.md)) — shipped
-2026-09-11 ([#63](https://github.com/sujayjangam/unified-ledger-pipeline/issues/63)). The prerequisite for trusting the sender ID that `is_authorized()` checks, and that
-[#60](https://github.com/sujayjangam/unified-ledger-pipeline/issues/60) will store.
+- [x] Authenticate webhook deliveries with Telegram's secret token —
+[#63](https://github.com/sujayjangam/unified-ledger-pipeline/issues/63), shipped 2026-09-11
+([ADR-0025](docs/decisions/0025-webhook-secret-token.md)). The prerequisite for trusting the sender
+ID `is_authorized()` checks.
 - [ ] Webhook idempotency — persist the `update_id` dedupe in Postgres instead of process memory.
 Previously deferred on the grounds that voice-only ingestion naturally caps volume. **That premise
 expires with the items above**: they exist specifically to raise capture volume, so the deferral is
@@ -418,98 +332,59 @@ human-in-the-loop framing to hold up under questioning)
 contradicting `docs/SCHEMA.md`. Prefer absent (`NULL`) over silently incorrect until an FX source
 exists.
 
-**3. Test suite and CI** — split in three on 2026-08-21. This section originally sat entirely
-after capture reliability, on the grounds that the suite's primary job is to prove every
-expense-recording path works, so it should run against the finished capture paths rather than the
-ones being replaced. That reasoning holds — but only for end-to-end ingestion coverage. It doesn't
-reach the CI scaffolding, or tests over code the capture work never touches. Meanwhile nothing
-stops a merge that breaks the bot on startup from reaching production: `main` is unprotected and
-the deploy trigger is GCP-side and invisible from this repo (see
-[ADR-0012](docs/decisions/0012-github-actions-over-cloud-scheduler.md), written about exactly that
-blind spot). So the parts that don't depend on capture move ahead of it, and the parts that do stay
-where they were.
+**3. Test suite and CI** — split so the parts that don't depend on the capture paths could go
+first ([ADR-0020](docs/decisions/0020-ci-scaffolding-before-remaining-capture-work.md)). The suite
+grows with each phase, and is separate from the Phase 2 evaluation harness: this is correctness,
+the harness is match *quality*.
 
-The pytest suite starts here and grows with each phase. It is a distinct artifact from the Phase 2
-evaluation harness: this is correctness/regression, the harness is match *quality*.
+**3a. Scaffolding and stable-target tests, done ahead of the capture work** —
+[#31](https://github.com/sujayjangam/unified-ledger-pipeline/issues/31) (parent), with #32, #33 and
+#34.
 
-**3a. Before the rest of §1** — scaffolding and stable-target tests, tracked as
-[#31](https://github.com/sujayjangam/unified-ledger-pipeline/issues/31) (parent), with
-[#32](https://github.com/sujayjangam/unified-ledger-pipeline/issues/32),
-[#33](https://github.com/sujayjangam/unified-ledger-pipeline/issues/33) and
-[#34](https://github.com/sujayjangam/unified-ledger-pipeline/issues/34) as the minimum slice.
+This is a soft gate, deliberately: it stops a merge that fails to load (syntax errors, bad imports,
+a missing dependency, an import-time crash). It does **not** catch a handler that throws at
+runtime, a malformed query or a broken prompt — a green check doesn't mean "the bot works".
 
-**This is a soft gate, deliberately.** It stops a merge that fails to load — syntax errors, bad
-imports, a missing dependency, an import-time crash — which is the class that takes the deployed
-bot down on startup. It does **not** catch a handler that throws at runtime, a malformed query, or
-a broken prompt, and a green check must not be read as "the bot works". Coverage of the
-expense-recording paths themselves is §3b, and waits until the `area:capture` work is finished so
-it tests the paths that survive rather than the ones being replaced.
+- [x] CI on pull requests: clean install, lint, and an import smoke check across `app/` —
+[#32](https://github.com/sujayjangam/unified-ledger-pipeline/issues/32), 2026-08-26. The clean
+install doubles as evidence for [#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27).
+- [x] Pytest harness, with test-only dependencies in `requirements-dev.txt` —
+[PR #46](https://github.com/sujayjangam/unified-ledger-pipeline/pull/46), 2026-09-03, verified by
+breaking an assertion and watching CI go red.
+- [x] Stable-target tests (money conversion, period boundaries, handler routing, extraction schema
+parsing, `is_authorized`, payment-default inference), with no network or billable API calls —
+2026-09-03, one category per PR (#38, #40-#42, #44-#46).
+- [ ] Migrations applied from scratch (`alembic upgrade head` against a throwaway Postgres
+container), and the `ON CONFLICT (idempotency_key)` path against a real database. Nothing in
+`tests/` touches a real database: `tests/test_migrations.py` checks only the revision chain's
+structure, and `0002_add_created_at` was run by hand against a Neon branch — evidence, not
+automated coverage.
+- [x] `main` protected by a repository ruleset requiring `check-PR-before-merge`, verified against
+a throwaway PR — [#34](https://github.com/sujayjangam/unified-ledger-pipeline/issues/34),
+2026-09-03 ([ADR-0021](docs/decisions/0021-rulesets-over-classic-branch-protection.md)).
 
-Bounded deliberately to what the capture work won't rewrite:
+**3b. After capture reliability is finished** — coverage that has to run against the finished
+capture paths:
 
-- [x] CI on pull request: clean install from `requirements.txt`, lint, and an import smoke check
-across `app/`. Shipped 2026-08-26 in `.github/workflows/ci.yml`
-([#32](https://github.com/sujayjangam/unified-ledger-pipeline/issues/32)). The import check is what
-catches a merge that would take the deployed bot down on startup; the clean install doubles as the
-evidence [#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27) needs.
-- [x] Pytest harness, with test-only dependencies in a separate `requirements-dev.txt` so
-`requirements.txt` keeps meaning "what production needs" — otherwise the check above can't answer
-#27. Shipped 2026-09-03: `pytest`/`pytest-asyncio` pinned in `requirements-dev.txt`, and
-`.github/workflows/ci.yml` installs it and runs `pytest` on every PR
-([#46](https://github.com/sujayjangam/unified-ledger-pipeline/pull/46)) — verified live in CI, not
-assumed, by deliberately breaking an assertion and watching the check go red, then reverting it.
-- [x] Stable-target tests: money conversion, the period boundaries in `app/services/utils.py` /
-`app/services/ledger_queries.py`, handler routing, and extraction schema parsing against recorded
-response JSON. No network and no billable API calls anywhere in the suite. Shipped 2026-09-03
-across [#38](https://github.com/sujayjangam/unified-ledger-pipeline/pull/38),
-[#40](https://github.com/sujayjangam/unified-ledger-pipeline/pull/40)-[#42](https://github.com/sujayjangam/unified-ledger-pipeline/pull/42),
-[#44](https://github.com/sujayjangam/unified-ledger-pipeline/pull/44)-[#46](https://github.com/sujayjangam/unified-ledger-pipeline/pull/46)
-(one category per PR); also covers `is_authorized` and payment-method/account-owner inference,
-beyond #33's original minimum slice.
-- [ ] Migrations apply from scratch (`alembic upgrade head` against a throwaway Postgres service
-container), and the `ON CONFLICT (idempotency_key)` path against a real database — explicitly out
-of scope for #33 ("not part of the minimum slice"), still not covered by anything in `tests/`
-that touches a real database. `tests/test_migrations.py` (2026-09-10) checks only the revision
-chain's structure — one root, one head — and executes no SQL. `0002_add_created_at` was run by
-hand against a Neon branch (upgrade, downgrade, upgrade), which is evidence, not automated
-coverage.
-`add_expense`'s pure-validation logic (amount conversion/rejection) is covered by
-`tests/test_add_expense.py`.
-- [x] Branch protection on `main` requiring `check-PR-before-merge`, enabled only once it had run
-green on real PRs. Shipped 2026-09-03 as a repository ruleset (not classic branch protection — see
-[ADR-0021](docs/decisions/0021-rulesets-over-classic-branch-protection.md)) with an admin bypass
-list, verified against a throwaway PR (#47): `mergeStateStatus` was `BLOCKED` and `gh pr merge` was
-rejected while the check failed, then flipped to `CLEAN` once fixed
-([#34](https://github.com/sujayjangam/unified-ledger-pipeline/issues/34)).
-
-**3b. After §1 completes** — coverage that has to run against the finished capture paths:
-
-- [ ] Every ingestion path end to end, against the capture paths as §1 leaves them — not the ones
+- [ ] Every ingestion path end to end, against the capture paths as they end up — not the ones
 being replaced.
 - [ ] Extend routing coverage to the callback handlers the pending-transaction edit path adds.
 
-**3c. Ownership pass** — not a testing task, and it needs to survive §3a/§3b being ticked off:
+**3c. Ownership pass** — not a testing task, and it stays open after 3a and 3b are ticked off:
 
 - [ ] Deliberate pass through the AI-assisted async/Pydantic/FastAPI-lifespan code — rewrite or
 annotate until it can be defended live, not just described.
 
 **4. Packaging** — moved here from Phase 5 on 2026-08-20.
 
-- [x] `README.md` placeholder fix
-- [x] Rewrite `README.md` as a case study: problem → architecture → key decisions and tradeoffs →
-what's live today → what's next. Done 2026-08-29. The standing rule still binds — `README.md`
-describes only what has shipped, and forward-looking work sits under an explicit "What's next"
-heading.
-- [x] Inline Mermaid architecture diagram, authored with the README rewrite — done 2026-08-29,
-one flowchart covering the capture pipeline and the scheduled backup pipeline
+- [x] Case-study `README.md` with an inline Mermaid architecture diagram — 2026-08-29. `README.md`
+describes only what has shipped; forward-looking work sits under "What's next".
 - [ ] Short demo recording → GIF at the top of `README.md`. Last item in the phase: it should show
 a working expense recorder, not the friction-limited one. Recording it early against the current
 build is still worthwhile as a private friction-finding exercise — it surfaces exactly the UX
 problems the capture work above is meant to fix — but the published artifact comes last.
 
 ### Phase 1 — Reconciliation engine
-
-*(Blocked on Phase 0's Postgres migration — do not build this against SQLite.)*
 
 - [ ] PDF statement parser: rule-based extraction per bank format (OCBC, DBS, YouTrip) first
 - [ ] LLM-assisted extraction as fallback, only for lines the rule-based parser can't handle
