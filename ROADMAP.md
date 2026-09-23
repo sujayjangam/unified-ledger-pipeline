@@ -284,8 +284,8 @@ ahead of capture ([ADR-0020](docs/decisions/0020-ci-scaffolding-before-remaining
 ([ADR-0017](docs/decisions/0017-extend-phase-0-for-capture-friction.md)).
 
 - [ ] Backdated/relative date parsing from the expense text, voice or typed ("yesterday", "last
-Tuesday", "3/7", explicit dates) — [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15).
-Highest leverage of the group: without it every entry must be logged at the moment of spend, and a
+Tuesday", "3/7", explicit dates) — [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) via
+#73, #75, #74 ([ADR-0030](docs/decisions/0030-llm-reads-dates-python-resolves.md)). Highest leverage of the group: without it every entry must be logged at the moment of spend, and a
 wrong date is permanent while saved rows can't be edited.
 - [x] Business date vs. write time, and reliable ordering —
 [#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) via #10-#14, shipped
