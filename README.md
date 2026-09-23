@@ -127,7 +127,9 @@ Forward-looking work, tracked in [`ROADMAP.md`](ROADMAP.md):
   ([ADR-0015](docs/decisions/0015-deterministic-matching-before-llm.md)).
 - **Evaluation harness** (Phase 2): a hand-labeled golden set of statement-line → ledger-entry
   matches, scored with precision/recall, used to tune the matcher instead of guessing constants.
-- Nearer-term: backdated date parsing ("yesterday", "last Tuesday") and edit/delete paths.
+- Nearer-term: backdated date parsing for voice and typed entries ("yesterday", "last Tuesday",
+  "3/7"), before the reconciliation engine. Editing and deleting saved entries follows later, once
+  the matcher is flagging the entries that need correcting.
 
 ## Getting started
 

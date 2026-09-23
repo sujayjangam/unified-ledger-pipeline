@@ -36,6 +36,7 @@ supersedes the old one rather than editing history.
 | [0026](0026-entered-by-telegram-user-id.md) | Record the sender as their Telegram user ID, and leave existing rows unrecorded | Accepted | 2026-09-11 |
 | [0027](0027-duplicate-warning-before-the-card.md) | Warn about a likely duplicate before the card is shown, matching on amount and currency | Accepted | 2026-09-12 |
 | [0028](0028-exact-cent-conversion-half-up.md) | Convert amounts to cents with exact decimal maths, rounding half a cent up; split in whole cents | Accepted | 2026-09-13 |
+| [0029](0029-close-phase-0-on-date-parsing.md) | Close Phase 0 when backdated dates ship; move the rest of its capture work to later phases | Accepted | 2026-09-23 |
 
 ## Writing a new one
 

@@ -221,7 +221,7 @@ message. In order:
   double-tapped Confirm inserting twice ([ADR-0011](docs/decisions/0011-idempotency-key-over-update-id.md)).
   That is a different problem from duplicate webhook deliveries (`update_id`), which are deduped
   only in memory (`_seen_update_ids` in `bot_webhook.py`) and scheduled to be persisted in
-  Phase 0 — see `ROADMAP.md`.
+  Phase 1 — see `ROADMAP.md`.
 - `app/services/ledger_queries.py` backs `/recent`, `/today`, `/week`, `/month` and the `/cat_*`
   commands, plus `find_recent_duplicate`. Aggregates are grouped by currency (no FX conversion
   anywhere). Each query catches its own errors; for the duplicate check that's load-bearing, since
