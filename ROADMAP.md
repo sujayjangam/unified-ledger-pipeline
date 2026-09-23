@@ -19,9 +19,10 @@ doesn't map to anything in the actual system. Use, and refine once Phase 1/2 lan
 
 ## Current status
 
-**Phase:** Phase 0 — Foundation & ownership. Scope was extended on 2026-08-20 to cover capture
-friction before moving to Phase 1; see
-[ADR-0017](docs/decisions/0017-extend-phase-0-for-capture-friction.md).
+**Phase:** Phase 0 — Foundation & ownership, on its last item. Scope was extended on 2026-08-20
+to cover capture friction ([ADR-0017](docs/decisions/0017-extend-phase-0-for-capture-friction.md)),
+and its end was fixed on 2026-09-23
+([ADR-0029](docs/decisions/0029-close-phase-0-on-date-parsing.md)).
 
 **Shipped** (the linked issues and ADRs hold the detail):
 
@@ -43,21 +44,24 @@ friction before moving to Phase 1; see
 - Duplicate-entry warning ([#58](https://github.com/sujayjangam/unified-ledger-pipeline/issues/58), closing [#57](https://github.com/sujayjangam/unified-ledger-pipeline/issues/57), [ADR-0027](docs/decisions/0027-duplicate-warning-before-the-card.md)), 2026-09-12
 - Exact cent conversion, half a cent rounding up, one conversion shared by the bot, CLI and REST
   API ([#39](https://github.com/sujayjangam/unified-ledger-pipeline/issues/39), [ADR-0028](docs/decisions/0028-exact-cent-conversion-half-up.md)), 2026-09-13
+- Cleanup from a whole-repo bloat review: dead and risky files removed
+  ([#68](https://github.com/sujayjangam/unified-ledger-pipeline/pull/68)), `CLAUDE.md` /
+  `ROADMAP.md` trimmed ([#70](https://github.com/sujayjangam/unified-ledger-pipeline/pull/70)), and
+  the unused `job-queue` extra dropped ([#71](https://github.com/sujayjangam/unified-ledger-pipeline/pull/71)), 2026-09-19
 
-**In review (2026-09-13):** cleanup from a whole-repo bloat review — dead and risky files removed
-([#68](https://github.com/sujayjangam/unified-ledger-pipeline/pull/68)), and `CLAUDE.md` /
-`ROADMAP.md` trimmed.
+**Next action:** backdated and relative dates, for voice and typed entries alike
+([#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15)). It is the last Phase 0
+item: Phase 0 closes when it ships, and every other open Phase 0 item moved to a later phase
+(decided 2026-09-23, [ADR-0029](docs/decisions/0029-close-phase-0-on-date-parsing.md)). Phase 1
+starts with [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53).
 
-**Next action:** the Confirm / Edit / Cancel card ([#66](https://github.com/sujayjangam/unified-ledger-pipeline/issues/66), the first step of [#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22)),
-then Phase 1. [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) (backdated date parsing) is not urgent and waits (decided 2026-09-12).
-Full ordering in the Phase 0 checklist below.
-
-**Open top-level issues:** [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) backdated dates ·
-[#17](https://github.com/sujayjangam/unified-ledger-pipeline/issues/17) unused REST API · [#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22) entries can't be corrected ·
-[#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27) unpinned dependencies ·
-[#61](https://github.com/sujayjangam/unified-ledger-pipeline/issues/61) git-history purge (Phase 5) ·
+**Open top-level issues:** [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) backdated dates (Phase 0) ·
 [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53)
-household accounts live in env secrets (Phase 1).
+household accounts live in env secrets (Phase 1) ·
+[#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27) unpinned dependencies (Phase 1) ·
+[#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22) entries can't be corrected (Phase 1) ·
+[#17](https://github.com/sujayjangam/unified-ledger-pipeline/issues/17) unused REST API (Phase 5) ·
+[#61](https://github.com/sujayjangam/unified-ledger-pipeline/issues/61) git-history purge (Phase 5).
 Read the list without sub-issue noise with `gh issue list --search "no:parent-issue"`.
 
 ### Where things are written down
@@ -92,12 +96,13 @@ the live webhook, and there is no delete path for rows written by mistake. See
 infrastructure.
 - Ownership: much of the current codebase was written with AI assistance — ownership is solid on
 the simple parts, weaker on async/await, Pydantic schemas, and FastAPI's `lifespan` handling. Close
-that gap deliberately in Phase 0, not by skipping the code. This applies to new AI-assisted work
+that gap deliberately, not by skipping the code — a standing rule for every phase rather than a
+Phase 0 task ([ADR-0029](docs/decisions/0029-close-phase-0-on-date-parsing.md)). This applies to new AI-assisted work
 as well as old: nothing gets committed that couldn't be explained, line by line, without the
 assistant in the room.
 - Intended as live household infrastructure for two real users, not a demo — but **currently below
 that bar**, and honestly so. Real usage is limited by capture friction, not by capacity or
-reliability. Until that closes (Phase 0), claims about production usage belong in this file as
+reliability. Until that closes, claims about production usage belong in this file as
 intent, not as fact, and must not be restated as fact in `README.md`.
 - Real pain points, in priority order: (1) reconciling voice-logged entries against real bank/card
 statements, (2) household expense splitting, (3) budgeting & visibility. FX conversion is *not* a
@@ -136,7 +141,9 @@ pytest test suite, and error alerting.
 architecture → key decisions and tradeoffs → what's live today → what's next — plus an inline
 Mermaid architecture diagram and a short demo recording. This fixes *what* the deliverable is (not
 a docs site, not a blog series, not a slide deck) so it doesn't get redesigned mid-project.
-Originally scheduled for Phase 5; moved to the **end of Phase 0** on 2026-08-20.
+Originally scheduled for Phase 5; moved to the **end of Phase 0** on 2026-08-20. The README and
+diagram shipped there; the demo recording moved back to Phase 5 on 2026-09-23
+([ADR-0029](docs/decisions/0029-close-phase-0-on-date-parsing.md)).
 - Phasing: design backward from the full target architecture — don't bolt features on
 incrementally. Phases 0-2 (foundation, reconciliation engine, evaluation harness) are the
 differentiated technical core; Phases 3+ (household splitting, budgeting/visibility, packaging)
@@ -160,8 +167,7 @@ or a confirmation prompt when the target is production, would close it.
 - Duplicate Telegram update delivery is deduped only in memory (`_seen_update_ids` in
 `bot_webhook.py`), which doesn't survive a Cloud Run restart or a second instance. Now that
 Postgres exists, this should become a persisted constraint. Deliberately deferred, not forgotten —
-see the Phase 0 checklist note on why usage is currently too low for the race window to matter in
-practice.
+now a Phase 1 checklist item.
 - Broad `except Exception` blocks throughout silently swallow errors via `print()` instead of
 structured logging — failures are invisible in production.
 - `app/add_expense.py` computes `was_duplicate` (whether `ON CONFLICT (idempotency_key)` suppressed
@@ -179,8 +185,8 @@ human-in-the-loop claim doesn't hold until this actually gates bot behavior.
 - `.venv/` and `data/ledger.db` are untracked as of 2026-08-01 but **still present in git
 history** — purging needs a rewrite + force-push, deliberately deferred. Tracked as
 [#61](https://github.com/sujayjangam/unified-ledger-pipeline/issues/61).
-- Voice notes always get today's date regardless of what's said ("yesterday", "last Tuesday",
-etc.). Tracked as [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15).
+- Every entry, voice or typed, gets today's date regardless of what's said ("yesterday", "last
+Tuesday", "3/7", etc.). Tracked as [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15).
 - The backup workflow (`.github/workflows/backup.yml`) has no failure alerting yet — deliberately
 deferred to when the Phase 1 "Telegram alert on pipeline failure" item exists, which should be
 extended to cover this workflow too, not just the reconciliation pipeline.
@@ -193,11 +199,11 @@ in ~30 days (from 2026-08-12) to confirm the oldest backup objects actually age 
   update in the same PR as that upgrade, or backups will start failing (client older than server).
 
 Found by inspection 2026-08-19, none filed as issues yet (the capture-side ones are already
-sequenced in the Phase 0 checklist and aren't repeated here):
+sequenced in the phase checklists and aren't repeated here):
 
 - No refund or reversal representation anywhere — `app/add_expense.py` rejects `amount <= 0`.
   Phase 1 reconciliation against real statements hits refunds almost immediately, so this is a
-  Phase 1 blocker rather than a cosmetic gap.
+  Phase 1 blocker rather than a cosmetic gap. Now a Phase 1 checklist item.
 - `reconciliation_status` is hardcoded to `'unsettled'` in both writers. The field Phase 1 is
   meant to populate currently has no writer at all.
 - `benefit_of` and `split_ratio` exist in the schema and in `docs/SCHEMA.md` but are written by no
@@ -267,18 +273,20 @@ engine, and Alembic for migrations ([ADR-0007](docs/decisions/0007-alembic-hand-
 Actions workflow ([ADR-0012](docs/decisions/0012-github-actions-over-cloud-scheduler.md)); restore
 procedure in `docs/BACKUP_RESTORE.md`.
 
-**Ordering for the rest of Phase 0:** capture reliability first, then correctness/observability,
-then the test suite, then packaging — the suite proves the recording paths work before the
-packaging publishes that claim. The CI scaffolding and the tests over code the capture work won't
-touch moved ahead of capture
-([ADR-0020](docs/decisions/0020-ci-scaffolding-before-remaining-capture-work.md)).
+**Phase 0 closes when [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15)
+ships** (decided 2026-09-23,
+[ADR-0029](docs/decisions/0029-close-phase-0-on-date-parsing.md)). Every other item that was still
+open moved to the phase whose work needs it; each one is left below as a single line saying where
+it went. The CI scaffolding and the tests over code the capture work won't touch had already moved
+ahead of capture ([ADR-0020](docs/decisions/0020-ci-scaffolding-before-remaining-capture-work.md)).
 
 **1. Capture reliability** — the binding constraint on data quality
 ([ADR-0017](docs/decisions/0017-extend-phase-0-for-capture-friction.md)).
 
-- [ ] Backdated/relative date parsing from the transcript ("yesterday", "last Tuesday", explicit
-spoken dates) — [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15). Highest
-leverage of the group: without it every entry must be logged at the moment of spend.
+- [ ] Backdated/relative date parsing from the expense text, voice or typed ("yesterday", "last
+Tuesday", "3/7", explicit dates) — [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15).
+Highest leverage of the group: without it every entry must be logged at the moment of spend, and a
+wrong date is permanent while saved rows can't be edited.
 - [x] Business date vs. write time, and reliable ordering —
 [#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) via #10-#14, shipped
 2026-09-10 ([ADR-0024](docs/decisions/0024-created-at-write-time-column.md)). Pulled ahead of #15
@@ -291,46 +299,21 @@ because the duplicate warning needed a time of day.
 [#57](https://github.com/sujayjangam/unified-ledger-pipeline/issues/57), shipped 2026-09-12
 ([ADR-0027](docs/decisions/0027-duplicate-warning-before-the-card.md)). Known gap, accepted: two
 still-unconfirmed cards for the same spend don't warn each other.
-- [ ] Edit and delete path for *saved* rows — [#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22).
-No `UPDATE` or `DELETE` statement exists anywhere in `app/`, so a wrong extraction is permanent,
-which is also what hollows out the human-in-the-loop claim: the human is in the loop for a few
-seconds at confirm time and never again. Needs a hard-vs-soft-delete decision first, which is what
-separates it from the two `context.user_data`-only recovery paths below.
+- Edit and delete path for *saved* rows ([#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22)),
+with its first step, the Confirm / Edit / Cancel card ([#66](https://github.com/sujayjangam/unified-ledger-pipeline/issues/66)) —
+moved to Phase 1 by ADR-0029.
 - [x] Text ingestion alongside voice, since voice is unusable in most real spending moments —
 [#16](https://github.com/sujayjangam/unified-ledger-pipeline/issues/16), shipped 2026-08-21.
-- [ ] Pending-transaction **edit** path — the confirm card should be Confirm/Edit/Cancel, so a wrong
-extraction can be corrected before saving rather than only accepted whole or discarded. This is
-`context.user_data` state only, no DB write, which is what makes it separable from
-[#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22) (editing *saved* rows, which
-needs a hard-vs-soft-delete decision first). The field picker built here is reusable for #22.
-Filed 2026-09-12 as [#66](https://github.com/sujayjangam/unified-ledger-pipeline/issues/66), the first sub-issue of #22.
-- [ ] Missing-amount recovery — when extraction returns no amount, `process_expense_text` abandons
-the entry with a text prompt, so the user has to start over from scratch. Offer
-`[Manual Entry]` / `[New Voice Note]` buttons instead, keeping the raw text already captured.
-Specified but never built in the MVP flow doc that
-[#28](https://github.com/sujayjangam/unified-ledger-pipeline/issues/28) retired — salvaged here
-before deleting it, so the idea outlives the file. Belongs with the edit path above: both are
-recovery paths over `context.user_data` with no DB write. No issue filed yet.
-- [ ] Drop the one-expense-per-voice-note guardrail in `app/bot_core.py` — `TransactionList`
-already models multiple; this is a product restriction, not a technical limit.
+- Missing-amount recovery, and dropping the one-expense-per-message limit — moved to Phase 4 by
+ADR-0029.
 - [x] Authenticate webhook deliveries with Telegram's secret token —
 [#63](https://github.com/sujayjangam/unified-ledger-pipeline/issues/63), shipped 2026-09-11
 ([ADR-0025](docs/decisions/0025-webhook-secret-token.md)). The prerequisite for trusting the sender
 ID `is_authorized()` checks.
-- [ ] Webhook idempotency — persist the `update_id` dedupe in Postgres instead of process memory.
-Previously deferred on the grounds that voice-only ingestion naturally caps volume. **That premise
-expires with the items above**: they exist specifically to raise capture volume, so the deferral is
-now time-limited rather than open-ended, and this lands in the same phase as the work that
-invalidates it — not at some later reliability pass.
+- Webhook idempotency (persisting the `update_id` dedupe) — moved to Phase 1 by ADR-0029.
 
-**2. Correctness and observability**
-
-- [ ] Structured logging to replace silent `except`/`print` error handling
-- [ ] Wire `needs_review` so it actually gates bot behavior (prerequisite for the
-human-in-the-loop framing to hold up under questioning)
-- [ ] `base_amount` correctness — currently written as the raw amount regardless of currency,
-contradicting `docs/SCHEMA.md`. Prefer absent (`NULL`) over silently incorrect until an FX source
-exists.
+**2. Correctness and observability** — all three items (structured logging, acting on
+`needs_review`, `base_amount` correctness) moved to Phase 1 by ADR-0029.
 
 **3. Test suite and CI** — split so the parts that don't depend on the capture paths could go
 first ([ADR-0020](docs/decisions/0020-ci-scaffolding-before-remaining-capture-work.md)). The suite
@@ -354,53 +337,71 @@ breaking an assertion and watching CI go red.
 - [x] Stable-target tests (money conversion, period boundaries, handler routing, extraction schema
 parsing, `is_authorized`, payment-default inference), with no network or billable API calls —
 2026-09-03, one category per PR (#38, #40-#42, #44-#46).
-- [ ] Migrations applied from scratch (`alembic upgrade head` against a throwaway Postgres
-container), and the `ON CONFLICT (idempotency_key)` path against a real database. Nothing in
-`tests/` touches a real database: `tests/test_migrations.py` checks only the revision chain's
-structure, and `0002_add_created_at` was run by hand against a Neon branch — evidence, not
-automated coverage.
+- Migrations applied from scratch, and the `ON CONFLICT (idempotency_key)` path against a real
+database — moved to Phase 1 by ADR-0029.
 - [x] `main` protected by a repository ruleset requiring `check-PR-before-merge`, verified against
 a throwaway PR — [#34](https://github.com/sujayjangam/unified-ledger-pipeline/issues/34),
 2026-09-03 ([ADR-0021](docs/decisions/0021-rulesets-over-classic-branch-protection.md)).
 
-**3b. After capture reliability is finished** — coverage that has to run against the finished
-capture paths:
+**3b. After capture reliability is finished** — the end-to-end ingestion tests and the routing
+coverage for the edit path's callback handlers moved with the capture items they cover (Phase 1
+for the edit path, Phase 4 for the rest), by ADR-0029.
 
-- [ ] Every ingestion path end to end, against the capture paths as they end up — not the ones
-being replaced.
-- [ ] Extend routing coverage to the callback handlers the pending-transaction edit path adds.
-
-**3c. Ownership pass** — not a testing task, and it stays open after 3a and 3b are ticked off:
-
-- [ ] Deliberate pass through the AI-assisted async/Pydantic/FastAPI-lifespan code — rewrite or
-annotate until it can be defended live, not just described.
+**3c. Ownership pass** — now a standing rule for every phase (see Constraints), not a checkbox
+(ADR-0029).
 
 **4. Packaging** — moved here from Phase 5 on 2026-08-20.
 
 - [x] Case-study `README.md` with an inline Mermaid architecture diagram — 2026-08-29. `README.md`
 describes only what has shipped; forward-looking work sits under "What's next".
-- [ ] Short demo recording → GIF at the top of `README.md`. Last item in the phase: it should show
-a working expense recorder, not the friction-limited one. Recording it early against the current
-build is still worthwhile as a private friction-finding exercise — it surfaces exactly the UX
-problems the capture work above is meant to fix — but the published artifact comes last.
+- Short demo recording — moved to Phase 5 by ADR-0029.
 
 ### Phase 1 — Reconciliation engine
 
-- [ ] PDF statement parser: rule-based extraction per bank format (OCBC, DBS, YouTrip) first
-- [ ] LLM-assisted extraction as fallback, only for lines the rule-based parser can't handle
-- [ ] Receipt image capture (Telegram photo message) as a second ingestion path alongside voice
-notes — store the image (GCS) and link it to the transaction row; reuses the rule-based +
-LLM-fallback extraction architecture above rather than building a separate one-off pipeline.
+In working order. Items marked *(from Phase 0)* moved here by
+[ADR-0029](docs/decisions/0029-close-phase-0-on-date-parsing.md).
+
 - [ ] Household participants and accounts as Postgres tables, replacing the `ACCOUNT_OWNERS` /
 `PRIMARY_ACCOUNT_OWNER` / `ALLOWED_TG_IDS` env vars —
 [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53). Goes before the staging
 table so statement lines attach to an account row, not a string. The Phase 3 `participants` table
 below is this one.
+- [ ] Refund and reversal representation — `app/add_expense.py` rejects `amount <= 0` today, and
+real statements contain refunds almost immediately (see "Known issues"). Needs an ADR on how a
+refund is stored before the staging table is designed.
+- [ ] PDF statement parser: rule-based extraction per bank format (OCBC, DBS, YouTrip) first. Pin
+dependencies ([#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27)) no later
+than the PR that adds the PDF library *(from Phase 0)*.
+- [ ] LLM-assisted extraction as fallback, only for lines the rule-based parser can't handle
 - [ ] Normalize parsed statement lines into a staging table (Postgres)
+- [ ] Migrations applied from scratch (`alembic upgrade head` against a throwaway Postgres
+container), and the `ON CONFLICT (idempotency_key)` path against a real database — the staging
+table is the next migration. Nothing in `tests/` touches a real database today:
+`tests/test_migrations.py` checks only the revision chain's structure *(from Phase 0)*.
 - [ ] Deterministic matcher: amount + date window against existing ledger entries
 - [ ] Tie-breaking rule: auto-match only on a unique candidate; 0 or 2+ candidates → `needs_review`
 - [ ] Wire matcher output into the `reconciliation_status` field
-- [ ] Telegram alert on pipeline failure
+- [ ] Wire `needs_review` so it actually gates bot behavior — the matcher is what produces review
+cases, and the human-in-the-loop framing doesn't hold up until this exists *(from Phase 0)*
+- [ ] `base_amount` correctness — currently written as the raw amount regardless of currency,
+contradicting `docs/SCHEMA.md`. Prefer absent (`NULL`) over silently incorrect; statements are the
+first source of converted amounts *(from Phase 0)*.
+- [ ] Structured logging to replace silent `except`/`print` error handling *(from Phase 0)*
+- [ ] Telegram alert on pipeline failure, reporting through that logging
+- [ ] Webhook idempotency — persist the `update_id` dedupe in Postgres instead of process memory.
+Originally deferred because voice-only ingestion capped volume; text ingestion ended that premise
+*(from Phase 0)*.
+- [ ] Edit and delete path for *saved* rows —
+[#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22). No `UPDATE` or `DELETE`
+exists anywhere in `app/`, so a wrong extraction is permanent; the mismatches the matcher flags are
+the rows that need correcting. First step: the Confirm / Edit / Cancel card
+([#66](https://github.com/sujayjangam/unified-ledger-pipeline/issues/66), `context.user_data` only,
+no DB write), whose field picker the saved-row edit reuses. Saved-row edits need a
+hard-vs-soft-delete decision first. Add routing coverage for the new callback handlers with it
+*(from Phase 0)*.
+- [ ] Receipt image capture (Telegram photo message) as a second ingestion path alongside voice
+notes — store the image (GCS) and link it to the transaction row; reuses the rule-based +
+LLM-fallback extraction architecture above rather than building a separate one-off pipeline.
 
 ### Phase 2 — Evaluation harness
 
@@ -449,6 +450,20 @@ before choosing (decided 2026-09-12).
 - [ ] Weekly digest (Telegram)
 - [ ] Reconciled vs. unreconciled breakdown
 
+**Capture conveniences** (moved from Phase 0 by
+[ADR-0029](docs/decisions/0029-close-phase-0-on-date-parsing.md); both already have a workaround —
+send the message again):
+
+- [ ] Missing-amount recovery — when extraction returns no amount, `process_expense_text` abandons
+the entry with a text prompt, so the user has to start over from scratch. Offer
+`[Manual Entry]` / `[New Voice Note]` buttons instead, keeping the raw text already captured.
+Salvaged from the MVP flow doc that
+[#28](https://github.com/sujayjangam/unified-ledger-pipeline/issues/28) retired. No issue filed yet.
+- [ ] Drop the one-expense-per-message guardrail in `app/bot_core.py`
+([ADR-0010](docs/decisions/0010-one-expense-per-message.md)) — `TransactionList` already models
+multiple; this is a product restriction, not a technical limit.
+- [ ] Every ingestion path tested end to end, against the capture paths as they end up.
+
 ### Phase 5 — Reliability hardening & packaging refresh
 
 The case-study README and architecture diagram moved to the end of Phase 0 on 2026-08-20, so this
@@ -460,6 +475,12 @@ budgeting in it.
 system — in particular the eval metrics, which don't exist yet at the Phase 0 writeup
 - [ ] Error alerting beyond the Phase 1 Telegram pipeline-failure alert, extended to cover
 `.github/workflows/backup.yml` (see "Still outstanding")
+- [ ] Short demo recording → GIF at the top of `README.md`, showing the working system rather than
+the friction-limited one. Recording early as a private friction-finding exercise is still
+worthwhile; the published one comes here (moved from Phase 0 by ADR-0029).
+- [ ] Keep or remove the unused REST API —
+[#17](https://github.com/sujayjangam/unified-ledger-pipeline/issues/17) (moved from Phase 0 by
+ADR-0029)
 - [ ] Revisit the deferred git-history purge of `.venv/` and `data/ledger.db` — [#61](https://github.com/sujayjangam/unified-ledger-pipeline/issues/61)
 
 ## How to resume a session
