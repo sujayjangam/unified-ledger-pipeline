@@ -38,6 +38,7 @@ supersedes the old one rather than editing history.
 | [0028](0028-exact-cent-conversion-half-up.md) | Convert amounts to cents with exact decimal maths, rounding half a cent up; split in whole cents | Accepted | 2026-09-13 |
 | [0029](0029-close-phase-0-on-date-parsing.md) | Close Phase 0 when backdated dates ship; move the rest of its capture work to later phases | Accepted | 2026-09-23 |
 | [0030](0030-llm-reads-dates-python-resolves.md) | Let the model describe the date and Python calculate it; warn on implausible dates | Accepted (not yet implemented) | 2026-09-23 |
+| [0031](0031-last-week-from-message-text.md) | Tell "last Tuesday" from "Tuesday last week" with a text match, not the model; check prompts against the real model | Accepted | 2026-10-11 |
 
 ## Writing a new one
 

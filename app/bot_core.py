@@ -9,6 +9,7 @@ import tempfile
 from app.add_expense import add_expense, dollars_to_cents, format_cents
 from app.services.utils import get_sgt_now, get_week_start, get_month_start
 from app.services.ledger_queries import get_recent_entries, get_period_summary, get_category_summary, find_recent_duplicate
+from app.services.dates import apply_date_resolution
 
 # use the local windows persmissions
 truststore.inject_into_ssl()
@@ -429,8 +430,12 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
     echo). Every branch below edits that same message instead of sending a new one, so the
     user is always left with exactly one message per entry attempt.
     """
+    # One "today" for this whole entry, in Singapore time: the prompt reads the message
+    # against it and the date resolver counts back from it, so they can't disagree (#15).
+    today = get_sgt_now().date()
+
     # Extract structured data from the raw text
-    structured_data = await extract_transactions(raw_text)
+    structured_data = await extract_transactions(raw_text, today)
 
     # Check if data exists AND if the 'transactions' list is present
     if not structured_data or not structured_data.get("transactions"):
@@ -461,6 +466,10 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
     if single_transaction.get('amount') is None:
         await status_msg.edit_text("⚠️ I couldn't detect an exact amount. Could you try sending it again?")
         return # Stop processing this transaction
+
+    # Turn what the user said about the date ("yday", "last tues", "3/7") into the date itself,
+    # counting back from the same 'today' the prompt was given (#15, ADR-0030).
+    single_transaction = apply_date_resolution(single_transaction, today)
 
     # if the transaction is in non SGD currency, for now we automatically assume it's made with YouTrip, unless payment method already mentioned e.g. Cash
     single_transaction = apply_payment_defaults(single_transaction, spender_name)
