@@ -429,8 +429,12 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
     echo). Every branch below edits that same message instead of sending a new one, so the
     user is always left with exactly one message per entry attempt.
     """
+    # One "today" for this whole entry, in Singapore time: the prompt reads the message
+    # against it and the date resolver counts back from it, so they can't disagree (#15).
+    today = get_sgt_now().date()
+
     # Extract structured data from the raw text
-    structured_data = await extract_transactions(raw_text)
+    structured_data = await extract_transactions(raw_text, today)
 
     # Check if data exists AND if the 'transactions' list is present
     if not structured_data or not structured_data.get("transactions"):

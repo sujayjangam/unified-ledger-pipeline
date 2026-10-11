@@ -2,6 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.services.extraction import (
+    DateReference,
     ExpenseCategory,
     TransactionList,
     TransactionSchema,
@@ -20,7 +21,7 @@ def test_valid_full_payload_parses():
         transaction_type="Expense",
         payment_method="Bank A Platinum",
         category="Food",
-        date="2026-09-02",
+        date_reference={"kind": "unstated"},
         needs_review=False,
     )
     assert txn.amount == 12.50
@@ -32,7 +33,7 @@ def test_amount_none_is_allowed():
         amount=None,
         transaction_type="Expense",
         category="Other",
-        date="2026-09-02",
+        date_reference={"kind": "unstated"},
         needs_review=True,
     )
     assert txn.amount is None
@@ -45,7 +46,7 @@ def test_invalid_category_rejected():
             amount=12.50,
             transaction_type="Expense",
             category="Foods",
-            date="2026-09-02",
+            date_reference={"kind": "unstated"},
             needs_review=False,
         )
 
@@ -56,7 +57,7 @@ def test_invalid_transaction_type_rejected():
             amount=12.50,
             transaction_type="Refund",
             category="Food",
-            date="2026-09-02",
+            date_reference={"kind": "unstated"},
             needs_review=False,
         )
 
@@ -66,7 +67,7 @@ def test_currency_defaults_to_sgd():
         amount=12.50,
         transaction_type="Expense",
         category="Food",
-        date="2026-09-02",
+        date_reference={"kind": "unstated"},
         needs_review=False,
     )
     assert txn.currency == "SGD"
@@ -79,20 +80,58 @@ def test_transaction_list_wraps_multiple_transactions():
                 "amount": 12.50,
                 "transaction_type": "Expense",
                 "category": "Food",
-                "date": "2026-09-02",
+                "date_reference": {"kind": "unstated"},
                 "needs_review": False,
             },
             {
                 "amount": 5.00,
                 "transaction_type": "Expense",
                 "category": "Transport",
-                "date": "2026-09-02",
+                "date_reference": {"kind": "unstated"},
                 "needs_review": False,
             },
         ]
     )
     assert len(txn_list.transactions) == 2
     assert txn_list.transactions[1].category == ExpenseCategory.TRANSPORT
+
+
+# --- DateReference: what the user said about the date (#15, ADR-0030) --------------------
+
+
+def test_date_reference_parses_a_weekday_reference():
+    ref = DateReference(kind="weekday", weekday="Tuesday", last_week=False)
+    assert ref.weekday == "Tuesday"
+    # The shapes that don't apply stay null - the resolver relies on only one being filled.
+    assert ref.days_ago is None and ref.day is None
+
+
+def test_date_reference_parses_a_calendar_reference_without_a_year():
+    ref = DateReference(kind="calendar", day=3, month=7)
+    assert (ref.day, ref.month, ref.year) == (3, 7, None)
+
+
+def test_date_reference_rejects_an_unknown_kind():
+    # kind decides which fields the resolver reads, so an unknown one must fail here
+    # rather than reach the resolver and fall through to a silent default.
+    with pytest.raises(ValidationError):
+        DateReference(kind="next_week")
+
+
+def test_date_reference_rejects_a_misspelled_weekday():
+    with pytest.raises(ValidationError):
+        DateReference(kind="weekday", weekday="Tues")
+
+
+def test_transaction_requires_a_date_reference():
+    # The old free-text `date` field is gone; a payload without date_reference is invalid.
+    with pytest.raises(ValidationError):
+        TransactionSchema(
+            amount=12.50,
+            transaction_type="Expense",
+            category="Food",
+            needs_review=False,
+        )
 
 
 # --- build_allowed_accounts: the payment-method list fed to the extraction prompt ---------

@@ -5,7 +5,7 @@ from enum import Enum
 from pydantic import BaseModel, Field
 from openai import AsyncOpenAI
 from typing import Literal
-from app.services.utils import get_sgt_now
+from datetime import date
 
 # Initialize the OpenAI client
 openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -74,6 +74,36 @@ class ExpenseCategory(str, Enum):
     YOUTRIP_TOPUP = "YouTrip top-up"
     OTHER = "Other"
 
+Weekday = Literal['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+
+class DateReference(BaseModel):
+    """What the user *said* about the date - not the date itself (#15, ADR-0030).
+
+    The model used to return a finished YYYY-MM-DD, which meant it did the calendar maths
+    ("last Tuesday" -> which day is today -> count back). That maths can't be unit tested
+    without calling OpenAI, and a wrong date is permanent while saved rows can't be edited.
+    So the model now only reads the words, and app/services/dates.py turns this reference
+    into a date with plain Python that the test suite covers.
+
+    Exactly one shape is filled in, chosen by `kind`; the other fields stay null.
+    """
+    kind: Literal['unstated', 'today', 'days_ago', 'weekday', 'calendar'] = Field(description="""
+        'unstated' if the message says nothing about when. 'today' if it says today/just now.
+        'days_ago' for yesterday ('yday', 'ytd'), day before yesterday, 3 days ago.
+        'weekday' for a named day ('Tuesday', 'last tues', 'Tuesday last week').
+        'calendar' for a day and month ('3rd of July', '12 Sep', '3/7').""")
+    days_ago: Optional[int] = Field(default=None, description="""Only for kind 'days_ago': 1 for yesterday,
+        2 for the day before yesterday, and so on.""")
+    weekday: Optional[Weekday] = Field(default=None, description="Only for kind 'weekday': the day named.")
+    last_week: Optional[bool] = Field(default=None, description="""Only for kind 'weekday': true only when the
+        user explicitly says the day was in the previous week ('Tuesday last week'). 'last Tuesday'
+        or a bare 'Tuesday' is false.""")
+    day: Optional[int] = Field(default=None, description="Only for kind 'calendar': day of the month, 1-31.")
+    month: Optional[int] = Field(default=None, description="""Only for kind 'calendar': month number, 1-12.
+        Numeric dates are DAY FIRST: '3/7' is day 3, month 7.""")
+    year: Optional[int] = Field(default=None, description="""Only for kind 'calendar': the year, ONLY if the
+        user said one. Never fill it in yourself.""")
+
 # 2. Define the Upgraded Data Blueprint
 class TransactionSchema(BaseModel):
     # Optional[] means the LLM is allowed to return 'null' if the user forgot to state the price
@@ -100,7 +130,9 @@ class TransactionSchema(BaseModel):
     
     category: ExpenseCategory = Field(description="Classify into one of the exact ExpenseCategory enums.")
     
-    date: str = Field(description="YYYY-MM-DD format. Infer based on today's date.")
+    # Not a date: a description of what was said, resolved into a date by
+    # app/services/dates.py (see DateReference above).
+    date_reference: DateReference = Field(description="What the user said about when this happened.")
     
     # A flag for your future UI to know if it needs to ask the user for clarification
     needs_review: bool = Field(description="Set to true ONLY if amount is null or the transcript is highly confusing.")
@@ -110,9 +142,17 @@ class TransactionList(BaseModel):
     transactions: List[TransactionSchema] = Field(description="A list of extracted expenses. If the user mentions multiple distinct expenses, create a separate object for each.")
 
 # 3. The Extraction Function
-async def extract_transactions(transcript_text: str) -> dict | None:
-    """Takes raw text and safely extracts a structured JSON list of transactions."""
-    today_str = get_sgt_now().strftime("%Y-%m-%d")
+async def extract_transactions(transcript_text: str, today: date) -> dict | None:
+    """Takes raw text and safely extracts a structured JSON list of transactions.
+
+    'today' is passed in rather than read from the clock here, so the prompt and the date
+    resolver that runs afterwards (app/services/dates.py) share one value - otherwise a
+    message sent just before midnight could be read against one day and resolved against
+    the next.
+    """
+    # The weekday is included because "last Tuesday" can't be read without knowing what day
+    # today is - with only the date, the model had to work that out itself.
+    today_str = today.strftime("%A %Y-%m-%d")
 
     # Built per call rather than at import time, so the list always reflects the ACCOUNT_OWNERS
     # currently in the environment and this module stays safe to import without a loaded .env.
@@ -131,7 +171,10 @@ async def extract_transactions(transcript_text: str) -> dict | None:
                                                 The only valid payment methods are: {allowed_accounts}.
                                                 Use a value from that list and nothing else. If the user did not say how
                                                 they paid, leave payment_method null - do not guess, and do not pick the
-                                                only card that happens to look plausible."""},
+                                                only card that happens to look plausible.
+                                                For the date, record only what the user said in
+                                                date_reference - never calculate a date yourself.
+                                                Numeric dates are day first: 3/7 is 3 July."""},
                 {"role": "user", "content": transcript_text}
             ],
             response_format=TransactionList,
