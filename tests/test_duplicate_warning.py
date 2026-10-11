@@ -39,7 +39,7 @@ async def _show_card(monkeypatch, duplicate):
     """Runs process_expense_text for an SGD 5.50 entry sent by SENDER, with the duplicate check
     returning `duplicate`. Returns (context, card text, button row, the faked check)."""
     monkeypatch.setattr(bot_core, "extract_transactions", AsyncMock(return_value={"transactions": [{
-        "amount": 5.5, "currency": "SGD", "category": "Food", "date": "2026-09-12",
+        "amount": 5.5, "currency": "SGD", "category": "Food", "date_reference": {"kind": "unstated"},
         "transaction_type": "Expense", "payment_method": None,
     }]}))
     check = MagicMock(return_value=duplicate)

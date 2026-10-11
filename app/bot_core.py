@@ -9,6 +9,7 @@ import tempfile
 from app.add_expense import add_expense, dollars_to_cents, format_cents
 from app.services.utils import get_sgt_now, get_week_start, get_month_start
 from app.services.ledger_queries import get_recent_entries, get_period_summary, get_category_summary, find_recent_duplicate
+from app.services.dates import apply_date_resolution
 
 # use the local windows persmissions
 truststore.inject_into_ssl()
@@ -465,6 +466,10 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
     if single_transaction.get('amount') is None:
         await status_msg.edit_text("⚠️ I couldn't detect an exact amount. Could you try sending it again?")
         return # Stop processing this transaction
+
+    # Turn what the user said about the date ("yday", "last tues", "3/7") into the date itself,
+    # counting back from the same 'today' the prompt was given (#15, ADR-0030).
+    single_transaction = apply_date_resolution(single_transaction, today)
 
     # if the transaction is in non SGD currency, for now we automatically assume it's made with YouTrip, unless payment method already mentioned e.g. Cash
     single_transaction = apply_payment_defaults(single_transaction, spender_name)

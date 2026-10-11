@@ -259,7 +259,7 @@ async def test_new_entry_is_stamped_with_the_senders_telegram_id(monkeypatch):
     monkeypatch.setattr(bot_core, "ALLOWED_TG_IDS", {"111111": "Alice"})
     monkeypatch.setattr(bot_core, "ACCOUNT_OWNERS", {"Alice": ["Card A"]})
     monkeypatch.setattr(bot_core, "extract_transactions", AsyncMock(return_value={"transactions": [{
-        "amount": 5.0, "currency": "SGD", "category": "Food", "date": "2026-09-11",
+        "amount": 5.0, "currency": "SGD", "category": "Food", "date_reference": {"kind": "unstated"},
         "transaction_type": "Expense", "payment_method": None,
     }]}))
 
@@ -284,7 +284,7 @@ async def test_the_confirmation_card_shows_the_amount_that_will_be_saved(monkeyp
     monkeypatch.setattr(bot_core, "ACCOUNT_OWNERS", {"Alice": ["Card A"]})
     monkeypatch.setattr(bot_core, "find_recent_duplicate", MagicMock(return_value=None))
     monkeypatch.setattr(bot_core, "extract_transactions", AsyncMock(return_value={"transactions": [{
-        "amount": 1.005, "currency": "SGD", "category": "Food", "date": "2026-09-13",
+        "amount": 1.005, "currency": "SGD", "category": "Food", "date_reference": {"kind": "unstated"},
         "transaction_type": "Expense", "payment_method": None,
     }]}))
 

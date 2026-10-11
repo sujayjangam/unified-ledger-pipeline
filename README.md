@@ -42,7 +42,9 @@ flowchart TD
 transcribed with OpenAI Whisper; a plain text message is used as-is. From there both are raw
 text handled by `process_expense_text` in `app/bot_core.py`: GPT-4o-mini with Pydantic-typed
 structured output extracts amount, currency, category, payment method, transaction type and
-date, and deterministic rules then infer the payment account and its owner. Nothing is written
+what was said about the date ("yday", "last tues", "3/7"). Deterministic rules then work out
+the date itself, in tested Python rather than in the model, and infer the payment account and
+its owner. Nothing is written
 without an explicit confirmation tap — a human validation gate between the LLM and the ledger.
 Unsupported message types (photos, stickers, documents) get an explicit reply rather than
 silence.
@@ -127,8 +129,8 @@ Forward-looking work, tracked in [`ROADMAP.md`](ROADMAP.md):
   ([ADR-0015](docs/decisions/0015-deterministic-matching-before-llm.md)).
 - **Evaluation harness** (Phase 2): a hand-labeled golden set of statement-line → ledger-entry
   matches, scored with precision/recall, used to tune the matcher instead of guessing constants.
-- Nearer-term: backdated date parsing for voice and typed entries ("yesterday", "last Tuesday",
-  "3/7"), before the reconciliation engine. Editing and deleting saved entries follows later, once
+- Nearer-term: a warning on the confirmation card when a date looks wrong (in the future, or
+  more than 60 days back), before the reconciliation engine. Editing and deleting saved entries follows later, once
   the matcher is flagging the entries that need correcting.
 
 ## Getting started

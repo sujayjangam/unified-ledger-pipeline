@@ -50,8 +50,11 @@ and its end was fixed on 2026-09-23
   the unused `job-queue` extra dropped ([#71](https://github.com/sujayjangam/unified-ledger-pipeline/pull/71)), 2026-09-19
 
 **Next action:** backdated and relative dates, for voice and typed entries alike
-([#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15)). It is the last Phase 0
-item: Phase 0 closes when it ships, and every other open Phase 0 item moved to a later phase
+([#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15)). Steps 1 and 2 (#73,
+#75: the model describes the date, `app/services/dates.py` calculates it) are built and tested on
+`feat/date-resolution-15`, not yet merged;
+step 3, the warning on implausible dates (#74), is next. It is the last Phase 0 item: Phase 0
+closes when it ships, and every other open Phase 0 item moved to a later phase
 (decided 2026-09-23, [ADR-0029](docs/decisions/0029-close-phase-0-on-date-parsing.md)). Phase 1
 starts with [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53).
 

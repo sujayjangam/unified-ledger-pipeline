@@ -92,12 +92,18 @@ class DateReference(BaseModel):
         'days_ago' for yesterday ('yday', 'ytd'), day before yesterday, 3 days ago.
         'weekday' for a named day ('Tuesday', 'last tues', 'Tuesday last week').
         'calendar' for a day and month ('3rd of July', '12 Sep', '3/7').""")
-    days_ago: Optional[int] = Field(default=None, description="""Only for kind 'days_ago': 1 for yesterday,
-        2 for the day before yesterday, and so on.""")
+    # 'ytd' is spelled out here and again in the system prompt. With neither, the model read
+    # "Grab 12.80 ytd" as 2 days ago in 2 of 5 runs; with only this one, 3 of 10; with both,
+    # 0 of 10.
+    days_ago: Optional[int] = Field(default=None, description="""Only for kind 'days_ago': 1 for yesterday
+        ('yesterday', 'yday', 'ytd' are all 1), 2 for the day before yesterday, and so on.""")
     weekday: Optional[Weekday] = Field(default=None, description="Only for kind 'weekday': the day named.")
-    last_week: Optional[bool] = Field(default=None, description="""Only for kind 'weekday': true only when the
-        user explicitly says the day was in the previous week ('Tuesday last week'). 'last Tuesday'
-        or a bare 'Tuesday' is false.""")
+    # There is deliberately no field here for "Tuesday last week" versus "last Tuesday". The
+    # model could not tell them apart: with a last_week field it marked "last tues" as last
+    # week in 5 of 5 runs, however the description was worded, and asked to copy the week
+    # words instead it invented "last week" for messages that didn't contain it. The
+    # difference is one literal phrase, so app/services/dates.py checks the message text for
+    # it instead (mentions_last_week) - deterministic, and covered by tests.
     day: Optional[int] = Field(default=None, description="Only for kind 'calendar': day of the month, 1-31.")
     month: Optional[int] = Field(default=None, description="""Only for kind 'calendar': month number, 1-12.
         Numeric dates are DAY FIRST: '3/7' is day 3, month 7.""")
@@ -174,6 +180,7 @@ async def extract_transactions(transcript_text: str, today: date) -> dict | None
                                                 only card that happens to look plausible.
                                                 For the date, record only what the user said in
                                                 date_reference - never calculate a date yourself.
+                                                Typed shorthand: 'yday' and 'ytd' both mean yesterday.
                                                 Numeric dates are day first: 3/7 is 3 July."""},
                 {"role": "user", "content": transcript_text}
             ],

@@ -167,18 +167,26 @@ message. In order:
    ([ADR-0010](docs/decisions/0010-one-expense-per-message.md)).
 3. No amount → the entry is abandoned with a prompt to retry. The prompt tells the model never to
    guess an amount, so this is where a non-expense message ("hello") lands.
-4. `apply_payment_defaults` (standalone so it can be unit-tested): a YouTrip top-up is forced to
+4. `dates.py::apply_date_resolution` sets `date`. The model returns only a `date_reference` (what
+   was said: nothing, today, N days ago, a weekday, a day and month); `resolve_date_reference`
+   does the calendar maths in plain Python, counting back from the one SGT `today` that
+   `process_expense_text` also passed to the prompt. Never let the model calculate a date again:
+   that maths can't be tested. "Tuesday last week" vs "last Tuesday" is read from the message
+   text by `mentions_last_week`, not the model, which couldn't tell them apart. A reference that
+   can't be resolved falls back to today
+   ([ADR-0030](docs/decisions/0030-llm-reads-dates-python-resolves.md)).
+5. `apply_payment_defaults` (standalone so it can be unit-tested): a YouTrip top-up is forced to
    `PRIMARY_ACCOUNT_OWNER`'s default account and type `Transfer`; otherwise a missing payment
    method becomes `YouTrip` for non-SGD or the sender's default account for SGD. `account_owner`
    is then reverse-matched from the payment method (case-insensitive; `Cash` → the sender). It
    means *whose card paid*, not who sent the message — the sender is `entered_by`.
-5. Duplicate check: `ledger_queries.py::find_recent_duplicate` looks for the same amount (cents)
+6. Duplicate check: `ledger_queries.py::find_recent_duplicate` looks for the same amount (cents)
    and currency saved by anyone in the last `DUPLICATE_WINDOW_MINUTES` (5), windowed on
    `created_at`. A match turns the card into a warning with "⚠️ Save anyway" / "❌ Cancel" (same
    `confirm_save` path). It runs before the card is shown, never inside the insert, and a failed
    check gives a normal card — it must never block a save
    ([ADR-0027](docs/decisions/0027-duplicate-warning-before-the-card.md)).
-6. The pending entry is stashed in `context.user_data['pending_cards']`, keyed by the card's
+7. The pending entry is stashed in `context.user_data['pending_cards']`, keyed by the card's
    `message_id`, and written only when Confirm is tapped
    ([ADR-0023](docs/decisions/0023-in-memory-confirm-card-state.md)).
 
