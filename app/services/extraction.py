@@ -113,8 +113,17 @@ class DateReference(BaseModel):
 # 2. Define the Upgraded Data Blueprint
 class TransactionSchema(BaseModel):
     # Optional[] means the LLM is allowed to return 'null' if the user forgot to state the price
-    amount: Optional[float] = Field(default=None, description="""The exact numerical value. Extract ONLY the number. 
-                                    Example: for '50 ringgit', extract 50.0. If not explicitly stated in the text, it must be NULL""")
+    # The examples lead with a bare number on purpose (#77). This description used to say only
+    # when to return null, and the model read terse typed messages like "Lunch 15 yday" as
+    # "price not stated" - measured null in 13 of 13 runs. Re-check any wording change here
+    # with scripts/check_extraction.py; the test suite can't call the model.
+    amount: Optional[float] = Field(default=None, description="""The price paid, as a number only.
+                                    In a short typed message the price is usually a bare number with no
+                                    currency sign and no decimals - that number IS the amount:
+                                    'Lunch 15 yday' -> 15, 'coffee 5' -> 5, 'grab 12.80' -> 12.8,
+                                    '50 ringgit' -> 50. A number that is part of the date ('3/7',
+                                    '12 Sep', '3 days ago') is not the amount. Null ONLY when the
+                                    message contains no price at all ('hello', 'lunch yesterday').""")
     
     currency: str = Field(default="SGD", description="""3-letter ISO currency code. 
                           You MUST map spoken words to standard codes: 'dollars' -> SGD, 'ringgit' -> MYR, 'rupiah' -> IDR, 'baht' -> THB, 'usd' -> USD, 'rupees' -> INR, 'aud' -> AUD.
@@ -171,9 +180,10 @@ async def extract_transactions(transcript_text: str, today: date) -> dict | None
                 # CHANGED: Added a strict 'No Translation' rule directly to the system prompt engine
                 {"role": "system", "content": f"""You are a strict financial data extraction tool. Today is {today_str}.
                                                 Extract notes in the EXACT original language. DO NOT translate into Malay,
-                                                Indonesian, or any other language. If a user forgets to mention a price or
-                                                details are vague, leave those fields null and set needs_review to true.
-                                                Never guess an amount.
+                                                Indonesian, or any other language. Messages are often short and typed:
+                                                a bare number in them is the price ('Lunch 15 yday' is 15). If the
+                                                message contains no price at all, leave amount null and set
+                                                needs_review to true. Never guess an amount that isn't there.
                                                 The only valid payment methods are: {allowed_accounts}.
                                                 Use a value from that list and nothing else. If the user did not say how
                                                 they paid, leave payment_method null - do not guess, and do not pick the

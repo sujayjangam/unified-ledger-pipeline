@@ -173,8 +173,8 @@ message. In order:
    `process_expense_text` also passed to the prompt. Never let the model calculate a date again:
    that maths can't be tested. "Tuesday last week" vs "last Tuesday" is read from the message
    text by `mentions_last_week`, not the model, which couldn't tell them apart. A reference that
-   can't be resolved falls back to today
-   ([ADR-0030](docs/decisions/0030-llm-reads-dates-python-resolves.md)).
+   can't be resolved falls back to today ([ADR-0030](docs/decisions/0030-llm-reads-dates-python-resolves.md),
+   [ADR-0031](docs/decisions/0031-last-week-from-message-text.md)).
 5. `apply_payment_defaults` (standalone so it can be unit-tested): a YouTrip top-up is forced to
    `PRIMARY_ACCOUNT_OWNER`'s default account and type `Transfer`; otherwise a missing payment
    method becomes `YouTrip` for non-SGD or the sender's default account for SGD. `account_owner`
@@ -253,6 +253,13 @@ Independent of the bot — a minimal FastAPI surface (`GET/POST /transactions`) 
 a real owner's name.
 
 ### `scripts/`
+
+`scripts/check_extraction.py` sends a fixed list of messages through the real model and reports
+how often each one extracted the right amount and date. The test suite can't check this, because
+it never calls the model. Run `python -m scripts.check_extraction` (it uses the OpenAI key from
+`.env`, never the database) after any change to the prompt or the schema descriptions in
+`extraction.py`, and add a message to its list whenever a real one is misread
+([ADR-0031](docs/decisions/0031-last-week-from-message-text.md)).
 
 `scripts/migrate_to_postgres.py` is the one-off SQLite → Postgres copy, run on 2026-08-01. Its
 source file no longer exists, so it can't run again. It is kept on purpose as a reference — don't
