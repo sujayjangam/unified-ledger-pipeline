@@ -7,7 +7,8 @@ on:
 
 jobs:
   check-PR-before-merge:
-    runs-on: ubuntu-latest
+    # Pinned to match backup.yml: ubuntu-latest moves to a new Ubuntu without warning.
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
 
