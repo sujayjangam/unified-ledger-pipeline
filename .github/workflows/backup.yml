@@ -17,7 +17,10 @@ env:
 
 jobs:
   backup:
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: on 2026-10-21 GitHub moved ubuntu-latest from 24.04 to 26.04
+    # overnight, and 26.04's stricter apt broke the pg_dump install below, so a scheduled backup
+    # failed with no change in this repo. Move this pin deliberately, with a manual run to check.
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     steps:
       - name: Authenticate to GCP (Workload Identity Federation)
@@ -34,9 +37,12 @@ jobs:
         run: |
           set -euo pipefail
           sudo install -d /usr/share/postgresql-common/pgdg
-          sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.pub \
+          # The key is ASCII-armoured, so the file must end in .asc: apt on Ubuntu 26.04 ignores
+          # an armoured key saved as .pub ("unsupported filetype"), and then refuses the repo as
+          # unsigned. Older apt tolerated .pub, which is why this only surfaced on 26.04.
+          sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
             --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
-          sudo sh -c 'echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.pub] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+          sudo sh -c 'echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
             > /etc/apt/sources.list.d/pgdg.list'
           sudo apt-get update
 
@@ -49,8 +55,8 @@ jobs:
           # update this pin (and the PG_BIN_DIR fallback below) alongside that upgrade.
           sudo apt-get install -y postgresql-client-18
 
-          # ubuntu-latest runners ship an older pg_dump on PATH already (16.14, from Ubuntu's
-          # own noble repo, confirmed via a live run) which the apt-get above does not override.
+          # The runner image can ship its own older pg_dump on PATH (24.04 had 16.14 from Ubuntu's
+          # noble repo, confirmed via a live run), which the apt-get above does not override.
           # The PGDG-installed binary must be found explicitly and put ahead of PATH for every
           # later step in this job (GITHUB_PATH additions apply starting next step, not this one).
           PG_BIN_DIR="$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)"
