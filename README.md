@@ -106,6 +106,8 @@ its context, rejected alternatives and cost. The ones that shaped the system mos
 
 - Voice and text expense capture through the Telegram bot, deployed on Cloud Run.
 - Confirmation-gated, idempotent writes to the Postgres ledger.
+- Backdated and relative dates, voice or typed ("yday", "last tues", "3/7"): the model describes
+  what was said, and tested Python works out the date shown on the confirmation card.
 - A warning before saving an entry that matches one logged in the last 5 minutes (same amount and
   currency, by anyone in the household), naming who logged it when that's recorded; the user can
   save anyway or cancel.
