@@ -48,12 +48,18 @@ and its end was fixed on 2026-09-23
   ([#68](https://github.com/sujayjangam/unified-ledger-pipeline/pull/68)), `CLAUDE.md` /
   `ROADMAP.md` trimmed ([#70](https://github.com/sujayjangam/unified-ledger-pipeline/pull/70)), and
   the unused `job-queue` extra dropped ([#71](https://github.com/sujayjangam/unified-ledger-pipeline/pull/71)), 2026-09-19
+- Backdated and relative dates ("yday", "last tues", "3/7"): the model describes the date and
+  Python works it out, plus short typed prices read as the amount (#73, #75, #77 via
+  [#78](https://github.com/sujayjangam/unified-ledger-pipeline/pull/78),
+  [ADR-0030](docs/decisions/0030-llm-reads-dates-python-resolves.md),
+  [ADR-0031](docs/decisions/0031-last-week-from-message-text.md)), 2026-10-11. #15 stays open
+  until the implausible-date warning (#74) ships
 
 **Next action:** backdated and relative dates, for voice and typed entries alike
 ([#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15)). Steps 1 and 2 (#73,
-#75: the model describes the date, `app/services/dates.py` calculates it) are built and tested on
-`feat/date-resolution-15`, not yet merged, along with the fix for short typed prices read as no
-amount ([#77](https://github.com/sujayjangam/unified-ledger-pipeline/issues/77), checked by
+#75: the model describes the date, `app/services/dates.py` calculates it) merged on 2026-10-11
+([#78](https://github.com/sujayjangam/unified-ledger-pipeline/pull/78)), along with the fix for
+short typed prices read as no amount ([#77](https://github.com/sujayjangam/unified-ledger-pipeline/issues/77), checked by
 `scripts/check_extraction.py`, [ADR-0031](docs/decisions/0031-last-week-from-message-text.md));
 step 3, the warning on implausible dates (#74), is next. It is the last Phase 0 item: Phase 0
 closes when it ships, and every other open Phase 0 item moved to a later phase
@@ -190,8 +196,9 @@ human-in-the-loop claim doesn't hold until this actually gates bot behavior.
 - `.venv/` and `data/ledger.db` are untracked as of 2026-08-01 but **still present in git
 history** — purging needs a rewrite + force-push, deliberately deferred. Tracked as
 [#61](https://github.com/sujayjangam/unified-ledger-pipeline/issues/61).
-- Every entry, voice or typed, gets today's date regardless of what's said ("yesterday", "last
-Tuesday", "3/7", etc.). Tracked as [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15).
+- A date that resolves to the future or far in the past is saved without any warning, and one
+that can't be worked out silently becomes today. Tracked as
+[#74](https://github.com/sujayjangam/unified-ledger-pipeline/issues/74).
 - The backup workflow (`.github/workflows/backup.yml`) has no failure alerting yet — deliberately
 deferred to when the Phase 1 "Telegram alert on pipeline failure" item exists, which should be
 extended to cover this workflow too, not just the reconciliation pipeline.
@@ -290,7 +297,7 @@ ahead of capture ([ADR-0020](docs/decisions/0020-ci-scaffolding-before-remaining
 
 - [ ] Backdated/relative date parsing from the expense text, voice or typed ("yesterday", "last
 Tuesday", "3/7", explicit dates) — [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) via
-#73, #75, #74 ([ADR-0030](docs/decisions/0030-llm-reads-dates-python-resolves.md)). Highest leverage of the group: without it every entry must be logged at the moment of spend, and a
+#73, #75 (done 2026-10-11), #74 ([ADR-0030](docs/decisions/0030-llm-reads-dates-python-resolves.md)). Highest leverage of the group: without it every entry must be logged at the moment of spend, and a
 wrong date is permanent while saved rows can't be edited.
 - [x] Business date vs. write time, and reliable ordering —
 [#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) via #10-#14, shipped
