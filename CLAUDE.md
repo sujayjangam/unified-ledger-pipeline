@@ -171,7 +171,10 @@ message. In order:
    `process_expense_text` also passed to the prompt. Never let the model calculate a date again:
    that maths can't be tested. "Tuesday last week" vs "last Tuesday" is read from the message
    text by `mentions_last_week`, not the model, which couldn't tell them apart. A reference that
-   can't be resolved falls back to today ([ADR-0030](docs/decisions/0030-llm-reads-dates-python-resolves.md),
+   can't be resolved falls back to today. It also sets `date_warning` (`dates.py::date_warning`):
+   text for a ⚠️ line the card shows under the date when the date is in the future, more than 60
+   days back, or couldn't be resolved. The warning never blocks the save and is never written to
+   the database ([ADR-0030](docs/decisions/0030-llm-reads-dates-python-resolves.md),
    [ADR-0031](docs/decisions/0031-last-week-from-message-text.md)).
 5. `apply_payment_defaults` (standalone so it can be unit-tested): a YouTrip top-up is forced to
    `PRIMARY_ACCOUNT_OWNER`'s default account and type `Transfer`; otherwise a missing payment

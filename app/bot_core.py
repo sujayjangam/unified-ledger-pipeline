@@ -367,6 +367,21 @@ def _display_amount(transaction: dict) -> str:
         return f"{currency} {float(transaction.get('amount')):.2f}"
 
 
+def _date_lines(transaction: dict) -> str:
+    """The card's date line, plus a ⚠️ line straight under it if the date looks wrong (#74).
+
+    'date_warning' is set by apply_date_resolution: None for a normal date, otherwise the
+    text to show (in the future, more than 60 days back, or couldn't be worked out). It is
+    a line of text and nothing more - the buttons and the save path are untouched, so a
+    flagged date can always still be saved (ADR-0030). .get() because an entry built any
+    other way (older tests, a card stashed before this shipped) has no such key.
+    """
+    lines = f"📅 **Date:** {transaction.get('date')}\n"
+    if transaction.get('date_warning'):
+        lines += f"⚠️ {transaction['date_warning']}\n"
+    return lines
+
+
 def _format_age(seconds: int) -> str:
     """How long ago the earlier entry was saved: 'just now', '40 seconds ago', '2 minutes ago'."""
     seconds = max(0, int(seconds))  # clamped so a rounding quirk can never read "-1 seconds ago"
@@ -502,7 +517,7 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
         f"💳 **Account:** {single_transaction.get('payment_method', 'Unspecified')}\n"
         f"💳 **Account Owner:** {single_transaction.get('account_owner', 'Unspecified')}\n"
         f"📝 **Notes:** {single_transaction.get('description', 'None')}\n"
-        f"📅 **Date:** {single_transaction.get('date')}\n"
+        f"{_date_lines(single_transaction)}"
     )
 
     # Send the clean summary with its buttons attached - Confirm/Cancel, or Save anyway/Cancel if flagged
@@ -663,7 +678,9 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
                 f"💰 **Amount:** {_display_amount(transaction_to_save)}\n"
                 f"🏷️ **Category:** {transaction_to_save.get('category')}\n"
                 f"📝 **Notes:** {transaction_to_save.get('description', 'None')}\n"
-                f"📅 **Date:** {transaction_to_save.get('date')}\n\n"
+                # Same date lines as the first card, ⚠️ included: this card is live again,
+                # so it should still say what was odd about the date being retried.
+                f"{_date_lines(transaction_to_save)}\n"
                 f"Tap **{retry_label}** to try again."
             )
             # _keyboard_for, not _confirm_keyboard: a flagged card gets its warning buttons back
