@@ -107,7 +107,9 @@ its context, rejected alternatives and cost. The ones that shaped the system mos
 - Voice and text expense capture through the Telegram bot, deployed on Cloud Run.
 - Confirmation-gated, idempotent writes to the Postgres ledger.
 - Backdated and relative dates, voice or typed ("yday", "last tues", "3/7"): the model describes
-  what was said, and tested Python works out the date shown on the confirmation card.
+  what was said, and tested Python works out the date shown on the confirmation card. The card
+  adds a warning when the date looks wrong (in the future, more than 60 days back, or not
+  understood), and the user can still save it.
 - A warning before saving an entry that matches one logged in the last 5 minutes (same amount and
   currency, by anyone in the household), naming who logged it when that's recorded; the user can
   save anyway or cancel.
@@ -131,9 +133,8 @@ Forward-looking work, tracked in [`ROADMAP.md`](ROADMAP.md):
   ([ADR-0015](docs/decisions/0015-deterministic-matching-before-llm.md)).
 - **Evaluation harness** (Phase 2): a hand-labeled golden set of statement-line → ledger-entry
   matches, scored with precision/recall, used to tune the matcher instead of guessing constants.
-- Nearer-term: a warning on the confirmation card when a date looks wrong (in the future, or
-  more than 60 days back), before the reconciliation engine. Editing and deleting saved entries follows later, once
-  the matcher is flagging the entries that need correcting.
+- Editing and deleting saved entries follows later, once the matcher is flagging the entries
+  that need correcting.
 
 ## Getting started
 

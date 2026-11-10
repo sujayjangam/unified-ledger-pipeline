@@ -19,10 +19,11 @@ doesn't map to anything in the actual system. Use, and refine once Phase 1/2 lan
 
 ## Current status
 
-**Phase:** Phase 0 — Foundation & ownership, on its last item. Scope was extended on 2026-08-20
-to cover capture friction ([ADR-0017](docs/decisions/0017-extend-phase-0-for-capture-friction.md)),
-and its end was fixed on 2026-09-23
-([ADR-0029](docs/decisions/0029-close-phase-0-on-date-parsing.md)).
+**Phase:** Phase 0 — Foundation & ownership closed on 2026-11-10, when its last item (the
+date warning, #74) shipped. Phase 1 — Reconciliation engine is next and has not started. Phase 0's
+scope was extended on 2026-08-20 to cover capture friction
+([ADR-0017](docs/decisions/0017-extend-phase-0-for-capture-friction.md)), and its end was fixed on
+2026-09-23 ([ADR-0029](docs/decisions/0029-close-phase-0-on-date-parsing.md)).
 
 **Shipped** (the linked issues and ADRs hold the detail):
 
@@ -52,21 +53,20 @@ and its end was fixed on 2026-09-23
   Python works it out, plus short typed prices read as the amount (#73, #75, #77 via
   [#78](https://github.com/sujayjangam/unified-ledger-pipeline/pull/78),
   [ADR-0030](docs/decisions/0030-llm-reads-dates-python-resolves.md),
-  [ADR-0031](docs/decisions/0031-last-week-from-message-text.md)), 2026-10-11. #15 stays open
-  until the implausible-date warning (#74) ships
+  [ADR-0031](docs/decisions/0031-last-week-from-message-text.md)), 2026-10-11
+- A ⚠️ line under the date on the confirmation card when the date is in the future, more than 60
+  days back, or couldn't be worked out; it never blocks the save
+  ([#74](https://github.com/sujayjangam/unified-ledger-pipeline/issues/74), closing
+  [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15),
+  [ADR-0030](docs/decisions/0030-llm-reads-dates-python-resolves.md)), 2026-11-10
 
-**Next action:** backdated and relative dates, for voice and typed entries alike
-([#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15)). Steps 1 and 2 (#73,
-#75: the model describes the date, `app/services/dates.py` calculates it) merged on 2026-10-11
-([#78](https://github.com/sujayjangam/unified-ledger-pipeline/pull/78)), along with the fix for
-short typed prices read as no amount ([#77](https://github.com/sujayjangam/unified-ledger-pipeline/issues/77), checked by
-`scripts/check_extraction.py`, [ADR-0031](docs/decisions/0031-last-week-from-message-text.md));
-step 3, the warning on implausible dates (#74), is next. It is the last Phase 0 item: Phase 0
-closes when it ships, and every other open Phase 0 item moved to a later phase
-(decided 2026-09-23, [ADR-0029](docs/decisions/0029-close-phase-0-on-date-parsing.md)). Phase 1
-starts with [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53).
+**Next action:** start Phase 1 with
+[#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53): household participants
+and accounts as Postgres tables, replacing the env vars. Every Phase 0 item that was still open
+when the phase closed had already moved to a later phase (decided 2026-09-23,
+[ADR-0029](docs/decisions/0029-close-phase-0-on-date-parsing.md)).
 
-**Open top-level issues:** [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) backdated dates (Phase 0) ·
+**Open top-level issues:**
 [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53)
 household accounts live in env secrets (Phase 1) ·
 [#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27) unpinned dependencies (Phase 1) ·
@@ -196,9 +196,6 @@ human-in-the-loop claim doesn't hold until this actually gates bot behavior.
 - `.venv/` and `data/ledger.db` are untracked as of 2026-08-01 but **still present in git
 history** — purging needs a rewrite + force-push, deliberately deferred. Tracked as
 [#61](https://github.com/sujayjangam/unified-ledger-pipeline/issues/61).
-- A date that resolves to the future or far in the past is saved without any warning, and one
-that can't be worked out silently becomes today. Tracked as
-[#74](https://github.com/sujayjangam/unified-ledger-pipeline/issues/74).
 - The backup workflow (`.github/workflows/backup.yml`) has no failure alerting yet — deliberately
 deferred to when the Phase 1 "Telegram alert on pipeline failure" item exists, which should be
 extended to cover this workflow too, not just the reconciliation pipeline.
@@ -285,8 +282,8 @@ engine, and Alembic for migrations ([ADR-0007](docs/decisions/0007-alembic-hand-
 Actions workflow ([ADR-0012](docs/decisions/0012-github-actions-over-cloud-scheduler.md)); restore
 procedure in `docs/BACKUP_RESTORE.md`.
 
-**Phase 0 closes when [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15)
-ships** (decided 2026-09-23,
+**Phase 0 closed on 2026-11-10, when [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15)
+shipped** (the rule was decided 2026-09-23,
 [ADR-0029](docs/decisions/0029-close-phase-0-on-date-parsing.md)). Every other item that was still
 open moved to the phase whose work needs it; each one is left below as a single line saying where
 it went. The CI scaffolding and the tests over code the capture work won't touch had already moved
@@ -295,9 +292,9 @@ ahead of capture ([ADR-0020](docs/decisions/0020-ci-scaffolding-before-remaining
 **1. Capture reliability** — the binding constraint on data quality
 ([ADR-0017](docs/decisions/0017-extend-phase-0-for-capture-friction.md)).
 
-- [ ] Backdated/relative date parsing from the expense text, voice or typed ("yesterday", "last
+- [x] Backdated/relative date parsing from the expense text, voice or typed ("yesterday", "last
 Tuesday", "3/7", explicit dates) — [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15) via
-#73, #75 (done 2026-10-11), #74 ([ADR-0030](docs/decisions/0030-llm-reads-dates-python-resolves.md)). Highest leverage of the group: without it every entry must be logged at the moment of spend, and a
+#73, #75 (done 2026-10-11), #74 (done 2026-11-10) ([ADR-0030](docs/decisions/0030-llm-reads-dates-python-resolves.md)). Highest leverage of the group: without it every entry must be logged at the moment of spend, and a
 wrong date is permanent while saved rows can't be edited.
 - [x] Business date vs. write time, and reliable ordering —
 [#9](https://github.com/sujayjangam/unified-ledger-pipeline/issues/9) via #10-#14, shipped

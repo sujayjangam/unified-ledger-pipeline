@@ -1,9 +1,9 @@
 # ADR-0030: Let the model describe the date and Python calculate it; warn on implausible dates
 
-**Status:** Accepted (not yet implemented)  
+**Status:** Accepted  
 **Date:** 2026-09-23  
 **Issues:** [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15), via [#73](https://github.com/sujayjangam/unified-ledger-pipeline/issues/73), [#75](https://github.com/sujayjangam/unified-ledger-pipeline/issues/75), [#74](https://github.com/sujayjangam/unified-ledger-pipeline/issues/74)  
-**Code:** `app/services/extraction.py::DateReference`, `::extract_transactions`, `app/services/dates.py` (planned), `app/bot_core.py::process_expense_text`
+**Code:** `app/services/extraction.py::DateReference`, `::extract_transactions`, `app/services/dates.py`, `app/bot_core.py::process_expense_text`, `::_date_lines`
 
 ## Context
 

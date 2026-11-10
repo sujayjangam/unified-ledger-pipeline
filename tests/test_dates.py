@@ -10,7 +10,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 import app.bot_core as bot_core
-from app.services.dates import apply_date_resolution, mentions_last_week, resolve_date_reference
+from app.services.dates import (
+    apply_date_resolution,
+    date_warning,
+    mentions_last_week,
+    resolve_date_reference,
+)
 from app.services.extraction import DateReference
 from app.services.utils import SG_TZ
 
@@ -259,11 +264,68 @@ def test_apply_falls_back_to_today_when_there_is_no_date_reference():
     assert txn["date"] == "2026-09-23"
 
 
+# --- date_warning: does the date look wrong? (#74) -----------------------------------------
+
+@pytest.mark.parametrize("resolved", [
+    date(2026, 9, 23),   # today
+    date(2026, 9, 22),   # yesterday
+    date(2026, 7, 25),   # exactly 60 days back - the last day that is still fine
+])
+def test_a_plausible_date_gets_no_warning(resolved):
+    assert date_warning(resolved, TODAY) is None
+
+
+def test_61_days_back_gets_the_too_old_warning():
+    assert date_warning(date(2026, 7, 24), TODAY) == "This date is more than 60 days ago."
+
+
+def test_tomorrow_gets_the_future_warning():
+    assert date_warning(date(2026, 9, 24), TODAY) == "This date is in the future."
+
+
+def test_a_date_that_couldnt_be_worked_out_gets_the_fallback_warning():
+    # None is what resolve_date_reference returns when it can't work the date out.
+    assert date_warning(None, TODAY) == "Couldn't work out the date, so today was used."
+
+
+def test_apply_leaves_no_warning_on_a_normal_date():
+    txn = {"date_reference": model_ref(kind="days_ago", days_ago=1)}
+
+    apply_date_resolution(txn, TODAY)
+
+    assert txn["date_warning"] is None
+
+
+def test_apply_warns_when_it_fell_back_to_today():
+    # 29 February 2026 doesn't exist. The date becomes today, which on its own looks
+    # perfectly normal - so the warning has to come from the failed lookup, not the date.
+    txn = {"date_reference": model_ref(kind="calendar", day=29, month=2)}
+
+    apply_date_resolution(txn, TODAY)
+
+    assert txn["date"] == "2026-09-23"
+    assert txn["date_warning"] == "Couldn't work out the date, so today was used."
+
+
+def test_apply_warns_on_a_future_date_but_still_uses_it():
+    # "25 Dec 2026", said in September 2026. The user named the year, so the date is kept
+    # as said - the warning informs, it never changes or rejects the date (ADR-0030).
+    txn = {"date_reference": model_ref(kind="calendar", day=25, month=12, year=2026)}
+
+    apply_date_resolution(txn, TODAY)
+
+    assert txn["date"] == "2026-12-25"
+    assert txn["date_warning"] == "This date is in the future."
+
+
 # --- the whole pipeline: the card shows the resolved date ----------------------------------
 
-async def test_the_card_shows_yesterdays_date_for_yday(monkeypatch):
-    # process_expense_text end to end, minus the network: the clock, the model call and the
-    # duplicate check are faked, and the card message is a mock.
+async def _show_card(monkeypatch, text, date_reference):
+    """Runs process_expense_text end to end, minus the network: the clock, the model call and
+    the duplicate check are faked, and the card message is a mock.
+
+    Returns (context, the card's text, the faked model call).
+    """
     monkeypatch.setattr(bot_core, "ALLOWED_TG_IDS", {"111111": "Alice"})
     monkeypatch.setattr(bot_core, "ACCOUNT_OWNERS", {"Alice": ["Card A"]})
     monkeypatch.setattr(bot_core, "find_recent_duplicate", MagicMock(return_value=None))
@@ -272,7 +334,7 @@ async def test_the_card_shows_yesterdays_date_for_yday(monkeypatch):
     monkeypatch.setattr(bot_core, "get_sgt_now", lambda: datetime(2026, 9, 23, 10, 0, tzinfo=SG_TZ))
     extract = AsyncMock(return_value={"transactions": [{
         "amount": 12.5, "currency": "SGD", "category": "Food", "transaction_type": "Expense",
-        "payment_method": None, "date_reference": model_ref(kind="days_ago", days_ago=1),
+        "payment_method": None, "date_reference": date_reference,
     }]})
     monkeypatch.setattr(bot_core, "extract_transactions", extract)
 
@@ -284,10 +346,83 @@ async def test_the_card_shows_yesterdays_date_for_yday(monkeypatch):
     context = MagicMock()
     context.user_data = {}
 
-    await bot_core.process_expense_text(update, context, "lunch 12.50 yday", status_msg)
+    await bot_core.process_expense_text(update, context, text, status_msg)
+
+    return context, status_msg.edit_text.await_args.args[0], extract
+
+
+async def test_the_card_shows_yesterdays_date_for_yday(monkeypatch):
+    context, card, extract = await _show_card(
+        monkeypatch, "lunch 12.50 yday", model_ref(kind="days_ago", days_ago=1))
 
     # The model was given the same "today" the date was counted back from.
     extract.assert_awaited_once_with("lunch 12.50 yday", TODAY)
     # The card shows yesterday, and the entry waiting for Confirm carries it too.
-    assert "2026-09-22" in status_msg.edit_text.await_args.args[0]
+    assert "2026-09-22" in card
     assert context.user_data["pending_cards"][500]["date"] == "2026-09-22"
+    # A normal date: the only ⚠️ a card can carry here would be the date warning.
+    assert "⚠️" not in card
+
+
+async def test_the_card_warns_under_the_date_when_it_looks_wrong(monkeypatch):
+    # 90 days back is 2026-06-25, past the 60-day limit.
+    context, card, _ = await _show_card(
+        monkeypatch, "lunch 12.50 90 days ago", model_ref(kind="days_ago", days_ago=90))
+
+    # The ⚠️ line sits directly under the date line, not somewhere else on the card.
+    assert "📅 **Date:** 2026-06-25\n⚠️ This date is more than 60 days ago.\n" in card
+    # The warning changes nothing about the entry itself: same date, still waiting for Confirm.
+    assert context.user_data["pending_cards"][500]["date"] == "2026-06-25"
+
+
+# --- a flagged date never blocks the save (#74) ---------------------------------------------
+
+def _pending_txn_with_a_flagged_date():
+    """A pending entry of the shape process_expense_text stashes, dated 90 days back."""
+    return {
+        "date": "2026-06-25", "date_warning": "This date is more than 60 days ago.",
+        "description": "lunch 12.50 90 days ago", "amount": 12.5, "category": "Food",
+        "currency": "SGD", "transaction_type": "Expense", "payment_method": "Card A",
+        "account_owner": "Alice", "idempotency_key": "key-1", "entered_by": "111111",
+        "suspected_duplicate": None,
+    }
+
+
+async def _tap_confirm(monkeypatch, save_result):
+    """Taps Confirm on a card holding the flagged entry, with add_expense faked to return
+    `save_result`. Returns (context, the faked add_expense, the fake button tap)."""
+    saves = MagicMock(return_value=save_result)
+    monkeypatch.setattr(bot_core, "add_expense", saves)
+    context = MagicMock()
+    context.user_data = {}
+    bot_core._remember_pending_card(context, 500, _pending_txn_with_a_flagged_date())
+
+    query = MagicMock()
+    query.data = "confirm_save"
+    query.message.message_id = 500
+    query.answer = AsyncMock()
+    query.edit_message_text = AsyncMock()
+    query.edit_message_reply_markup = AsyncMock()
+    update = MagicMock()
+    update.callback_query = query
+
+    await bot_core.handle_button_click(update, context)
+    return context, saves, query
+
+
+async def test_a_flagged_date_still_saves_on_confirm(monkeypatch):
+    context, saves, _ = await _tap_confirm(monkeypatch, save_result=True)
+
+    # Saved once, with the flagged date exactly as the card showed it.
+    assert saves.call_count == 1
+    assert saves.call_args.kwargs["date_str"] == "2026-06-25"
+    assert bot_core._card_outcome(context, 500) == "saved"
+
+
+async def test_a_failed_save_keeps_the_date_warning_on_the_card(monkeypatch):
+    # After a failed save the card is live again with its buttons back, so it should still
+    # say what was odd about the date the user is about to retry with.
+    _, _, query = await _tap_confirm(monkeypatch, save_result=False)
+
+    card = query.edit_message_text.await_args.args[0]
+    assert "📅 **Date:** 2026-06-25\n⚠️ This date is more than 60 days ago.\n" in card

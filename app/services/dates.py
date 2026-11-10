@@ -121,8 +121,38 @@ def _resolve_calendar(ref, today: date) -> date:
     return date(year, month, day)
 
 
+# How far back a date can be before the card questions it: the span of a monthly statement
+# plus some catching up. A guess, to be measured against real entries later (ADR-0030).
+MAX_DAYS_BACK = 60
+
+
+def date_warning(resolved, today: date):
+    """Says what looks wrong with a resolved date, or returns None if nothing does (#74).
+
+    `resolved` is what resolve_date_reference returned: a date, or None when it couldn't
+    work one out. The text goes on the confirmation card as a ⚠️ line under the date. It
+    only informs - the entry can always still be saved, and the date is never changed here
+    (ADR-0030, the same "the check informs, the user decides" rule as the duplicate warning).
+    """
+    # Checked first, and on `resolved` rather than on the final date: after the fallback
+    # the date is simply today, which looks perfectly normal on its own.
+    if resolved is None:
+        return "Couldn't work out the date, so today was used."
+
+    if resolved > today:
+        return "This date is in the future."
+
+    # Subtracting two dates gives a timedelta; .days is the whole number of days between
+    # them. `>` and not `>=`: exactly 60 days back is still fine, 61 is the first to warn.
+    if (today - resolved).days > MAX_DAYS_BACK:
+        return f"This date is more than {MAX_DAYS_BACK} days ago."
+
+    return None
+
+
 def apply_date_resolution(transaction: dict, today: date) -> dict:
-    """Sets transaction['date'] from its date_reference, mutating and returning it in place.
+    """Sets transaction['date'] and transaction['date_warning'] from its date_reference,
+    mutating and returning it in place.
 
     Called from process_expense_text, so voice and typed entries are resolved the same way.
     Standalone like apply_payment_defaults, so it can be tested on a plain dict.
@@ -140,4 +170,8 @@ def apply_date_resolution(transaction: dict, today: date) -> dict:
            "last_week": mentions_last_week(transaction.get("description", ""))}
     resolved = resolve_date_reference(ref, today)
     transaction["date"] = (resolved or today).isoformat()
+    # None for a date that looks fine, else the text of the card's ⚠️ line (#74). Worked out
+    # from `resolved`, before the fallback above hides the fact that the lookup failed. It
+    # stays on the pending entry only - add_expense is never passed it, so it isn't saved.
+    transaction["date_warning"] = date_warning(resolved, today)
     return transaction
