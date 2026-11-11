@@ -33,6 +33,11 @@ load_dotenv()
 from app.services.dates import apply_date_resolution  # noqa: E402 - load_dotenv() first
 from app.services.extraction import extract_transactions  # noqa: E402 - load_dotenv() first
 
+# The payment methods offered to the model. Fictional, and fixed here rather than loaded from the
+# database: this script must never touch the database (#53), and the messages below test amounts
+# and dates, not which card was chosen.
+FICTIONAL_ACCOUNTS = ["Card A", "Card B", "Cash", "YouTrip"]
+
 # A fixed "today", so the expected dates below never change. 2026-09-23 is a Wednesday -
 # the same day tests/test_dates.py uses.
 TODAY = date(2026, 9, 23)
@@ -74,7 +79,7 @@ async def run_once(message: str, semaphore: asyncio.Semaphore):
     # The semaphore caps how many requests are in flight at once, so a big --runs doesn't
     # fire dozens of simultaneous calls at the API.
     async with semaphore:
-        result = await extract_transactions(message, TODAY)
+        result = await extract_transactions(message, TODAY, FICTIONAL_ACCOUNTS)
     if not result or not result.get("transactions"):
         return None, None
     txn = result["transactions"][0]

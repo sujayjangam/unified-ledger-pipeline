@@ -37,6 +37,19 @@ from app.services.extraction import extract_transactions # noqa: E402 - load_dot
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
+
+def _allowed_accounts_from_env() -> list:
+    """TEMPORARY (#53): the extraction prompt's account list, from ACCOUNT_OWNERS, until the bot
+    reads accounts from the database in the next commit. Flattened with names deduplicated
+    ignoring case, plus Cash - what extraction.build_allowed_accounts used to do."""
+    names, seen = [], set()
+    for accounts in ACCOUNT_OWNERS.values():
+        for name in list(accounts) + ["Cash"]:
+            if name.lower() not in seen:
+                seen.add(name.lower())
+                names.append(name)
+    return names or ["Cash"]
+
 # The Gatekeeper (Authorization Check)
 async def is_authorized(update: Update):
     """Check if the user is in our allowed list - the keys of ALLOWED_TG_IDS."""
@@ -450,7 +463,7 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
     today = get_sgt_now().date()
 
     # Extract structured data from the raw text
-    structured_data = await extract_transactions(raw_text, today)
+    structured_data = await extract_transactions(raw_text, today, _allowed_accounts_from_env())
 
     # Check if data exists AND if the 'transactions' list is present
     if not structured_data or not structured_data.get("transactions"):

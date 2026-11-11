@@ -1,16 +1,20 @@
+from datetime import date
+from unittest.mock import AsyncMock
+
 import pytest
 from pydantic import ValidationError
+
+import app.services.extraction as extraction
 
 from app.services.extraction import (
     DateReference,
     ExpenseCategory,
     TransactionList,
     TransactionSchema,
-    build_allowed_accounts,
 )
 
 # Every account name below is fictional, for the same reason spelled out in
-# tests/test_bot_core.py: this repo is public, and the real ACCOUNT_OWNERS contents
+# tests/test_bot_core.py: this repo is public, and the real account names
 # (which cards this household actually holds) shouldn't be committed to it.
 
 
@@ -134,49 +138,17 @@ def test_transaction_requires_a_date_reference():
         )
 
 
-# --- build_allowed_accounts: the payment-method list fed to the extraction prompt ---------
+# --- The payment-method list fed to the extraction prompt -----------------------------------
+#
+# It used to be built here from the ACCOUNT_OWNERS env var. Since #53 the caller passes the names
+# from the database (Directory.account_names(), tested in tests/test_participants.py), so all this
+# module has to get right is putting exactly those names in the prompt.
 
 
-def test_allowed_accounts_flattens_every_owners_accounts():
-    accounts = build_allowed_accounts(
-        {"Owner One": ["Bank A Platinum", "Travel Wallet"], "Owner Two": ["Bank B Rewards"]}
-    )
-    # Every owner's cards must appear - the bug this replaces was a hardcoded list that
-    # omitted one household member's card entirely, leaving the model no way to pick it.
-    assert accounts == ["Bank A Platinum", "Travel Wallet", "Bank B Rewards", "Cash"]
-
-
-def test_allowed_accounts_deduplicates_a_shared_payment_rail():
-    # Shared rails (a national transfer service, say) legitimately sit under both owners,
-    # so de-duplication is required rather than cosmetic - listing one twice in the prompt
-    # implies to the model that they're two different things.
-    accounts = build_allowed_accounts(
-        {"Owner One": ["Bank A Platinum", "QuickPay"], "Owner Two": ["Bank B Rewards", "QuickPay"]}
-    )
-    assert accounts == ["Bank A Platinum", "QuickPay", "Bank B Rewards", "Cash"]
-
-
-def test_allowed_accounts_deduplicates_case_insensitively():
-    # bot_core's reverse-lookup matches payment methods case-insensitively, so the prompt
-    # should treat these as one entry too. First-seen casing wins.
-    accounts = build_allowed_accounts(
-        {"Owner One": ["QuickPay"], "Owner Two": ["quickpay"]}
-    )
-    assert accounts == ["QuickPay", "Cash"]
-
-
-def test_allowed_accounts_always_appends_cash():
-    # Cash belongs to nobody so it never appears in ACCOUNT_OWNERS, but the bot handles it
-    # explicitly - without this the model loses the ability to extract "paid with cash".
-    assert "Cash" in build_allowed_accounts({"Owner One": ["Bank A Platinum"]})
-
-
-def test_allowed_accounts_does_not_duplicate_cash_if_already_listed():
-    accounts = build_allowed_accounts({"Owner One": ["Cash", "Bank A Platinum"]})
-    assert accounts == ["Cash", "Bank A Platinum"]
-
-
-def test_allowed_accounts_with_no_owners_falls_back_to_cash():
-    # This is the CI-import guard: .github/workflows/ci.yml imports this module with no .env
-    # loaded, so ACCOUNT_OWNERS parses to {}. It must degrade, not raise.
-    assert build_allowed_accounts({}) == ["Cash"]
+async def test_prompt_lists_exactly_the_accounts_passed_in(monkeypatch):
+    # Raising from the fake stops the call before any network use, after the prompt is built.
+    parse = AsyncMock(side_effect=RuntimeError("stop"))
+    monkeypatch.setattr(extraction.openai_client.beta.chat.completions, "parse", parse)
+    await extraction.extract_transactions("lunch 12", date(2026, 11, 11), ["Card A", "Cash"])
+    system = parse.call_args.kwargs["messages"][0]["content"]
+    assert "The only valid payment methods are: Card A, Cash." in system

@@ -356,7 +356,9 @@ async def test_the_card_shows_yesterdays_date_for_yday(monkeypatch):
         monkeypatch, "lunch 12.50 yday", model_ref(kind="days_ago", days_ago=1))
 
     # The model was given the same "today" the date was counted back from.
-    extract.assert_awaited_once_with("lunch 12.50 yday", TODAY)
+    # (The third argument, the account names, is covered by the bot and extraction tests.)
+    extract.assert_awaited_once()
+    assert extract.await_args.args[:2] == ("lunch 12.50 yday", TODAY)
     # The card shows yesterday, and the entry waiting for Confirm carries it too.
     assert "2026-09-22" in card
     assert context.user_data["pending_cards"][500]["date"] == "2026-09-22"
