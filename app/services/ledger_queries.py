@@ -40,8 +40,8 @@ def find_recent_duplicate(amount_cents: int, currency: str, within_minutes: int)
       docs/SCHEMA.md. Both now() and created_at come from the database clock, so the clock of
       whichever machine runs the bot never enters into it.
 
-    The result is a dict of description, seconds_ago and entered_by (None for rows written
-    before that column existed, or by the CLI/API). Any error also returns None, deliberately:
+    The result is a dict of description, seconds_ago and entered_by_participant_id (#53; None
+    for rows whose sender was never recorded - before #60, or written by the CLI/API). Any error also returns None, deliberately:
     a broken check must never stop an entry being saved, so the caller just shows a normal card.
     """
     try:
@@ -49,7 +49,7 @@ def find_recent_duplicate(amount_cents: int, currency: str, within_minutes: int)
             row = conn.execute(text('''
                 SELECT description,
                        CAST(EXTRACT(EPOCH FROM (now() - created_at)) AS integer) AS seconds_ago,
-                       entered_by
+                       entered_by_participant_id
                 FROM transactions
                 WHERE amount = :amount
                   AND currency = :currency

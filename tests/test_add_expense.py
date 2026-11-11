@@ -67,3 +67,37 @@ def test_very_large_amounts_stay_exact():
 ])
 def test_format_cents(cents, text):
     assert format_cents(cents) == text
+
+
+# --- The #53 id columns, written alongside the old text ones until PR 3 drops them --------------
+
+from unittest.mock import MagicMock  # noqa: E402 - grouped with the tests that use it
+
+import app.add_expense as add_expense_module  # noqa: E402
+import app.services.ledger_queries as ledger_queries  # noqa: E402
+
+
+def _fake_connection(monkeypatch, module):
+    """Replaces get_connection in one module with a MagicMock, as tests/test_rest_api.py does."""
+    conn = MagicMock()
+    context_manager = MagicMock()
+    context_manager.__enter__.return_value = conn
+    monkeypatch.setattr(module, "get_connection", lambda: context_manager)
+    return conn
+
+
+def test_add_expense_writes_both_old_and_new_columns(monkeypatch):
+    conn = _fake_connection(monkeypatch, add_expense_module)
+    add_expense_module.add_expense(
+        "2026-11-11", "lunch", 12, "Food", account_desc="Card A", account_owner="Alice",
+        entered_by="111111", account_id=10, entered_by_participant_id=1,
+    )
+    params = conn.execute.call_args.args[1]
+    assert (params["account_id"], params["entered_by_participant_id"]) == (10, 1)
+    assert (params["account_desc"], params["account_owner"], params["entered_by"]) == ("Card A", "Alice", "111111")
+
+
+def test_duplicate_query_selects_the_participant_id(monkeypatch):
+    conn = _fake_connection(monkeypatch, ledger_queries)
+    ledger_queries.find_recent_duplicate(1200, "SGD", 5)
+    assert "entered_by_participant_id" in str(conn.execute.call_args.args[0])

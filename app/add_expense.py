@@ -44,7 +44,8 @@ def format_cents(amount_cents: int) -> str:
     dollars, cents = divmod(abs(int(amount_cents)), 100)
     return f"{sign}{dollars}.{cents:02d}"
 
-def add_expense(date_str, description, amount_dollars, category, currency="SGD", transaction_type="Expense", account_desc=None, account_owner=None, source="Manual CLI", idempotency_key=None, entered_by=None):
+def add_expense(date_str, description, amount_dollars, category, currency="SGD", transaction_type="Expense", account_desc=None, account_owner=None, source="Manual CLI", idempotency_key=None, entered_by=None,
+                account_id=None, entered_by_participant_id=None):
     try:
         # 1. Validation: Convert to Integer Cents (Mathematical Precision)
         # We call function dollars_to_cents to convert to cents for us
@@ -62,6 +63,9 @@ def add_expense(date_str, description, amount_dollars, category, currency="SGD",
         # (CLI/API callers) never collides, since SQL treats every NULL as distinct.
         # entered_by is the Telegram user ID of whoever sent the message (#60). The CLI and the
         # REST API don't pass one, so their rows leave it NULL.
+        # account_id and entered_by_participant_id are the same two facts as ids (#53). Until the
+        # old text columns are dropped, both are written: reverting the deploy that started
+        # writing the ids must never break saving, so the old columns stay complete meanwhile.
         query = text('''
             INSERT INTO transactions (
                 transaction_id,
@@ -77,13 +81,15 @@ def add_expense(date_str, description, amount_dollars, category, currency="SGD",
                 reconciliation_status,
                 source,
                 idempotency_key,
-                entered_by
+                entered_by,
+                account_id,
+                entered_by_participant_id
             )
             VALUES (
                 :transaction_id, :date, :description, :amount, :currency,
                 :base_amount, :category, :transaction_type, :account_desc,
                 :account_owner, :reconciliation_status, :source, :idempotency_key,
-                :entered_by
+                :entered_by, :account_id, :entered_by_participant_id
             )
             ON CONFLICT (idempotency_key) DO NOTHING
         ''')
@@ -105,6 +111,8 @@ def add_expense(date_str, description, amount_dollars, category, currency="SGD",
                 "source": source,
                 "idempotency_key": idempotency_key,
                 "entered_by": entered_by,
+                "account_id": account_id,
+                "entered_by_participant_id": entered_by_participant_id,
             })
 
             was_duplicate = result.rowcount == 0
