@@ -50,9 +50,10 @@ pytest.
 1. **Directory unreachable between card and Confirm.** The pending entry already carries
    `account_id` and `entered_by_participant_id`, so Confirm must save without loading the
    directory. Pinned in Task 7.
-2. **The model names a payment method that isn't an open account** (invented, or a closed card's
-   name). It falls back to the default rule, and the card shows the account actually chosen.
-   Pinned in Task 2.
+2. **The model names a card that doesn't exist, or a closed one.** An invented name falls back to
+   the default rule and the card shows the account actually chosen. A closed card is kept (a late
+   refund is real) and the card asks for confirmation with the closed-card warning. Pinned in
+   Tasks 2 and 7.
 3. **Name spacing and case**: `" card a "` and `"CARD A"` resolve to `Card A`, in the bot and in
    the backfill. Pinned in Tasks 2 and 3.
 4. **Closed-date boundary**: an account is open on a date `d` when `closed_on` is NULL or
@@ -179,14 +180,16 @@ git commit -m "feat: migration 0004, participants and accounts tables (#53)"
     `participant(id: int | None) -> Participant | None`,
     `participant_by_telegram_id(tg_id: str) -> Participant | None`,
     `account(id: int | None) -> Account | None`,
-    `open_account_named(name: str | None) -> Account | None` (matches `name.strip().casefold()`),
-    `open_account_names() -> list[str]` (open accounts, in id order).
+    `open_account_named(name: str | None) -> Account | None` (matches `name.strip().casefold()`; open accounts only — used by the CLI and REST API),
+    `account_named(name: str | None) -> Account | None` (same matching over all accounts: an open match wins, else the closed match with the latest `closed_on`),
+    `account_names() -> list[str]` (every account name for the extraction prompt, deduplicated ignoring case: open accounts in id order, then closed ones).
   - `class DirectoryError(Exception)`
+  - `class WalletNotSetUp(Exception)` — raised by `resolve_payment` for a top-up it can't fund.
   - `def validate_directory(directory: Directory) -> list[str]` — every problem as a sentence naming the row's id and name; empty list means valid.
   - `def load_directory(conn) -> Directory` — two `SELECT`s naming their columns, ordered by id; raises `DirectoryError("; ".join(problems))` if `validate_directory` finds any.
-  - `def resolve_payment(transaction: dict, directory: Directory, sender: Participant) -> dict` — mutates and returns the dict, setting `account_id`, `payment_method` (the account's name), `account_owner` (display name from `whose_card_paid`, or `"Not recorded"`), and `transaction_type = "Transfer"` for a top-up.
+  - `def resolve_payment(transaction: dict, directory: Directory, sender: Participant) -> dict` — mutates and returns the dict, setting `account_id`, `payment_method` (the account's name), `account_owner` (display name from `whose_card_paid`, or `"Not recorded"`), `closed_account` (`True` when the chosen account is closed, else `False`), and `transaction_type = "Transfer"` for a top-up. Raises `WalletNotSetUp` for a top-up when there is no open `YouTrip` account or it has no `funded_by_account_id`.
   - `def whose_card_paid(account: Account, sender: Participant | None, directory: Directory) -> Participant | None` — the owner, or `sender` when the account is shared.
-  - Constant `WALLET_NAME = "YouTrip"`.
+  - Constants `WALLET_NAME = "YouTrip"`, `CLOSED_CARD_WARNING = "⚠️ This card is already closed. Do you want to proceed with saving?"`, `NO_WALLET_MESSAGE = "⚠️ No YouTrip wallet set up — add it in the accounts table. Nothing was saved."`.
 
 - [ ] **Step 1: Write the failing tests** in `tests/test_participants.py`, using the `directory` fixture
 
@@ -198,8 +201,14 @@ def test_open_account_named_ignores_case_and_spaces(directory):
 def test_open_account_named_skips_closed_accounts(directory):
     assert directory.open_account_named("Old Card") is None
 
-def test_open_account_names_leaves_out_closed_accounts(directory):
-    assert directory.open_account_names() == ["Card A", "Card B", "Cash", "YouTrip"]
+def test_account_names_lists_open_then_closed_accounts(directory):
+    assert directory.account_names() == ["Card A", "Card B", "Cash", "YouTrip", "Old Card"]
+
+def test_account_named_prefers_an_open_account_with_the_same_name(directory):
+    replacement = Account(15, "Old Card", 1, None, None)
+    d = replace(directory, accounts=directory.accounts + (replacement,))
+    assert d.account_named("old card").id == 15
+    assert d.account_names().count("Old Card") == 1
 
 def test_account_is_open_on_its_closed_on_date_but_not_after(directory):
     old = directory.account(14)
@@ -233,10 +242,23 @@ def test_missing_card_in_foreign_currency_uses_the_wallet(directory):
     t = resolve_payment({"payment_method": None, "currency": "MYR"}, directory, directory.participant(2))
     assert (t["account_id"], t["account_owner"]) == (13, "Bob")
 
-@pytest.mark.parametrize("name", ["Made Up Card", "Old Card"])
-def test_unknown_or_closed_card_falls_back_to_the_default_rule(directory, name):
-    t = resolve_payment({"payment_method": name, "currency": "SGD"}, directory, directory.participant(1))
-    assert (t["account_id"], t["payment_method"]) == (10, "Card A")
+def test_unknown_card_falls_back_to_the_default_rule(directory):
+    t = resolve_payment({"payment_method": "Made Up Card", "currency": "SGD"}, directory, directory.participant(1))
+    assert (t["account_id"], t["payment_method"], t["closed_account"]) == (10, "Card A", False)
+
+def test_closed_card_is_kept_and_flagged(directory):
+    t = resolve_payment({"payment_method": "old card", "currency": "SGD"}, directory, directory.participant(2))
+    assert (t["account_id"], t["account_owner"], t["closed_account"]) == (14, "Alice", True)
+
+@pytest.mark.parametrize("wallet_change", ["closed", "no_funder", "missing"])
+def test_topup_is_refused_when_the_wallet_is_not_set_up(directory, wallet_change):
+    youtrip = directory.account(13)
+    changed = {"closed": (replace(youtrip, closed_on=date(2026, 1, 1)),),
+               "no_funder": (replace(youtrip, funded_by_account_id=None),),
+               "missing": ()}[wallet_change]
+    d = replace(directory, accounts=directory.accounts[:3] + changed + directory.accounts[4:])
+    with pytest.raises(WalletNotSetUp):
+        resolve_payment({"category": "YouTrip top-up", "currency": "SGD"}, d, d.participant(1))
 
 def test_valid_directory_has_no_problems(directory):
     assert validate_directory(directory) == []
@@ -268,9 +290,9 @@ def test_load_directory_raises_with_the_problems():
 Row tuples follow the SELECTs' column order: participants `(id, display_name, telegram_user_id,
 default_account_id)`, accounts `(id, name, owner_participant_id, funded_by_account_id, closed_on)`.
 
-Top-up fallback rules (no test-determined choice otherwise): if there is no open `YouTrip` account
-or it has no `funded_by_account_id`, the top-up uses the sender's default account, still
-`Transfer`. A foreign-currency payment with no open `YouTrip` uses the sender's default.
+One rule the tests leave open: a foreign-currency payment naming no card, when there is no open
+`YouTrip`, uses the sender's default (it is an ordinary payment, not a top-up, and the card shows
+the account chosen).
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -305,8 +327,8 @@ git commit -m "feat: Directory of participants and accounts, with payment rules 
 **Interfaces:**
 - Consumes: `Account` from Task 2.
 - Produces (pure, tested):
-  - `def parse_seed(raw: dict) -> SeedData` — raises `ValueError` naming the bad entry. `SeedData` is a frozen dataclass of `participants: list[dict]`, `accounts: list[dict]`, `aliases: dict[str, str]` (keys stored casefolded and stripped), `transaction_overrides: dict[str, str]`.
-  - `def match_account(account_desc: str | None, txn_date: date, accounts: list[Account], aliases: dict[str, str]) -> tuple[str, int | None]` — returns `("matched", id)`, `("unmatched", None)` or `("ambiguous", None)`.
+  - `def parse_seed(raw: dict) -> SeedData` — raises `ValueError` naming the bad entry. `SeedData` is a frozen dataclass of `participants: list[dict]`, `accounts: list[dict]`, `transaction_overrides: dict[str, str]`.
+  - `def match_account(account_desc: str | None, txn_date: date, accounts: list[Account]) -> tuple[str, list[int]]` — returns `("matched", [id])`, `("closed", [id])` (the only account with that name was already closed on that date), `("ambiguous", [ids])` or `("unmatched", [])`.
 - CLI: `python -m scripts.seed_directory [--seed PATH] [--write]`, default seed path `directory_seed.local.json`.
 
 Seed file format (the example file, fictional):
@@ -324,40 +346,36 @@ Seed file format (the example file, fictional):
     {"name": "YouTrip", "owner": null, "funded_by": "Card A"},
     {"name": "Old Card", "owner": "Alice", "closed_on": "2026-03-31"}
   ],
-  "aliases": {"card a typo": "Card A"},
   "transaction_overrides": {"00000000-0000-0000-0000-000000000000": "Cash"}
 }
 ```
 
-`aliases` maps old `account_desc` text (a typo or a made-up name) to an account name.
-`transaction_overrides` maps one `transaction_id` to an account name, for rows with no
-`account_desc` or ones the date can't settle.
+`transaction_overrides` maps one `transaction_id` to an account name: for rows with no
+`account_desc`, a misspelled or made-up one, or a "No" at a prompt. There are no name-level
+aliases (decided 2026-11-11): each such row gets its own override.
 
 - [ ] **Step 1: Write the failing tests**
 
 ```python
 def test_match_ignores_case_and_spaces():
-    assert match_account(" CARD A ", date(2026, 5, 1), ACCOUNTS, {}) == ("matched", 10)
-
-def test_match_uses_an_alias():
-    assert match_account("Card A Typo", date(2026, 5, 1), ACCOUNTS, {"card a typo": "Card A"}) == ("matched", 10)
-
-def test_reused_name_picks_the_account_open_on_the_date():
-    # Old Card (14) closed 2026-03-31; an open replacement with the same name is id 15.
-    accounts = ACCOUNTS + [Account(15, "Old Card", 1, None, None)]
-    assert match_account("Old Card", date(2026, 3, 31), accounts, {}) == ("ambiguous", None)
-    assert match_account("Old Card", date(2026, 4, 1), accounts, {}) == ("matched", 15)
-
-def test_two_closed_accounts_covering_the_date_are_ambiguous():
-    accounts = ACCOUNTS + [Account(16, "Old Card", 1, None, date(2026, 6, 30))]
-    assert match_account("Old Card", date(2026, 3, 1), accounts, {}) == ("ambiguous", None)
+    assert match_account(" CARD A ", date(2026, 5, 1), ACCOUNTS) == ("matched", [10])
 
 def test_closed_account_matches_up_to_its_closed_on_date():
-    assert match_account("Old Card", date(2026, 3, 31), ACCOUNTS, {}) == ("matched", 14)
+    assert match_account("Old Card", date(2026, 3, 31), ACCOUNTS) == ("matched", [14])
+
+def test_closed_card_after_its_closed_on_date_needs_confirmation():
+    # A late refund on a cancelled card is real; the script asks before linking it.
+    assert match_account("Old Card", date(2026, 4, 1), ACCOUNTS) == ("closed", [14])
+
+def test_a_replacement_card_with_the_same_name_is_always_asked():
+    # Old Card (14) closed 2026-03-31; open replacement 15. Any row could be a late refund on 14.
+    accounts = ACCOUNTS + [Account(15, "Old Card", 1, None, None)]
+    assert match_account("Old Card", date(2026, 3, 31), accounts) == ("ambiguous", [14, 15])
+    assert match_account("Old Card", date(2026, 4, 1), accounts) == ("ambiguous", [14, 15])
 
 def test_unknown_or_missing_name_is_unmatched():
-    assert match_account("Nope", date(2026, 5, 1), ACCOUNTS, {}) == ("unmatched", None)
-    assert match_account(None, date(2026, 5, 1), ACCOUNTS, {}) == ("unmatched", None)
+    assert match_account("Nope", date(2026, 5, 1), ACCOUNTS) == ("unmatched", [])
+    assert match_account(None, date(2026, 5, 1), ACCOUNTS) == ("unmatched", [])
 
 def test_seed_rejects_a_default_that_is_not_a_listed_account():
     with pytest.raises(ValueError, match="Alice"):
@@ -371,11 +389,10 @@ def test_the_example_seed_file_parses():
     parse_seed(json.loads(Path("directory_seed.example.json").read_text()))
 ```
 
-`ACCOUNTS` is a module-level list built from the shared fixture's accounts. Matching rule:
-candidates are the accounts whose name (after alias lookup) equals the text, ignoring case and
-spaces, and that are open on the transaction's date. Exactly one → matched; none → unmatched; two or
-more → ambiguous (on 2026-03-31 both the closing card and its open replacement qualify, so a human
-decides with an override).
+`ACCOUNTS` is a module-level list built from the shared fixture's accounts. Matching rule, over
+the accounts whose name equals the text ignoring case and spaces: none → unmatched; more than one →
+ambiguous (a reused name — the user decides); exactly one → matched if it is open on the
+transaction's date, else closed.
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -393,12 +410,19 @@ Pure functions as above. `main()`:
    (`lower(name)`, `closed_on`), then sets each `default_account_id` and `funded_by_account_id`
    by name. Existing rows are left alone, so a rerun is safe.
 4. Backfills `account_id` for rows `WHERE account_id IS NULL`: override by `transaction_id` first,
-   else `match_account` with the row's `date` (parse the TEXT `YYYY-MM-DD`).
+   else `match_account` with the row's `date` (parse the TEXT `YYYY-MM-DD`). With `--write`, the
+   two cases needing a person are asked one row at a time, printing the row's id, date, amount and
+   description first:
+   - `closed`: `"This card is already closed, do you want to proceed with saving? [y/N]"`. `y`
+     links the row to the closed card; anything else leaves it unmatched.
+   - `ambiguous`: lists the candidate accounts with their `closed_on` and asks for a number;
+     Enter skips.
+   A dry run never prompts; it lists these rows instead.
 5. Backfills `entered_by_participant_id` for rows `WHERE entered_by_participant_id IS NULL AND
    entered_by IS NOT NULL`, by `telegram_user_id`.
 6. Prints a report: counts filled, then every unmatched or ambiguous row as
    `transaction_id  date  account_desc`, grouped by `account_desc`, so each distinct name is
-   decided once (alias, or a closed account in the seed).
+   decided once (add a closed account to the seed, or a `transaction_overrides` entry).
 
 - [ ] **Step 4: Run to verify the tests pass**
 
@@ -428,9 +452,9 @@ No code. Each step has a checkable result.
 
 - [ ] **Step 1:** Write the real `directory_seed.local.json`. Confirm `git status` doesn't list it.
 - [ ] **Step 2:** Rehearse on a fresh Neon branch from production: `alembic upgrade head`, then the
-  seed dry run. Add an alias or closed account for every unmatched name, and an override for every
-  row with no `account_desc`, until the dry run reports zero unmatched and zero ambiguous. Then
-  `--write` on the branch.
+  seed dry run. Add a closed account to the seed for every retired card it lists, and an override
+  for every other unmatched row, until the dry run reports zero unmatched. Then `--write` on the
+  branch, answering the closed and ambiguous prompts.
 - [ ] **Step 3:** Production: `alembic current` prints the production host and
   `0003_add_entered_by`; run `alembic upgrade head`; `alembic current` prints
   `0004_participants_accounts`.
@@ -575,9 +599,20 @@ async def test_authorize_rejects_a_participant_without_a_telegram_id_match(monke
     assert await bot_core.authorize(fake_update(user_id=999999)) is None
 
 async def test_text_handler_does_not_call_the_model_when_the_directory_is_down(monkeypatch):
-    # _load_directory raises; extract_transactions is a mock that must not be awaited.
-    ...
+    def boom(): raise DirectoryError("x")
+    monkeypatch.setattr(bot_core, "_load_directory", boom)
+    extract = AsyncMock()
+    monkeypatch.setattr(bot_core, "extract_transactions", extract)
+    await bot_core.handle_text(fake_update(user_id=111111, text="lunch 12"), fake_context())
     extract.assert_not_awaited()
+
+async def test_closed_card_gets_the_warning_and_save_anyway_buttons(monkeypatch, directory):
+    # Alice sends "refund 20 old card": the card text contains CLOSED_CARD_WARNING and the
+    # keyboard is the Save anyway / Cancel pair (callback_data still confirm_save / cancel_save).
+
+async def test_topup_without_a_wallet_is_refused_and_nothing_is_pending(monkeypatch, directory):
+    # The directory's YouTrip has no funded_by_account_id; "topup youtrip 100": the status message
+    # is edited to NO_WALLET_MESSAGE, no buttons, and context.user_data has no pending card.
 
 async def test_pending_entry_carries_the_ids(monkeypatch, directory):
     # Bob sends "lunch 12 cash": pending entry has account_id 12, entered_by_participant_id 2,
@@ -592,8 +627,9 @@ def test_duplicate_banner_names_the_earlier_sender_from_the_directory(directory)
     assert "Alice logged SGD 12.00" in banner
 ```
 
-`fake_update` is whatever helper the existing callback tests already use; reuse it rather than
-writing a new one.
+`fake_update` / `fake_context` are whatever helpers the existing tests already use; reuse them
+rather than writing new ones. Tests written as comments state their assertions; write them in the
+same style as their neighbours.
 
 - [ ] **Step 2: Run to verify the new tests fail**
 
@@ -603,9 +639,11 @@ Expected: the new tests FAIL (`authorize` / `_load_directory` don't exist).
 - [ ] **Step 3: Implement.**
   - Delete the env-var parsing and `PRIMARY_ACCOUNT_OWNER`.
   - `if not await is_authorized(update): return` becomes `directory = await authorize(update)` / `if directory is None: return` in every handler. Voice and text pass `directory` on.
-  - In `process_expense_text`: `sender = directory.participant_by_telegram_id(user_id)`; call `extract_transactions(raw_text, today, directory.open_account_names())` (Task 6); `resolve_payment(single_transaction, directory, sender)` replaces `apply_payment_defaults`; set `entered_by_participant_id = sender.id`.
+  - In `process_expense_text`: `sender = directory.participant_by_telegram_id(user_id)`; call `extract_transactions(raw_text, today, directory.account_names())` (Task 6); `resolve_payment(single_transaction, directory, sender)` replaces `apply_payment_defaults`; set `entered_by_participant_id = sender.id`.
   - `_duplicate_banner(duplicate, amount_text, sender_id: int, directory: Directory)` compares participant ids and looks the name up with `directory.participant(...)`.
   - The `add_expense` call adds `account_id=` and `entered_by_participant_id=` from the pending entry.
+  - `resolve_payment` raising `WalletNotSetUp` → edit the status message to `NO_WALLET_MESSAGE` and return before anything is stashed.
+  - A `closed_account` entry gets `CLOSED_CARD_WARNING` as a banner line above the summary (under the duplicate banner if both apply), and `_keyboard_for` returns the Save anyway / Cancel pair when `suspected_duplicate` **or** `closed_account` is set, so the retry label on a failed save follows too.
   - `handle_button_click` does not call `authorize` or `_load_directory`.
 
 - [ ] **Step 4: Run the whole suite**

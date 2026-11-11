@@ -59,7 +59,7 @@ The allowlist is "has a `telegram_user_id`".
 | `name` | `TEXT NOT NULL` | What the extraction prompt shows and matches on |
 | `owner_participant_id` | FK → `participants.id`, nullable | NULL = shared (Cash, a joint transfer method) → resolves to the sender |
 | `funded_by_account_id` | FK → `accounts.id`, nullable | Set on wallets such as YouTrip: the card that tops it up |
-| `closed_on` | `DATE`, nullable | NULL = open. Closed accounts keep their real name and owner, and are left out of the prompt |
+| `closed_on` | `DATE`, nullable | NULL = open. Closed accounts keep their real name and owner and stay in the prompt; choosing one asks for confirmation (see "Closed cards") |
 | `created_at` | `TIMESTAMPTZ NOT NULL DEFAULT now()` | |
 
 Database rules:
@@ -104,9 +104,12 @@ of #53.
      name matches more than one account, picks the one open on the transaction's date (not yet
      closed on that date). If that still leaves more than one, stops and asks.
    - Backfills `entered_by_participant_id` by matching `entered_by` to `telegram_user_id`.
-   - Prints every unmatched `account_desc` (and every row with none) for a decision: map it to an
-     existing account (a typo or invented name), or add it as a closed account with its real name,
-     owner and `closed_on`. Writes nothing until rerun with `--write`.
+   - A row dated after its card's `closed_on` is asked about with `--write`: "This card is already
+     closed, do you want to proceed with saving? [y/N]". When another account shares the name (a
+     replacement card), the script asks which account instead.
+   - Prints every unmatched `account_desc` (and every row with none) for a decision: add it as a
+     closed account with its real name, owner and `closed_on`, or give that row an override. No
+     name-level aliases. Writes nothing until rerun with `--write`.
    - Only fills NULLs, so rerunning is safe.
    - Run against a Neon branch first, then production.
 3. **Code switch-over PR.** The bot reads the directory from the database and writes the two new
@@ -134,13 +137,21 @@ as a Telegram ID → participant id). ADR-0026 stays as written.
   the bad row.
 - Pure functions taking a `Directory`, replacing the env-var readers:
   - authorization by Telegram ID (replaces `is_authorized`'s dict lookup);
-  - the extraction prompt's payment-method list: open accounts only (replaces
-    `extraction.py::build_allowed_accounts`; Cash is now an ordinary shared account row);
+  - the extraction prompt's payment-method list: every account, open first, names deduplicated
+    (replaces `extraction.py::build_allowed_accounts`; Cash is now an ordinary shared account row);
   - `apply_payment_defaults`: YouTrip top-up → the wallet's `funded_by_account_id`, type
-    `Transfer`; otherwise a missing card → YouTrip for non-SGD, the sender's `default_account_id`
-    for SGD;
+    `Transfer`, and **refused** ("No YouTrip wallet set up — add it in the accounts table") when
+    there is no open YouTrip or it has no funding card; otherwise a missing card → YouTrip for
+    non-SGD, the sender's `default_account_id` for SGD;
   - whose card paid, per "Derived, no longer stored".
 - Loaded fresh for each message. No module-level globals parsed at import.
+
+### Closed cards
+
+A closed card can still be chosen, because refunds and late charges happen after a card is
+cancelled. When a name matches both an open and a closed account, the open one wins. Choosing a
+closed card puts "⚠️ This card is already closed. Do you want to proceed with saving?" on the
+confirmation card, with the Save anyway / Cancel buttons the duplicate warning uses.
 
 ### Failure handling
 
@@ -169,7 +180,7 @@ Must never touch the database, so it builds a fictional `Directory` in code.
 - Tests that monkeypatch `ACCOUNT_OWNERS` / `ALLOWED_TG_IDS` / `PRIMARY_ACCOUNT_OWNER` switch to
   building a fictional `Directory` in memory.
 - New pure tests: shared account → sender; single-owner card → owner whoever sends; closed
-  accounts left out of the prompt; top-up funded by `funded_by_account_id`; loader validation
+  cards kept and warned about; top-up funded by `funded_by_account_id`, and refused without one; loader validation
   failures; the backfill's name matching, case handling and closed-date rule.
 - `tests/test_migrations.py` covers 0004 and 0005 in the revision chain.
 - By hand, on a throwaway Neon branch: `alembic upgrade head` / `downgrade -1` for both
