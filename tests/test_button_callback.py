@@ -3,7 +3,7 @@
 These cover issue #29 (a double-tap replaced a correct "Saved to Ledger!" card with a false
 "session expired" error) and #55 (the card gave no feedback at all until the blocking database
 write finished). No network and no database: add_expense is monkeypatched, and the Telegram
-Update is a MagicMock, following the is_authorized tests in tests/test_bot_core.py.
+Update is a MagicMock, as in tests/test_bot_core.py.
 """
 
 from unittest.mock import AsyncMock, MagicMock
@@ -252,12 +252,10 @@ async def test_confirm_passes_the_sender_through_to_add_expense(monkeypatch):
     assert saves.call_args.kwargs["entered_by"] == "111111"
 
 
-async def test_new_entry_is_stamped_with_the_senders_telegram_id(monkeypatch):
+async def test_new_entry_is_stamped_with_the_senders_telegram_id(monkeypatch, directory):
     # process_expense_text end to end, minus the network: extraction is faked and the card
     # message is a mock. The pending entry must carry the sender's ID as a string - the same
-    # form ALLOWED_TG_IDS uses for its keys.
-    monkeypatch.setattr(bot_core, "ALLOWED_TG_IDS", {"111111": "Alice"})
-    monkeypatch.setattr(bot_core, "ACCOUNT_OWNERS", {"Alice": ["Card A"]})
+    # form participants.telegram_user_id stores - as well as their participant id (#53).
     monkeypatch.setattr(bot_core, "extract_transactions", AsyncMock(return_value={"transactions": [{
         "amount": 5.0, "currency": "SGD", "category": "Food", "date_reference": {"kind": "unstated"},
         "transaction_type": "Expense", "payment_method": None,
@@ -270,18 +268,17 @@ async def test_new_entry_is_stamped_with_the_senders_telegram_id(monkeypatch):
     status_msg.edit_text = AsyncMock()
     context = _fresh_context()
 
-    await bot_core.process_expense_text(update, context, "coffee 5 dollars", status_msg)
+    await bot_core.process_expense_text(update, context, "coffee 5 dollars", status_msg, directory)
 
     assert context.user_data["pending_cards"][500]["entered_by"] == "111111"
+    assert context.user_data["pending_cards"][500]["entered_by_participant_id"] == 1
 
 
 # --- #39: every card shows the amount that is actually saved ---
 
-async def test_the_confirmation_card_shows_the_amount_that_will_be_saved(monkeypatch):
+async def test_the_confirmation_card_shows_the_amount_that_will_be_saved(monkeypatch, directory):
     # The card used to format the float itself, so 1.005 showed as "1.00" while the save rounded
     # it to 101 cents. Both now come from the same cents value.
-    monkeypatch.setattr(bot_core, "ALLOWED_TG_IDS", {"111111": "Alice"})
-    monkeypatch.setattr(bot_core, "ACCOUNT_OWNERS", {"Alice": ["Card A"]})
     monkeypatch.setattr(bot_core, "find_recent_duplicate", MagicMock(return_value=None))
     monkeypatch.setattr(bot_core, "extract_transactions", AsyncMock(return_value={"transactions": [{
         "amount": 1.005, "currency": "SGD", "category": "Food", "date_reference": {"kind": "unstated"},
@@ -294,7 +291,7 @@ async def test_the_confirmation_card_shows_the_amount_that_will_be_saved(monkeyp
     status_msg.message_id = 500
     status_msg.edit_text = AsyncMock()
 
-    await bot_core.process_expense_text(update, _fresh_context(), "coffee 1.005", status_msg)
+    await bot_core.process_expense_text(update, _fresh_context(), "coffee 1.005", status_msg, directory)
 
     text = status_msg.edit_text.await_args.args[0]
     assert "SGD 1.01" in text

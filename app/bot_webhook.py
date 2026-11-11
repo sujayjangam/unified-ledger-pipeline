@@ -16,7 +16,7 @@ WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
 # Telegram through setWebhook's secret_token parameter at startup (see lifespan below), and
 # Telegram then sends it back in the X-Telegram-Bot-Api-Secret-Token header of every delivery.
 # Only Telegram and this service know it, so a request without it did not come from Telegram.
-# That matters because is_authorized() trusts the sender ID *inside* an update - which is only
+# That matters because authorize() trusts the sender ID *inside* an update - which is only
 # trustworthy if Telegram wrote the update. Lives in Secret Manager, never in the repo. ADR-0025.
 WEBHOOK_SECRET_TOKEN = os.getenv("WEBHOOK_SECRET_TOKEN", "")
 _SECRET_HEADER = "X-Telegram-Bot-Api-Secret-Token"

@@ -4,8 +4,9 @@ Layered environment. `.env.local` (gitignored) is loaded first with `override=Tr
 `app.bot_core` loads `.env` the way it always does. `load_dotenv()` defaults to
 `override=False`, so that second call leaves anything `.env.local` already set alone and
 only fills in the gaps. `.env.local` therefore holds *only* what must differ for testing -
-the test bot's token, and ideally a Neon branch `DATABASE_URL`. `OPENAI_API_KEY`,
-`ALLOWED_TG_IDS` and `ACCOUNT_OWNERS` keep coming from `.env`, so there is exactly one copy
+the test bot's token, and ideally a Neon branch `DATABASE_URL` (who may use the bot, and their
+accounts, are rows in that database - #53). `OPENAI_API_KEY`
+and the webhook settings keep coming from `.env`, so there is exactly one copy
 of each secret on disk.
 
 Import order matters: `bot_core` reads `TELEGRAM_BOT_TOKEN` at module import time
