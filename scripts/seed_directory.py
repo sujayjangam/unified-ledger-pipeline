@@ -22,7 +22,8 @@ exactly what --write would do. Only --write asks questions:
   - a name shared by more than one account (a replacement card): which one it was.
 
 Anything left unmatched is listed for a decision: add the retired card to the seed file as a
-closed account, or give that one row a transaction_overrides entry. Rerunning is always safe: rows
+closed account, or give that one row a transaction_overrides entry. Before committing, the script reads
+everything back the way the bot will, and rolls back instead if the bot would refuse everyone. Rerunning is always safe: rows
 that exist are left alone, and only empty id columns are filled.
 """
 
@@ -38,7 +39,7 @@ from sqlalchemy import text
 
 from app.add_expense import format_cents
 from app.database import get_engine
-from app.services.participants import Account
+from app.services.participants import Account, DirectoryError, load_directory
 
 DEFAULT_SEED = "directory_seed.local.json"
 CLOSED_QUESTION = "This card is already closed, do you want to proceed with saving? [y/N] "
@@ -60,31 +61,45 @@ def parse_seed(raw: dict) -> SeedData:
     """Checks the seed file before anything touches the database. Every name it refers to must be
     defined in the same file, so a typo fails here with the entry's name, not halfway through a
     write. Raises ValueError."""
-    participants = raw.get("participants", [])
-    accounts = raw.get("accounts", [])
-    overrides = raw.get("transaction_overrides", {})
+    # Every name is trimmed here, once. The SQL below compares lower(name) and does not trim, so a
+    # stray space in the file would otherwise leave a default unset - and the bot then turns
+    # everyone away (found by the final review).
+    def trimmed(entry, *fields):
+        return {k: (v.strip() if k in fields and isinstance(v, str) else v) for k, v in entry.items()}
+
+    participants = [trimmed(p, "display_name", "default_account") for p in raw.get("participants", [])]
+    accounts = [trimmed(a, "name", "owner", "funded_by") for a in raw.get("accounts", [])]
+    overrides = {t: name.strip() for t, name in raw.get("transaction_overrides", {}).items()}
 
     people = {p["display_name"] for p in participants}
     account_names = {_key(a["name"]) for a in accounts}
+    # A default or a funding card must be open: the bot refuses to start a conversation otherwise.
+    open_names = {_key(a["name"]) for a in accounts if a.get("closed_on") is None}
 
     for p in participants:
         default = p.get("default_account")
         if default is not None and _key(default) not in account_names:
             raise ValueError(f"Participant {p['display_name']}: default_account {default!r} is not a listed account")
+        if default is not None and _key(default) not in open_names:
+            raise ValueError(f"Participant {p['display_name']}: default_account {default!r} is closed")
+        if p.get("telegram_user_id") is not None and default is None:
+            raise ValueError(f"Participant {p['display_name']}: uses the bot, so needs a default_account")
 
-    open_names = set()
+    seen_open = set()
     for a in accounts:
         if a.get("owner") is not None and a["owner"] not in people:
             raise ValueError(f"Account {a['name']}: owner {a['owner']!r} is not a listed participant")
         if a.get("funded_by") is not None and _key(a["funded_by"]) not in account_names:
             raise ValueError(f"Account {a['name']}: funded_by {a['funded_by']!r} is not a listed account")
+        if a.get("funded_by") is not None and _key(a["funded_by"]) not in open_names:
+            raise ValueError(f"Account {a['name']}: funded_by {a['funded_by']!r} is closed")
         if a.get("closed_on") is not None:
             date.fromisoformat(a["closed_on"])  # raises ValueError on a malformed date
-        elif _key(a["name"]) in open_names:
+        elif _key(a["name"]) in seen_open:
             # The database would reject this too (uq_accounts_open_name_ci); say so earlier.
             raise ValueError(f"Account {a['name']}: two open accounts share this name")
         else:
-            open_names.add(_key(a["name"]))
+            seen_open.add(_key(a["name"]))
 
     for transaction_id, name in overrides.items():
         if _key(name) not in account_names:
@@ -246,6 +261,19 @@ def main(argv=None) -> int:
         counts = _seed(conn, seed)
         filled, undecided = _backfill_accounts(conn, seed, args.write)
         senders = _backfill_entered_by(conn)
+
+        # Read everything back the way the bot will, inside the same transaction, before anything
+        # is committed. A directory the bot would reject locks the whole household out, so a
+        # --write that would produce one is rolled back instead (found by the final review).
+        try:
+            load_directory(conn)
+        except DirectoryError as e:
+            trans.rollback()
+            print("\nNOT COMMITTED - the bot would refuse everyone with this directory:")
+            for problem in str(e).split("; "):
+                print(f"  - {problem}")
+            return 1
+
         if args.write:
             trans.commit()
         else:

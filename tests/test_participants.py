@@ -111,3 +111,16 @@ def test_load_directory_raises_with_the_problems():
     conn.execute.side_effect = [participants, accounts]
     with pytest.raises(DirectoryError, match="Alice"):
         load_directory(conn)
+
+
+def test_two_open_accounts_that_differ_only_by_spaces_are_a_problem(directory):
+    # The database's unique index compares lower(name) without trimming, so " Card A" can sit
+    # beside "Card A". The bot treats them as one name and would silently pick one (final review).
+    extra = replace(directory.account(10), id=15, name=" card a ")
+    problems = validate_directory(replace(directory, accounts=directory.accounts + (extra,)))
+    assert len(problems) == 1
+    assert "10" in problems[0] and "15" in problems[0] and "Card A" in problems[0]
+
+def test_a_closed_card_may_share_its_name_with_an_open_one(directory):
+    replacement = replace(directory.account(14), id=15, closed_on=None)
+    assert validate_directory(replace(directory, accounts=directory.accounts + (replacement,))) == []

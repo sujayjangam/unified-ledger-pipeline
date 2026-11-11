@@ -10,7 +10,10 @@ from pathlib import Path
 
 import pytest
 
-from app.services.participants import Account
+from unittest.mock import MagicMock
+
+import scripts.seed_directory as seed_directory
+from app.services.participants import Account, DirectoryError
 from scripts.seed_directory import match_account, parse_seed
 
 # The same accounts as the shared `directory` fixture in tests/conftest.py. A plain list here,
@@ -54,3 +57,60 @@ def test_seed_rejects_an_owner_who_is_not_a_listed_participant():
 
 def test_the_example_seed_file_parses():
     parse_seed(json.loads(Path("directory_seed.example.json").read_text()))
+
+
+# --- found by the final review: a seed that would lock everyone out must never be committed ---
+
+def test_seed_trims_names_so_the_database_matches_them():
+    # The SQL compares lower(name) without trimming, so a stray space in the file used to leave a
+    # default unset - and the bot then turns everyone away.
+    seed = parse_seed({
+        "participants": [{"display_name": " Alice ", "telegram_user_id": "111111", "default_account": "Card A "}],
+        "accounts": [{"name": " Card A", "owner": "Alice"}],
+    })
+    assert seed.participants[0]["display_name"] == "Alice"
+    assert seed.participants[0]["default_account"] == "Card A"
+    assert seed.accounts[0]["name"] == "Card A"
+
+def test_seed_rejects_a_bot_user_without_a_default():
+    with pytest.raises(ValueError, match="Alice"):
+        parse_seed({"participants": [{"display_name": "Alice", "telegram_user_id": "111111"}],
+                    "accounts": [{"name": "Card A", "owner": "Alice"}]})
+
+def test_seed_rejects_a_default_or_funder_that_is_only_a_closed_account():
+    closed = {"name": "Old Card", "owner": "Alice", "closed_on": "2026-03-31"}
+    with pytest.raises(ValueError, match="Alice"):
+        parse_seed({"participants": [{"display_name": "Alice", "telegram_user_id": "111111", "default_account": "Old Card"}],
+                    "accounts": [closed]})
+    with pytest.raises(ValueError, match="YouTrip"):
+        parse_seed({"participants": [{"display_name": "Alice"}],
+                    "accounts": [closed, {"name": "YouTrip", "owner": None, "funded_by": "Old Card"}]})
+
+
+def _fake_run(monkeypatch, directory_check):
+    """Runs main(--write) with every database step faked; returns the fake transaction."""
+    trans = MagicMock()
+    conn = MagicMock()
+    conn.begin.return_value = trans
+    engine = MagicMock()
+    engine.connect.return_value.__enter__.return_value = conn
+    monkeypatch.setattr(seed_directory, "get_engine", lambda: engine)
+    monkeypatch.setattr(seed_directory, "_seed", lambda conn, seed: {"participants": 0, "accounts": 0})
+    monkeypatch.setattr(seed_directory, "_backfill_accounts", lambda conn, seed, write: (0, []))
+    monkeypatch.setattr(seed_directory, "_backfill_entered_by", lambda conn: 0)
+    monkeypatch.setattr(seed_directory, "load_directory", directory_check)
+    return trans
+
+def test_write_refuses_to_commit_a_directory_the_bot_would_reject(monkeypatch):
+    def broken(conn):
+        raise DirectoryError("Participant 1 (Alice) uses the bot but has no default account")
+
+    trans = _fake_run(monkeypatch, broken)
+    assert seed_directory.main(["--seed", "directory_seed.example.json", "--write"]) == 1
+    trans.commit.assert_not_called()
+    trans.rollback.assert_called_once()
+
+def test_write_commits_a_directory_the_bot_accepts(monkeypatch, directory):
+    trans = _fake_run(monkeypatch, lambda conn: directory)
+    assert seed_directory.main(["--seed", "directory_seed.example.json", "--write"]) == 0
+    trans.commit.assert_called_once()

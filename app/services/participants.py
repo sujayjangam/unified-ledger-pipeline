@@ -148,6 +148,18 @@ def validate_directory(directory: Directory) -> list[str]:
             problems.append(
                 f"Account {a.id} ({a.name}) is funded by account {a.funded_by_account_id}, which is closed or missing"
             )
+
+    # Two open accounts with the same name, spaces and case ignored. The database's unique index
+    # compares lower(name) without trimming, so it lets " Card A" sit beside "Card A" - but the bot
+    # treats those as one name, and would silently pick whichever it found first.
+    open_by_name = {}
+    for a in directory.accounts:
+        if a.is_open:
+            open_by_name.setdefault(_key(a.name), []).append(a)
+    for same in open_by_name.values():
+        if len(same) > 1:
+            ids = ", ".join(str(a.id) for a in same)
+            problems.append(f"Accounts {ids} are all open and named {same[0].name.strip()!r} - close or rename all but one")
     return problems
 
 
