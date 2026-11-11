@@ -33,12 +33,14 @@ supersedes the old one rather than editing history.
 | [0023](0023-in-memory-confirm-card-state.md) | Keep confirmation-card state in process memory, keyed by message id | Accepted | 2026-09-10 |
 | [0024](0024-created-at-write-time-column.md) | Record write time in its own column, backfilled to midnight SGT | Accepted | 2026-09-10 |
 | [0025](0025-webhook-secret-token.md) | Authenticate webhook deliveries with Telegram's secret token | Accepted | 2026-09-10 |
-| [0026](0026-entered-by-telegram-user-id.md) | Record the sender as their Telegram user ID, and leave existing rows unrecorded | Accepted | 2026-09-11 |
+| [0026](0026-entered-by-telegram-user-id.md) | Record the sender as their Telegram user ID, and leave existing rows unrecorded | Superseded by [0033](0033-entered-by-participant-id.md) | 2026-09-11 |
 | [0027](0027-duplicate-warning-before-the-card.md) | Warn about a likely duplicate before the card is shown, matching on amount and currency | Accepted | 2026-09-12 |
 | [0028](0028-exact-cent-conversion-half-up.md) | Convert amounts to cents with exact decimal maths, rounding half a cent up; split in whole cents | Accepted | 2026-09-13 |
 | [0029](0029-close-phase-0-on-date-parsing.md) | Close Phase 0 when backdated dates ship; move the rest of its capture work to later phases | Accepted | 2026-09-23 |
 | [0030](0030-llm-reads-dates-python-resolves.md) | Let the model describe the date and Python calculate it; warn on implausible dates | Accepted | 2026-09-23 |
 | [0031](0031-last-week-from-message-text.md) | Tell "last Tuesday" from "Tuesday last week" with a text match, not the model; check prompts against the real model | Accepted | 2026-10-11 |
+| [0032](0032-participants-and-accounts-in-postgres.md) | Keep participants and accounts in Postgres tables, read on every message, and fail closed | Accepted | 2026-11-11 |
+| [0033](0033-entered-by-participant-id.md) | Record the sender as a participant id, not a Telegram user ID | Accepted | 2026-11-11 |
 
 ## Writing a new one
 

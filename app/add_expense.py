@@ -1,4 +1,5 @@
 import argparse
+import sys
 import uuid
 from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
@@ -139,6 +140,25 @@ if __name__ == "__main__":
     parser.add_argument('--desc', required=True, help='Description')
     parser.add_argument('--amount', required=True, help='Amount in dollars')
     parser.add_argument('--cat', default='General', help='Category (default: General)')
+    parser.add_argument('--account', required=True, help='The open account that paid, by name (case ignored)')
 
     args = parser.parse_args()
-    add_expense(args.date, args.desc, args.amount, args.cat)
+
+    # Look the account up in the accounts table (#53). Imported here, not at the top, so importing
+    # this module for add_expense() never pulls in the participants code it doesn't need.
+    from app.services.participants import load_directory
+    with get_connection() as conn:
+        directory = load_directory(conn)
+    account = directory.open_account_named(args.account)
+    if account is None:
+        print(f"Unknown or closed account: {args.account}")
+        sys.exit(1)
+    owner = directory.participant(account.owner_participant_id)
+
+    # Written to the old text columns as well, until they are dropped. A shared account has no
+    # owner and the CLI has no sender, so it is "Shared", as the REST API does.
+    ok = add_expense(args.date, args.desc, args.amount, args.cat,
+                     account_desc=account.name,
+                     account_owner=owner.display_name if owner else "Shared",
+                     account_id=account.id)
+    sys.exit(0 if ok else 1)
