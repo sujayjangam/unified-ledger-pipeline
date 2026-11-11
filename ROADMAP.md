@@ -65,23 +65,22 @@ participants and accounts as Postgres tables, replacing the env vars
 ([ADR-0032](docs/decisions/0032-participants-and-accounts-in-postgres.md),
 [ADR-0033](docs/decisions/0033-entered-by-participant-id.md); design and plan in
 `docs/superpowers/`). Built on the `feat/participants-switchover-53` branch
-(2026-11-11), not yet merged. It ships as four PRs, because the database changes must land in
-production in order:
+(2026-11-11), not yet merged. The database changes must land in production in order:
 
-1. Migration 0004 (the two tables and two id columns) and `scripts/seed_directory.py`. Apply 0004
-   to production *before* merging; seed production and backfill old rows after.
-2. The bot, CLI and REST API read the tables and write both the new ids and the old text columns.
-   Merge only once production is seeded, or the bot turns everyone away (it fails closed).
-3. Stop writing the old text columns (`account_desc`, `account_owner`, `entered_by`).
-4. Migration 0005 drops them. Take a backup first.
+1. Migration 0004 (the two tables, two id columns and `accounts.expires_on`) and
+   `scripts/seed_directory.py`, then the bot, CLI and REST API reading the tables and writing both
+   the new ids and the old text columns. Planned as two PRs, so the code couldn't merge before
+   production was seeded (the bot fails closed); production was migrated and seeded first, so they
+   ship as one.
+2. Stop writing the old text columns (`account_desc`, `account_owner`, `entered_by`).
+3. Migration 0005 drops them. Take a backup first.
 
-Done for PR 1 (2026-11-11): production's test rows were deleted and two misnamed cards renamed so
-old rows match the seed; 0004 gained `accounts.expires_on`; the seed was rehearsed end to end on a
-Neon branch made from the cleaned production (32 of 37 rows linked, the other 5 never recorded a
-card).
+Done for step 1 on production (2026-11-11): test rows deleted and two misnamed cards renamed so
+old rows match the seed, rehearsed on a Neon branch, then 0004 applied and the seed written (32 of
+37 rows linked; the other 5 never recorded a card).
 
-**Next action:** PR 1 — apply 0004 to production by hand, then run the seed with `--write` there,
-then open the PR. Adding and closing cards from Telegram is
+**Next action:** step 1's PR — try it against the test bot (`docs/LOCAL_TESTING.md`), then merge.
+Adding and closing cards from Telegram is
 [#83](https://github.com/sujayjangam/unified-ledger-pipeline/issues/83), after #53.
 
 Every Phase 0 item that was still open when the phase closed had already moved to a later phase
