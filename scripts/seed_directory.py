@@ -28,7 +28,9 @@ that exist are left alone, and only empty id columns are filled.
 """
 
 import argparse
+import calendar
 import json
+import re
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
@@ -55,6 +57,19 @@ class SeedData:
     participants: list[dict]
     accounts: list[dict]
     transaction_overrides: dict[str, str]
+
+
+def parse_expiry(printed: str) -> date:
+    """A card's printed expiry, "MM/YY", as the last day the card is valid: a card printed 09/29
+    still works on 30 Sep 2029. Exactly two digits each side, so "9/29" or "09/2029" is refused
+    rather than guessed at. Raises ValueError."""
+    if not re.fullmatch(r"\d{2}/\d{2}", printed or ""):
+        raise ValueError(f"expires {printed!r} should be MM/YY, as printed on the card")
+    month, year = int(printed[:2]), 2000 + int(printed[3:])
+    if not 1 <= month <= 12:
+        raise ValueError(f"expires {printed!r} has no month {month}")
+    # monthrange gives (weekday of the 1st, days in the month); the second handles leap years.
+    return date(year, month, calendar.monthrange(year, month)[1])
 
 
 def parse_seed(raw: dict) -> SeedData:
@@ -93,6 +108,12 @@ def parse_seed(raw: dict) -> SeedData:
             raise ValueError(f"Account {a['name']}: funded_by {a['funded_by']!r} is not a listed account")
         if a.get("funded_by") is not None and _key(a["funded_by"]) not in open_names:
             raise ValueError(f"Account {a['name']}: funded_by {a['funded_by']!r} is closed")
+        # Converted once here, so the insert below gets a real date and a typo fails with the
+        # card's name before anything touches the database.
+        try:
+            a["expires_on"] = parse_expiry(a["expires"]) if a.get("expires") is not None else None
+        except ValueError as e:
+            raise ValueError(f"Account {a['name']}: {e}") from None
         if a.get("closed_on") is not None:
             date.fromisoformat(a["closed_on"])  # raises ValueError on a malformed date
         elif _key(a["name"]) in seen_open:
@@ -151,13 +172,15 @@ def _seed(conn, seed: SeedData) -> dict:
         # An account is "the same row" when its name (case ignored) and closed_on both match, so a
         # closed card and its open replacement can share a name.
         inserted = conn.execute(text("""
-            INSERT INTO accounts (name, owner_participant_id, closed_on)
-            SELECT :name, (SELECT id FROM participants WHERE display_name = :owner), CAST(:closed_on AS date)
+            INSERT INTO accounts (name, owner_participant_id, closed_on, expires_on)
+            SELECT :name, (SELECT id FROM participants WHERE display_name = :owner), CAST(:closed_on AS date),
+                   CAST(:expires_on AS date)
             WHERE NOT EXISTS (
                 SELECT 1 FROM accounts
                 WHERE lower(name) = lower(:name) AND closed_on IS NOT DISTINCT FROM CAST(:closed_on AS date)
             )
-        """), {"name": a["name"], "owner": a.get("owner"), "closed_on": a.get("closed_on")}).rowcount
+        """), {"name": a["name"], "owner": a.get("owner"), "closed_on": a.get("closed_on"),
+               "expires_on": a["expires_on"]}).rowcount
         counts["accounts"] += inserted
 
     # Names in the seed file refer to the open account when there is one (a default or a funding

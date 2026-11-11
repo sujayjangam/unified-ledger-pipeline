@@ -87,6 +87,28 @@ def test_seed_rejects_a_default_or_funder_that_is_only_a_closed_account():
                     "accounts": [closed, {"name": "YouTrip", "owner": None, "funded_by": "Old Card"}]})
 
 
+# --- card expiry: written on the card as MM/YY, stored as the last day it's valid ---
+
+def _one_card(**fields):
+    return parse_seed({"participants": [], "accounts": [{"name": "Card A", "owner": None, **fields}]}).accounts[0]
+
+def test_expiry_is_the_last_day_of_the_printed_month():
+    # A card printed 09/29 still works on 30 Sep 2029.
+    assert _one_card(expires="09/29")["expires_on"] == date(2029, 9, 30)
+
+def test_expiry_in_february_of_a_leap_year():
+    assert _one_card(expires="02/28")["expires_on"] == date(2028, 2, 29)
+
+def test_no_expiry_is_none():
+    # Cash, PayNow and bank accounts have no expiry.
+    assert _one_card()["expires_on"] is None
+
+@pytest.mark.parametrize("bad", ["2029-09", "13/29", "9/29", "00/29", "09/2029"])
+def test_seed_rejects_a_malformed_expiry_naming_the_card(bad):
+    with pytest.raises(ValueError, match="Card A"):
+        _one_card(expires=bad)
+
+
 def _fake_run(monkeypatch, directory_check):
     """Runs main(--write) with every database step faked; returns the fake transaction."""
     trans = MagicMock()

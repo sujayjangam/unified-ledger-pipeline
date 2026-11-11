@@ -75,8 +75,14 @@ production in order:
 3. Stop writing the old text columns (`account_desc`, `account_owner`, `entered_by`).
 4. Migration 0005 drops them. Take a backup first.
 
-**Next action:** PR 1 — rehearse the seed on a fresh Neon branch made from production with the
-real (gitignored) seed file, then apply 0004 to production by hand.
+Done for PR 1 (2026-11-11): production's test rows were deleted and two misnamed cards renamed so
+old rows match the seed; 0004 gained `accounts.expires_on`; the seed was rehearsed end to end on a
+Neon branch made from the cleaned production (32 of 37 rows linked, the other 5 never recorded a
+card).
+
+**Next action:** PR 1 — apply 0004 to production by hand, then run the seed with `--write` there,
+then open the PR. Adding and closing cards from Telegram is
+[#83](https://github.com/sujayjangam/unified-ledger-pipeline/issues/83), after #53.
 
 Every Phase 0 item that was still open when the phase closed had already moved to a later phase
 (decided 2026-09-23, [ADR-0029](docs/decisions/0029-close-phase-0-on-date-parsing.md)).

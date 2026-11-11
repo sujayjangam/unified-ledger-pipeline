@@ -11,7 +11,8 @@ person (issue #53). This migration gives both a table of their own:
   - accounts: one row per card, wallet or cash. owner_participant_id NULL means shared: a payment
     on it belongs to whoever sent the message. closed_on retires a card without deleting it, so old
     transactions keep pointing at the real card. funded_by_account_id records which card tops up a
-    wallet such as YouTrip, replacing PRIMARY_ACCOUNT_OWNER.
+    wallet such as YouTrip, replacing PRIMARY_ACCOUNT_OWNER. expires_on records a card's printed
+    expiry as the last day it is valid.
 
 Why ids rather than names: a name can be renamed or reused by a replacement card, an id can't.
 GENERATED ALWAYS AS IDENTITY means Postgres hands out every id, never reuses one, and refuses a
@@ -63,6 +64,9 @@ def upgrade() -> None:
         sa.Column("owner_participant_id", sa.BigInteger(), sa.ForeignKey("participants.id"), nullable=True),
         sa.Column("funded_by_account_id", sa.BigInteger(), sa.ForeignKey("accounts.id"), nullable=True),
         sa.Column("closed_on", sa.Date(), nullable=True),
+        # The last day the card is valid (printed 09/29 -> 2029-09-30). NULL for anything without
+        # one: cash, PayNow, a bank account. Recorded only; nothing acts on it yet.
+        sa.Column("expires_on", sa.Date(), nullable=True),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.func.now()),
     )
 

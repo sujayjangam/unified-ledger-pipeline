@@ -76,6 +76,9 @@ Who may use the bot, and the accounts money is paid from, are rows rather than s
   YouTrip top-up is paid from, whoever sends it.
 - **closed_on**: DATE, nullable. A closed card keeps its real name and its id, so old rows stay
   linked; the bot asks before saving a new entry against it.
+- **expires_on**: DATE, nullable. The last day the card is valid: printed `09/29` is stored as
+  `2029-09-30`. NULL for anything without an expiry (cash, PayNow, a bank account). Recorded only;
+  nothing acts on it yet.
 - **created_at**: TIMESTAMPTZ, NOT NULL, `DEFAULT now()`
 
 Two open accounts can't share a name, ignoring case (`uq_accounts_open_name_ci`, a partial

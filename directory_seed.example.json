@@ -4,11 +4,11 @@
     {"display_name": "Bob", "telegram_user_id": "222222", "default_account": "Card B"}
   ],
   "accounts": [
-    {"name": "Card A", "owner": "Alice"},
-    {"name": "Card B", "owner": "Bob"},
+    {"name": "Card A", "owner": "Alice", "expires": "09/29"},
+    {"name": "Card B", "owner": "Bob", "expires": "04/30"},
     {"name": "Cash", "owner": null},
-    {"name": "YouTrip", "owner": null, "funded_by": "Card A"},
+    {"name": "YouTrip", "owner": "Alice", "funded_by": "Card A", "expires": "03/29"},
     {"name": "Old Card", "owner": "Alice", "closed_on": "2026-03-31"}
   ],
-  "transaction_overrides": {"00000000-0000-0000-0000-000000000000": "Cash"}
+  "transaction_overrides": {}
 }
