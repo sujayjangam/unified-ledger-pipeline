@@ -54,3 +54,9 @@ def test_entered_by_revises_created_at():
     created_at = _load(VERSIONS / "0002_add_created_at.py")
     entered_by = _load(VERSIONS / "0003_add_entered_by.py")
     assert entered_by.down_revision == created_at.revision
+
+
+def test_participants_accounts_revises_entered_by():
+    entered_by = _load(VERSIONS / "0003_add_entered_by.py")
+    directory = _load(VERSIONS / "0004_add_participants_and_accounts.py")
+    assert directory.down_revision == entered_by.revision
