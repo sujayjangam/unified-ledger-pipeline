@@ -20,7 +20,7 @@ doesn't map to anything in the actual system. Use, and refine once Phase 1/2 lan
 ## Current status
 
 **Phase:** Phase 0 — Foundation & ownership closed on 2026-11-10, when its last item (the
-date warning, #74) shipped. Phase 1 — Reconciliation engine is next and has not started. Phase 0's
+date warning, #74) shipped. Phase 1 — Reconciliation engine has started, with #53 in progress. Phase 0's
 scope was extended on 2026-08-20 to cover capture friction
 ([ADR-0017](docs/decisions/0017-extend-phase-0-for-capture-friction.md)), and its end was fixed on
 2026-09-23 ([ADR-0029](docs/decisions/0029-close-phase-0-on-date-parsing.md)).
@@ -60,11 +60,34 @@ scope was extended on 2026-08-20 to cover capture friction
   [#15](https://github.com/sujayjangam/unified-ledger-pipeline/issues/15),
   [ADR-0030](docs/decisions/0030-llm-reads-dates-python-resolves.md)), 2026-11-10
 
-**Next action:** start Phase 1 with
-[#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53): household participants
-and accounts as Postgres tables, replacing the env vars. Every Phase 0 item that was still open
-when the phase closed had already moved to a later phase (decided 2026-09-23,
-[ADR-0029](docs/decisions/0029-close-phase-0-on-date-parsing.md)).
+**In progress:** [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53),
+participants and accounts as Postgres tables, replacing the env vars
+([ADR-0032](docs/decisions/0032-participants-and-accounts-in-postgres.md),
+[ADR-0033](docs/decisions/0033-entered-by-participant-id.md); design and plan in
+`docs/superpowers/`). Built on the `feat/participants-switchover-53` branch
+(2026-11-11), not yet merged. The database changes must land in production in order:
+
+1. Migration 0004 (the two tables, two id columns and `accounts.expires_on`) and
+   `scripts/seed_directory.py`, then the bot, CLI and REST API reading the tables and writing both
+   the new ids and the old text columns. Planned as two PRs, so the code couldn't merge before
+   production was seeded (the bot fails closed); production was migrated and seeded first, so they
+   ship as one.
+2. Stop writing the old text columns (`account_desc`, `account_owner`, `entered_by`).
+3. Migration 0005 drops them. Take a backup first.
+
+Done for step 1 on production (2026-11-11): test rows deleted and two misnamed cards renamed so
+old rows match the seed, rehearsed on a Neon branch, then 0004 applied and the seed written (32 of
+37 rows linked; the other 5 never recorded a card).
+
+**Next action:** merge step 1's PR ([#84](https://github.com/sujayjangam/unified-ledger-pipeline/pull/84)).
+It passed against the test bot on the seeded Neon branch on 2026-11-11: default card, a named card
+owned by someone else, foreign currency on the wallet, a top-up as a Transfer from the funding
+card, an unknown sender refused, and access back on the next message with no restart.
+Adding and closing cards from Telegram is
+[#83](https://github.com/sujayjangam/unified-ledger-pipeline/issues/83), after #53.
+
+Every Phase 0 item that was still open when the phase closed had already moved to a later phase
+(decided 2026-09-23, [ADR-0029](docs/decisions/0029-close-phase-0-on-date-parsing.md)).
 
 **Open top-level issues:**
 [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53)
@@ -186,8 +209,8 @@ the insert) but only `print`s it and returns a bare `True` either way, so no cal
 fresh insert from a duplicate. Left alone deliberately in the #29 fix — changing a signature shared
 with the CLI and `app/main.py` to report on a call that no longer happens is the wrong layer (see
 [ADR-0023](docs/decisions/0023-in-memory-confirm-card-state.md)) — but it is still a real gap.
-- `app/bot_core.py::handle_button_click` never calls `is_authorized()`, unlike every message
-handler. Authorization is enforced only when the card is created, so the callback surface itself is
+- `app/bot_core.py::handle_button_click` never calls `authorize()` (called `is_authorized()`
+before #53), unlike every message handler. Authorization is enforced only when the card is created, so the callback surface itself is
 ungated. Found while fixing #29; deliberately not widened into that PR. It matters much less
 since webhook deliveries are authenticated ([ADR-0025](docs/decisions/0025-webhook-secret-token.md)): a button press can now only arrive
 through Telegram.
@@ -242,11 +265,13 @@ Found 2026-09-03, while reviewing #33's test suite PRs, not yet actioned:
   while a hardcoded payment-method default was in force. The code cause was removed on 2026-09-04,
   when the prompt's list started coming from `ACCOUNT_OWNERS`. Needs a specific, reviewed plan and
   a row count before running, not an ad hoc `UPDATE`; it is a data fix only. Account names stay out
-  of this file — they live only in gitignored `.env`, since this repo is public.
-- Move household participants and accounts (currently the `ACCOUNT_OWNERS` and `ALLOWED_TG_IDS`
-  JSON objects plus the `PRIMARY_ACCOUNT_OWNER` string, all hand-maintained in `.env`) into
+  of this file, since this repo is public. Once #53 lands, this is part of its backfill:
+  `scripts/seed_directory.py` lists every row whose `account_desc` matches no account, for a
+  per-row decision.
+- Move household participants and accounts (the `ACCOUNT_OWNERS` and `ALLOWED_TG_IDS`
+  JSON objects plus the `PRIMARY_ACCOUNT_OWNER` string, hand-maintained in `.env`) into
   Postgres tables — filed as
-  [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53), scheduled for Phase 1
+  [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53), in progress in Phase 1
   (decided 2026-09-04: the matcher needs accounts as rows with stable ids, so it is built against
   that model from the start rather than migrated onto it). Moving *categories* into a table stays
   a candidate tied to Phase 2's auto-categorisation work below, not part of #53.
@@ -260,7 +285,7 @@ Real bugs, but scheduled for Phase 4-5. Phases 1-3 come first.
   (`get_period_summary` and `get_category_summary` in `app/services/ledger_queries.py`,
   `recent_command` in `app/bot_core.py`). The bot never writes that category: it records a
   transfer as `transaction_type = 'Transfer'` with category `'YouTrip top-up'`
-  (`apply_payment_defaults` in `app/bot_core.py`), and `'Transfer'` isn't one of the categories
+  (`resolve_payment` in `app/services/participants.py`, `apply_payment_defaults` before #53), and `'Transfer'` isn't one of the categories
   the extractor can pick (`ExpenseCategory` in `app/services/extraction.py`). So a YouTrip top-up
   is added to the expense totals, the Transfers line always reads "No transfers", `/cat_*` lists
   top-ups as a spending category, and `/recent` never shows the transfer label. Fix: check
@@ -374,7 +399,7 @@ In working order. Items marked *(from Phase 0)* moved here by
 `PRIMARY_ACCOUNT_OWNER` / `ALLOWED_TG_IDS` env vars —
 [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53). Goes before the staging
 table so statement lines attach to an account row, not a string. The Phase 3 `participants` table
-below is this one.
+below is this one. In progress: four PRs, see "Current status".
 - [ ] Refund and reversal representation — `app/add_expense.py` rejects `amount <= 0` today, and
 real statements contain refunds almost immediately (see "Known issues"). Needs an ADR on how a
 refund is stored before the staging table is designed.
@@ -423,8 +448,9 @@ Budget's ±7 days is a starting point to measure, not a value to copy (see Const
 `transactions` history (`description` holds the raw input, `category` holds the human-confirmed
 answer), so common entries resolve without an LLM call at all. Sits in this phase rather than
 Phase 0 because the support/purity thresholds want the eval harness to tune them rather than being
-guessed. Note nothing in the codebase consults history for anything today — the `ACCOUNT_OWNERS`
-reverse-lookup in `bot_core.py` is the same *shape* but is hand-maintained from env, not derived.
+guessed. Note nothing in the codebase consults history for anything today — the card → owner
+lookup (`whose_card_paid` in `app/services/participants.py`, an env var before #53) is the same
+*shape* but is hand-maintained, not derived.
 - [ ] Document the methodology
 
 ### Phase 3 — Household splitting
@@ -441,10 +467,16 @@ share: SGD 5.55 split two ways would otherwise be 2.78 + 2.78 = 5.56. This repla
 `split_ratio` Decimal column, which nothing writes today. Who gets a leftover cent must be a fixed
 rule, not random, so the same entry always splits the same way; decide it here (suggested:
 whoever's card paid).
-- [ ] A database view that shows each entry's sender by name: `entered_by` joined to the
-household-members table from [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53), so the base table keeps storing only the ID
-([ADR-0026](docs/decisions/0026-entered-by-telegram-user-id.md)) while anything reading the ledger sees names. Not possible before #53, since names
+- [ ] A database view that shows each entry's sender by name: `entered_by_participant_id` joined to
+the `participants` table from [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53), so the base table keeps storing only the id
+([ADR-0033](docs/decisions/0033-entered-by-participant-id.md)) while anything reading the ledger sees names. Not possible before #53, since names
 live only in env secrets until then. Deliberately after Phase 2 (decided 2026-09-12).
+- [ ] Trips and groups (design note from #53, 2026-11-11; may move earlier than Phase 3). A trip is
+a group of participants with optional start and end dates. Expenses tagged to it are split and
+settled within it, and one dated outside the trip gets a non-blocking ⚠️ line on the card, since
+post-trip expenses are real. The household becomes a group with no end date, so splitting is
+written once for both. #53 adds participants without a Telegram ID for exactly this: people who
+are split with but never use the bot.
 - [ ] Fewer false duplicate warnings. Today any two entries with the same amount and currency
 within 5 minutes are flagged, even unrelated ones
 ([ADR-0027](docs/decisions/0027-duplicate-warning-before-the-card.md)). Candidates: also require the

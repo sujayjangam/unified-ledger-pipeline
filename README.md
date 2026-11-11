@@ -113,6 +113,10 @@ its context, rejected alternatives and cost. The ones that shaped the system mos
 - A warning before saving an entry that matches one logged in the last 5 minutes (same amount and
   currency, by anyone in the household), naming who logged it when that's recorded; the user can
   save anyway or cancel.
+- Who may use the bot, and the cards they pay with, are rows in Postgres (`participants`,
+  `accounts`), read on every message, so a new card works without a redeploy. If they can't be
+  read, the bot lets nobody in. Entries record the account and sender by id. A cancelled card
+  keeps its name; an entry against it asks before saving.
 - Read commands over the ledger (`/recent`, `/today`, `/week`, `/month` and per-category
   variants), aggregated per currency.
 - CI on every pull request: clean dependency install, lint, an import smoke check across `app/`,
@@ -120,7 +124,7 @@ its context, rejected alternatives and cost. The ones that shaped the system mos
   `main`, enforced by a repository ruleset rather than merely reported on.
 - 6-hourly `pg_dump` backups to GCS with 30-day retention; restore procedure verified 2026-08-13.
 - A small FastAPI REST surface (`GET/POST /transactions`, `app/main.py`) for programmatic entry,
-  currently local-only.
+  currently local-only. POST names the open account that paid.
 
 ## What's next
 
@@ -144,7 +148,7 @@ packages).
 ```bash
 pip install -r requirements.txt
 
-# Initialize the DB (Alembic creates the `transactions` table). This targets DATABASE_URL
+# Initialize the DB (Alembic creates the `transactions`, `participants` and `accounts` tables). This targets DATABASE_URL
 # from .env; to migrate a test branch instead, see docs/LOCAL_TESTING.md.
 alembic upgrade head
 
@@ -156,7 +160,7 @@ python -m app.bot_local
 uvicorn app.bot_webhook:app_fastapi --reload --port 8080
 
 # CLI expense entry / terminal ledger view
-python -m app.add_expense --date 2026-07-29 --desc "Lunch" --amount 12.50 --cat Food
+python -m app.add_expense --date 2026-07-29 --desc "Lunch" --amount 12.50 --cat Food --account "Card A"
 python -m app.view_ledger
 ```
 
@@ -166,19 +170,17 @@ Deployment: `Dockerfile` installs `requirements.txt` and runs
 ### Required environment (`.env`, loaded via `python-dotenv`)
 
 - `TELEGRAM_BOT_TOKEN`
-- `ALLOWED_TG_IDS` — JSON object mapping Telegram user ID (string) → display name; the bot's
-  allowlist.
-- `ACCOUNT_OWNERS` — JSON object mapping a person's name → list of their payment
-  accounts/cards, used to reverse-lookup `account_owner` from the extracted payment method,
-  and flattened into the list of valid payment methods given to the extraction prompt.
-- `PRIMARY_ACCOUNT_OWNER` — must be one of the keys in `ACCOUNT_OWNERS`; whoever funds shared
-  transfers (e.g. a YouTrip top-up) regardless of who sent the message.
 - `OPENAI_API_KEY`
 - `DATABASE_URL` — Postgres connection string (`postgresql+psycopg://...`)
 - `WEBHOOK_URL` — optional, only used by `bot_webhook.py` to register the Telegram webhook.
 - `WEBHOOK_SECRET_TOKEN` — required whenever `WEBHOOK_URL` is set. Registered with Telegram at
   startup; `/webhook` rejects any request that doesn't carry it back in Telegram's
   `X-Telegram-Bot-Api-Secret-Token` header.
+
+Who may use the bot, and the cards they pay with, are not settings: they are rows in the
+`participants` and `accounts` tables, read on every message. If those tables can't be read, the
+bot lets nobody in. `scripts/seed_directory.py` fills them from a gitignored JSON file in the
+format of `directory_seed.example.json`, and links existing transactions to them.
 
 ## Docs
 

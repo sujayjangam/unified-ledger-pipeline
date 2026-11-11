@@ -1,4 +1,5 @@
 import argparse
+import sys
 import uuid
 from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
@@ -44,7 +45,8 @@ def format_cents(amount_cents: int) -> str:
     dollars, cents = divmod(abs(int(amount_cents)), 100)
     return f"{sign}{dollars}.{cents:02d}"
 
-def add_expense(date_str, description, amount_dollars, category, currency="SGD", transaction_type="Expense", account_desc=None, account_owner=None, source="Manual CLI", idempotency_key=None, entered_by=None):
+def add_expense(date_str, description, amount_dollars, category, currency="SGD", transaction_type="Expense", account_desc=None, account_owner=None, source="Manual CLI", idempotency_key=None, entered_by=None,
+                account_id=None, entered_by_participant_id=None):
     try:
         # 1. Validation: Convert to Integer Cents (Mathematical Precision)
         # We call function dollars_to_cents to convert to cents for us
@@ -62,6 +64,9 @@ def add_expense(date_str, description, amount_dollars, category, currency="SGD",
         # (CLI/API callers) never collides, since SQL treats every NULL as distinct.
         # entered_by is the Telegram user ID of whoever sent the message (#60). The CLI and the
         # REST API don't pass one, so their rows leave it NULL.
+        # account_id and entered_by_participant_id are the same two facts as ids (#53). Until the
+        # old text columns are dropped, both are written: reverting the deploy that started
+        # writing the ids must never break saving, so the old columns stay complete meanwhile.
         query = text('''
             INSERT INTO transactions (
                 transaction_id,
@@ -77,13 +82,15 @@ def add_expense(date_str, description, amount_dollars, category, currency="SGD",
                 reconciliation_status,
                 source,
                 idempotency_key,
-                entered_by
+                entered_by,
+                account_id,
+                entered_by_participant_id
             )
             VALUES (
                 :transaction_id, :date, :description, :amount, :currency,
                 :base_amount, :category, :transaction_type, :account_desc,
                 :account_owner, :reconciliation_status, :source, :idempotency_key,
-                :entered_by
+                :entered_by, :account_id, :entered_by_participant_id
             )
             ON CONFLICT (idempotency_key) DO NOTHING
         ''')
@@ -105,6 +112,8 @@ def add_expense(date_str, description, amount_dollars, category, currency="SGD",
                 "source": source,
                 "idempotency_key": idempotency_key,
                 "entered_by": entered_by,
+                "account_id": account_id,
+                "entered_by_participant_id": entered_by_participant_id,
             })
 
             was_duplicate = result.rowcount == 0
@@ -131,6 +140,25 @@ if __name__ == "__main__":
     parser.add_argument('--desc', required=True, help='Description')
     parser.add_argument('--amount', required=True, help='Amount in dollars')
     parser.add_argument('--cat', default='General', help='Category (default: General)')
+    parser.add_argument('--account', required=True, help='The open account that paid, by name (case ignored)')
 
     args = parser.parse_args()
-    add_expense(args.date, args.desc, args.amount, args.cat)
+
+    # Look the account up in the accounts table (#53). Imported here, not at the top, so importing
+    # this module for add_expense() never pulls in the participants code it doesn't need.
+    from app.services.participants import load_directory
+    with get_connection() as conn:
+        directory = load_directory(conn)
+    account = directory.open_account_named(args.account)
+    if account is None:
+        print(f"Unknown or closed account: {args.account}")
+        sys.exit(1)
+    owner = directory.participant(account.owner_participant_id)
+
+    # Written to the old text columns as well, until they are dropped. A shared account has no
+    # owner and the CLI has no sender, so it is "Shared", as the REST API does.
+    ok = add_expense(args.date, args.desc, args.amount, args.cat,
+                     account_desc=account.name,
+                     account_owner=owner.display_name if owner else "Shared",
+                     account_id=account.id)
+    sys.exit(0 if ok else 1)

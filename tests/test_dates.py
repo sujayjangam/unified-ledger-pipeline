@@ -320,14 +320,12 @@ def test_apply_warns_on_a_future_date_but_still_uses_it():
 
 # --- the whole pipeline: the card shows the resolved date ----------------------------------
 
-async def _show_card(monkeypatch, text, date_reference):
+async def _show_card(monkeypatch, directory, text, date_reference):
     """Runs process_expense_text end to end, minus the network: the clock, the model call and
     the duplicate check are faked, and the card message is a mock.
 
     Returns (context, the card's text, the faked model call).
     """
-    monkeypatch.setattr(bot_core, "ALLOWED_TG_IDS", {"111111": "Alice"})
-    monkeypatch.setattr(bot_core, "ACCOUNT_OWNERS", {"Alice": ["Card A"]})
     monkeypatch.setattr(bot_core, "find_recent_duplicate", MagicMock(return_value=None))
     # 10am on TODAY, Singapore time. bot_core imported get_sgt_now by name, so it is
     # patched on bot_core - patching it in utils wouldn't reach the copy bot_core holds.
@@ -346,17 +344,19 @@ async def _show_card(monkeypatch, text, date_reference):
     context = MagicMock()
     context.user_data = {}
 
-    await bot_core.process_expense_text(update, context, text, status_msg)
+    await bot_core.process_expense_text(update, context, text, status_msg, directory)
 
     return context, status_msg.edit_text.await_args.args[0], extract
 
 
-async def test_the_card_shows_yesterdays_date_for_yday(monkeypatch):
+async def test_the_card_shows_yesterdays_date_for_yday(monkeypatch, directory):
     context, card, extract = await _show_card(
-        monkeypatch, "lunch 12.50 yday", model_ref(kind="days_ago", days_ago=1))
+        monkeypatch, directory, "lunch 12.50 yday", model_ref(kind="days_ago", days_ago=1))
 
     # The model was given the same "today" the date was counted back from.
-    extract.assert_awaited_once_with("lunch 12.50 yday", TODAY)
+    # (The third argument, the account names, is covered by the bot and extraction tests.)
+    extract.assert_awaited_once()
+    assert extract.await_args.args[:2] == ("lunch 12.50 yday", TODAY)
     # The card shows yesterday, and the entry waiting for Confirm carries it too.
     assert "2026-09-22" in card
     assert context.user_data["pending_cards"][500]["date"] == "2026-09-22"
@@ -364,10 +364,10 @@ async def test_the_card_shows_yesterdays_date_for_yday(monkeypatch):
     assert "⚠️" not in card
 
 
-async def test_the_card_warns_under_the_date_when_it_looks_wrong(monkeypatch):
+async def test_the_card_warns_under_the_date_when_it_looks_wrong(monkeypatch, directory):
     # 90 days back is 2026-06-25, past the 60-day limit.
     context, card, _ = await _show_card(
-        monkeypatch, "lunch 12.50 90 days ago", model_ref(kind="days_ago", days_ago=90))
+        monkeypatch, directory, "lunch 12.50 90 days ago", model_ref(kind="days_ago", days_ago=90))
 
     # The ⚠️ line sits directly under the date line, not somewhere else on the card.
     assert "📅 **Date:** 2026-06-25\n⚠️ This date is more than 60 days ago.\n" in card

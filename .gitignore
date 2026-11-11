@@ -32,3 +32,8 @@ claude-plan-*.md
 
 # OS files
 .DS_Store
+
+# Real participants and card labels for scripts/seed_directory.py (#53) - never committed.
+# directory_seed.example.json shows the format with fictional names.
+directory_seed.local.json
+.neon

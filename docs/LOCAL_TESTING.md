@@ -47,13 +47,17 @@ TELEGRAM_BOT_TOKEN=<the token BotFather just gave you>
 DATABASE_URL=postgresql+psycopg://<neon branch connection string>
 ```
 
-Everything else — `OPENAI_API_KEY`, `ALLOWED_TG_IDS`, `ACCOUNT_OWNERS` — is
+Everything else — `OPENAI_API_KEY` included — is
 deliberately **absent**, and keeps coming from `.env`. `app/bot_local.py` loads `.env.local` first
 with `override=True`; `bot_core`'s own `load_dotenv()` defaults to `override=False`, so it fills in
 the gaps without disturbing the overrides. One copy of each secret on disk, not two.
 
-`ALLOWED_TG_IDS` carries over unchanged because a Telegram user ID identifies *you*, not the bot
-you're messaging — the same ID authorises you on both bots.
+Who may use the bot is not in either file: it is the `participants` table, in whichever database
+`DATABASE_URL` points at (#53). A Neon branch made from `main` copies those rows, and a Telegram
+user ID identifies *you*, not the bot you're messaging — so the same row authorises you on both
+bots. A branch made before the tables were seeded has no participants, and the test bot will turn
+everyone away; seed it with `python -m scripts.seed_directory --write` (with `DATABASE_URL` set
+to the branch in the shell first).
 
 ### 4. Point `DATABASE_URL` at a Neon branch (recommended)
 

@@ -59,7 +59,7 @@ files, so packages rely on Python's implicit namespace packages).
 ```bash
 pip install -r requirements.txt
 
-# Initialize / migrate the DB (Alembic owns the `transactions` table in Postgres).
+# Initialize / migrate the DB (Alembic owns every table: `transactions`, `participants`, `accounts`).
 # CAUTION: this targets DATABASE_URL from .env - i.e. PRODUCTION. alembic/env.py never reads
 # .env.local; to migrate a test branch, set DATABASE_URL in the shell first and run
 # `alembic current` to check the printed host. See docs/LOCAL_TESTING.md.
@@ -77,7 +77,7 @@ uvicorn app.bot_webhook:app_fastapi --reload --port 8080
 uvicorn app.main:app --reload
 
 # CLI expense entry
-python -m app.add_expense --date 2026-07-29 --desc "Lunch" --amount 12.50 --cat Food
+python -m app.add_expense --date 2026-07-29 --desc "Lunch" --amount 12.50 --cat Food --account "Card A"
 
 # View the ledger in a terminal table
 python -m app.view_ledger
@@ -102,12 +102,6 @@ before merge ([ADR-0021](docs/decisions/0021-rulesets-over-classic-branch-protec
 `.env.example` shows the format of each one.
 
 - `TELEGRAM_BOT_TOKEN`
-- `ALLOWED_TG_IDS` — JSON object, Telegram user ID (string) → display name. The allowlist
-  `is_authorized()` checks.
-- `ACCOUNT_OWNERS` — JSON object, person → list of their accounts/cards, first entry is their
-  default. The **only** place accounts are defined (see step 0 of the ingestion pipeline below).
-- `PRIMARY_ACCOUNT_OWNER` — one of the keys in `ACCOUNT_OWNERS`; funds shared transfers (e.g. a
-  YouTrip top-up) whoever sent the message. Configurable so no real name is hardcoded.
 - `OPENAI_API_KEY`
 - `DATABASE_URL` — must use the `postgresql+psycopg://` scheme. This project uses `psycopg` v3; a
   plain `postgresql://` URL makes SQLAlchemy look for the uninstalled `psycopg2`
@@ -116,7 +110,7 @@ before merge ([ADR-0021](docs/decisions/0021-rulesets-over-classic-branch-protec
 - `WEBHOOK_SECRET_TOKEN` — required whenever `WEBHOOK_URL` is set; `bot_webhook.py` refuses to
   start without a well-formed one. `/webhook` rejects any delivery that doesn't carry it back,
   *before* parsing the body or recording the `update_id` — that is what makes the sender ID
-  `is_authorized()` trusts actually trustworthy. From Secret Manager in production
+  `authorize()` trusts actually trustworthy. From Secret Manager in production
   ([ADR-0025](docs/decisions/0025-webhook-secret-token.md)).
 
 `.env.local` (gitignored by the `.env.*` rule) is the local-testing overlay: only a test bot's
@@ -125,6 +119,11 @@ before merge ([ADR-0021](docs/decisions/0021-rulesets-over-classic-branch-protec
 from `.env` — one copy of each secret on disk. See `docs/LOCAL_TESTING.md` and
 [ADR-0019](docs/decisions/0019-separate-bot-token-for-local-testing.md).
 
+Who may use the bot, and their cards, are **not** env vars: they are rows in the `participants`
+and `accounts` tables (see "Participants and accounts" below). The three env vars that used to
+hold them (`ALLOWED_TG_IDS`, `ACCOUNT_OWNERS`, `PRIMARY_ACCOUNT_OWNER`) are gone; never bring a
+second copy of that list back.
+
 ## Architecture
 
 ### Bot: transport vs. logic split
@@ -132,7 +131,7 @@ from `.env` — one copy of each secret on disk. See `docs/LOCAL_TESTING.md` and
 The same business logic runs under two transports
 ([ADR-0003](docs/decisions/0003-split-bot-transport-from-logic.md)):
 - `app/bot_core.py` — the factory (`get_application()`), all command/message handlers, and the
-  `is_authorized()` gatekeeper. Builds and configures the bot but never starts a network loop.
+  `authorize()` gatekeeper. Builds and configures the bot but never starts a network loop.
 - `app/bot_local.py` — local runner; loads `.env.local` over `.env`, refuses to start with the
   production bot token, then calls `run_polling()` against a separate test bot.
 - `app/bot_webhook.py` — production runner; wraps the same app in FastAPI behind `POST /webhook`,
@@ -154,10 +153,12 @@ to a handler only works for that one input type.
 `process_expense_text` edits one status message throughout, so each attempt leaves exactly one
 message. In order:
 
-0. The payment methods the model may choose from are built **per call** by
-   `extraction.py::build_allowed_accounts`, flattening `ACCOUNT_OWNERS` plus `Cash`. Never
-   reintroduce a second source of truth for this list: a separate, never-set `ALLOWED_ACCOUNTS`
-   var once made the prompt run on a hardcoded fallback and attribute entries to the wrong owner.
+0. The handler's `authorize()` has already loaded the `Directory` (participants and accounts)
+   and passes it in. The account names the model may choose from are
+   `directory.account_names()`, passed to `extract_transactions` — open accounts first, then
+   closed ones, so a refund on a cancelled card can still be named. Never reintroduce a second
+   source of truth for this list: a separate, never-set `ALLOWED_ACCOUNTS` var once made the
+   prompt run on a hardcoded fallback and attribute entries to the wrong owner.
 1. `extraction.py::extract_transactions` → GPT-4o-mini structured output (`TransactionList`). The
    raw input is kept as `description`, never an LLM summary
    ([ADR-0008](docs/decisions/0008-raw-transcript-as-description.md)).
@@ -176,11 +177,15 @@ message. In order:
    days back, or couldn't be resolved. The warning never blocks the save and is never written to
    the database ([ADR-0030](docs/decisions/0030-llm-reads-dates-python-resolves.md),
    [ADR-0031](docs/decisions/0031-last-week-from-message-text.md)).
-5. `apply_payment_defaults` (standalone so it can be unit-tested): a YouTrip top-up is forced to
-   `PRIMARY_ACCOUNT_OWNER`'s default account and type `Transfer`; otherwise a missing payment
-   method becomes `YouTrip` for non-SGD or the sender's default account for SGD. `account_owner`
-   is then reverse-matched from the payment method (case-insensitive; `Cash` → the sender). It
-   means *whose card paid*, not who sent the message — the sender is `entered_by`.
+5. `participants.py::resolve_payment` (plain data in, so it can be unit-tested): a YouTrip
+   top-up is paid from the wallet's `funded_by_account_id` card and becomes a `Transfer` — with no
+   open wallet or funding card it raises `WalletNotSetUp` and the bot refuses the entry, never
+   guesses. Otherwise a named account is matched (case-insensitive, closed ones included); no
+   name, or one that matches nothing, becomes the `YouTrip` wallet for non-SGD or the sender's
+   `default_account_id` for SGD. It sets `account_id`, the card's real name, `account_owner`
+   (whose card paid; a shared account like Cash → the sender) and `closed_account`. A closed card
+   gets a ⚠️ line and "⚠️ Save anyway" / "❌ Cancel", like a duplicate. The sender is
+   `entered_by_participant_id`, not `account_owner`.
 6. Duplicate check: `ledger_queries.py::find_recent_duplicate` looks for the same amount (cents)
    and currency saved by anyone in the last `DUPLICATE_WINDOW_MINUTES` (5), windowed on
    `created_at`. A match turns the card into a warning with "⚠️ Save anyway" / "❌ Cancel" (same
@@ -201,6 +206,28 @@ message. In order:
   [#29](https://github.com/sujayjangam/unified-ledger-pipeline/issues/29) fixed.
 - A failed save puts the entry back with its original `idempotency_key` and buttons, so a
   transient Neon failure costs a retry, not the entry.
+- A button tap never loads the directory: the pending entry already holds `account_id` and
+  `entered_by_participant_id`, so what was confirmed is what is saved.
+
+### Participants and accounts (`app/services/participants.py`)
+
+People and the accounts they pay from are rows in `participants` and `accounts` (migration 0004,
+[ADR-0032](docs/decisions/0032-participants-and-accounts-in-postgres.md)); `docs/SCHEMA.md` has
+the columns.
+- `load_directory(conn)` reads both tables into a frozen `Directory` and runs
+  `validate_directory`; any problem (a bot user with no open default card, a wallet funded by a
+  closed card) raises `DirectoryError`.
+- It is read on **every message** by `bot_core.py::authorize()`, never cached, so a row edit
+  works on the next message. `_load_directory()` is the seam tests monkeypatch.
+- **Fail closed.** If the directory can't be loaded, `authorize()` lets nobody in and replies
+  "Couldn't reach the ledger". The allowlist is those rows: never fall back to letting a message
+  through.
+- A closed account keeps its real name and id, with `closed_on` set. At most one *open* account
+  may have a name (ignoring case); a replacement card may reuse a closed card's name.
+- Ids are `GENERATED ALWAYS AS IDENTITY`: never insert or reuse one.
+- The real rows are never committed (this repo is public): `scripts/seed_directory.py` copies
+  them from the gitignored `directory_seed.local.json`. Tests use the fictional `directory`
+  fixture in `tests/conftest.py`.
 
 ### Storage
 
@@ -219,10 +246,14 @@ message. In order:
   date. Never substitute one for the other: anything meaning "within the last N minutes" uses
   `created_at`. An exact `00:00:00+08` on an old row means "time unknown"
   ([ADR-0024](docs/decisions/0024-created-at-write-time-column.md)).
-- `entered_by` is the **sender's Telegram user ID**, as the string `ALLOWED_TG_IDS` keys on. Store
-  the ID, never a name — names are looked up when shown. NULL means "not recorded" (old rows,
+- `entered_by_participant_id` is the **sender, as a participant id**. Store the id, never a
+  name — names are looked up from the directory when shown. NULL means "not recorded" (old rows,
   CLI/REST API rows). Tests use fictional IDs only
-  ([ADR-0026](docs/decisions/0026-entered-by-telegram-user-id.md)).
+  ([ADR-0033](docs/decisions/0033-entered-by-participant-id.md), superseding ADR-0026).
+- **Dual-write (#53, in progress).** The bot, CLI and REST API write both the new id columns
+  (`account_id`, `entered_by_participant_id`) and the old text ones (`account_desc`,
+  `account_owner`, `entered_by`), so reverting a deploy loses nothing. A later PR stops writing the
+  text columns and a migration then drops them — see `ROADMAP.md`. Until then, keep writing both.
 - **Production is never migrated automatically.** A merge to `main` auto-deploys, so run
   `alembic upgrade head` by hand *before* merging code that depends on a migration. Additive
   migrations are safe to apply first: no query uses `SELECT *` and every writer names its columns.
@@ -250,8 +281,10 @@ full snapshot, not a per-transaction undo, and production is never restored into
 ### REST API (`app/main.py`)
 
 Independent of the bot — a minimal FastAPI surface (`GET/POST /transactions`) with its own Pydantic
-`Transaction` model. Defaults `account_owner` to `"Shared"`, so a caller that omits it never leaks
-a real owner's name.
+`Transaction` model. POST takes a required `account` name, which must be an **open** account
+(unknown or closed → 422 "Unknown or closed account"; there is nobody to ask "are you sure?"). A
+shared account is written with `account_owner` `"Shared"`, never a person's name. The CLI's
+`--account` follows the same rules.
 
 ### `scripts/`
 
@@ -261,6 +294,12 @@ it never calls the model. Run `python -m scripts.check_extraction` (it uses the 
 `.env`, never the database) after any change to the prompt or the schema descriptions in
 `extraction.py`, and add a message to its list whenever a real one is misread
 ([ADR-0031](docs/decisions/0031-last-week-from-message-text.md)).
+
+`scripts/seed_directory.py` fills `participants` and `accounts` from the gitignored
+`directory_seed.local.json` (format: `directory_seed.example.json`) and links old transactions to
+them, matching each row's `account_desc` and its date against `closed_on`. It prints the database
+host; a plain run is a dry run that rolls everything back, `--write` commits and asks about any
+closed-card or shared-name row. Safe to rerun. Point `DATABASE_URL` at a Neon branch first.
 
 `scripts/migrate_to_postgres.py` is the one-off SQLite → Postgres copy, run on 2026-08-01. Its
 source file no longer exists, so it can't run again. It is kept on purpose as a reference — don't

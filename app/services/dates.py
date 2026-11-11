@@ -155,7 +155,7 @@ def apply_date_resolution(transaction: dict, today: date) -> dict:
     mutating and returning it in place.
 
     Called from process_expense_text, so voice and typed entries are resolved the same way.
-    Standalone like apply_payment_defaults, so it can be tested on a plain dict.
+    Standalone like participants.resolve_payment, so it can be tested on a plain dict.
 
     'date' is stored as a 'YYYY-MM-DD' string because that is what the card shows and what
     add_expense validates. A reference that can't be worked out falls back to today, the
