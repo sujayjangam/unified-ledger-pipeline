@@ -79,7 +79,10 @@ Done for step 1 on production (2026-11-11): test rows deleted and two misnamed c
 old rows match the seed, rehearsed on a Neon branch, then 0004 applied and the seed written (32 of
 37 rows linked; the other 5 never recorded a card).
 
-**Next action:** step 1's PR — try it against the test bot (`docs/LOCAL_TESTING.md`), then merge.
+**Next action:** merge step 1's PR ([#84](https://github.com/sujayjangam/unified-ledger-pipeline/pull/84)).
+It passed against the test bot on the seeded Neon branch on 2026-11-11: default card, a named card
+owned by someone else, foreign currency on the wallet, a top-up as a Transfer from the funding
+card, an unknown sender refused, and access back on the next message with no restart.
 Adding and closing cards from Telegram is
 [#83](https://github.com/sujayjangam/unified-ledger-pipeline/issues/83), after #53.
 
