@@ -200,7 +200,8 @@ def resolve_payment(transaction: dict, directory: Directory, sender: Participant
     Mutates and returns the dict, like the apply_payment_defaults() it replaces.
 
     Sets account_id, payment_method (the account's real name), account_owner (a display name, for
-    the card) and closed_account. In order:
+    the card) and closed_account. payment_method and account_owner are display only: the pending
+    entry keeps them for the card text, while saving records only account_id. In order:
       1. A YouTrip top-up is paid from the wallet's funding card, whoever sent it, and is a
          Transfer. No open wallet or no funding card -> WalletNotSetUp: never guess.
       2. A named card is matched, closed cards included (closed_account is then True and the card

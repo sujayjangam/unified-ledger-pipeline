@@ -72,7 +72,7 @@ def _flagged_txn(idempotency_key="key-1"):
     return {
         "date": "2026-09-12", "description": "coffee 5.50", "amount": 5.5, "category": "Food",
         "currency": "SGD", "transaction_type": "Expense", "payment_method": "Card A",
-        "account_owner": "Alice", "idempotency_key": idempotency_key, "entered_by": SENDER,
+        "account_owner": "Alice", "idempotency_key": idempotency_key,
         "account_id": 10, "entered_by_participant_id": SENDER_ID, "closed_account": False,
         "suspected_duplicate": _earlier(),
     }

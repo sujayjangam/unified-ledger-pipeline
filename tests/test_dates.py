@@ -383,7 +383,8 @@ def _pending_txn_with_a_flagged_date():
         "date": "2026-06-25", "date_warning": "This date is more than 60 days ago.",
         "description": "lunch 12.50 90 days ago", "amount": 12.5, "category": "Food",
         "currency": "SGD", "transaction_type": "Expense", "payment_method": "Card A",
-        "account_owner": "Alice", "idempotency_key": "key-1", "entered_by": "111111",
+        "account_owner": "Alice", "idempotency_key": "key-1",
+        "account_id": 10, "entered_by_participant_id": 1,
         "suspected_duplicate": None,
     }
 

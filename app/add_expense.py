@@ -45,7 +45,7 @@ def format_cents(amount_cents: int) -> str:
     dollars, cents = divmod(abs(int(amount_cents)), 100)
     return f"{sign}{dollars}.{cents:02d}"
 
-def add_expense(date_str, description, amount_dollars, category, currency="SGD", transaction_type="Expense", account_desc=None, account_owner=None, source="Manual CLI", idempotency_key=None, entered_by=None,
+def add_expense(date_str, description, amount_dollars, category, currency="SGD", transaction_type="Expense", source="Manual CLI", idempotency_key=None,
                 account_id=None, entered_by_participant_id=None):
     try:
         # 1. Validation: Convert to Integer Cents (Mathematical Precision)
@@ -62,11 +62,8 @@ def add_expense(date_str, description, amount_dollars, category, currency="SGD",
         # save attempt for the same confirm prompt), the UNIQUE constraint silently skips the
         # insert instead of raising - rowcount tells us which happened. NULL idempotency_key
         # (CLI/API callers) never collides, since SQL treats every NULL as distinct.
-        # entered_by is the Telegram user ID of whoever sent the message (#60). The CLI and the
-        # REST API don't pass one, so their rows leave it NULL.
-        # account_id and entered_by_participant_id are the same two facts as ids (#53). Until the
-        # old text columns are dropped, both are written: reverting the deploy that started
-        # writing the ids must never break saving, so the old columns stay complete meanwhile.
+        # Record the account and sender as ids only, so names can change without rewriting rows.
+        # Names are looked up from accounts/participants when shown. CLI/API rows have no sender.
         query = text('''
             INSERT INTO transactions (
                 transaction_id,
@@ -77,20 +74,17 @@ def add_expense(date_str, description, amount_dollars, category, currency="SGD",
                 base_amount,
                 category,
                 transaction_type,
-                account_desc,
-                account_owner,
                 reconciliation_status,
                 source,
                 idempotency_key,
-                entered_by,
                 account_id,
                 entered_by_participant_id
             )
             VALUES (
                 :transaction_id, :date, :description, :amount, :currency,
-                :base_amount, :category, :transaction_type, :account_desc,
-                :account_owner, :reconciliation_status, :source, :idempotency_key,
-                :entered_by, :account_id, :entered_by_participant_id
+                :base_amount, :category, :transaction_type,
+                :reconciliation_status, :source, :idempotency_key,
+                :account_id, :entered_by_participant_id
             )
             ON CONFLICT (idempotency_key) DO NOTHING
         ''')
@@ -106,12 +100,9 @@ def add_expense(date_str, description, amount_dollars, category, currency="SGD",
                 "base_amount": amount_cents,
                 "category": category,
                 "transaction_type": transaction_type,
-                "account_desc": account_desc,
-                "account_owner": account_owner,
                 "reconciliation_status": 'unsettled',
                 "source": source,
                 "idempotency_key": idempotency_key,
-                "entered_by": entered_by,
                 "account_id": account_id,
                 "entered_by_participant_id": entered_by_participant_id,
             })
@@ -153,12 +144,8 @@ if __name__ == "__main__":
     if account is None:
         print(f"Unknown or closed account: {args.account}")
         sys.exit(1)
-    owner = directory.participant(account.owner_participant_id)
-
-    # Written to the old text columns as well, until they are dropped. A shared account has no
-    # owner and the CLI has no sender, so it is "Shared", as the REST API does.
+    # Store only the account id so its name is looked up from accounts when shown.
+    # The CLI has no recorded sender, so entered_by_participant_id stays NULL.
     ok = add_expense(args.date, args.desc, args.amount, args.cat,
-                     account_desc=account.name,
-                     account_owner=owner.display_name if owner else "Shared",
                      account_id=account.id)
     sys.exit(0 if ok else 1)

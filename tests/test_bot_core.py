@@ -108,7 +108,8 @@ async def test_pending_entry_carries_the_ids(monkeypatch, directory):
     context, _, _ = await _show_card(monkeypatch, directory, BOB, payment_method="Cash")
     pending = context.user_data["pending_cards"][500]
     assert (pending["account_id"], pending["entered_by_participant_id"]) == (12, 2)
-    assert (pending["account_owner"], pending["entered_by"]) == ("Bob", "222222")
+    assert pending["account_owner"] == "Bob"
+    assert "entered_by" not in pending
 
 
 async def test_closed_card_gets_the_warning_and_save_anyway_buttons(monkeypatch, directory):
@@ -144,7 +145,7 @@ def _pending(**overrides):
     txn = {
         "date": "2026-11-11", "description": "refund 20 old card", "amount": 20.0, "category": "Other",
         "currency": "SGD", "transaction_type": "Expense", "payment_method": "Old Card",
-        "account_owner": "Alice", "idempotency_key": "key-1", "entered_by": "111111",
+        "account_owner": "Alice", "idempotency_key": "key-1",
         "account_id": 14, "entered_by_participant_id": 1, "suspected_duplicate": None,
         "closed_account": False,
     }
@@ -181,8 +182,8 @@ async def test_confirm_saves_without_loading_the_directory(monkeypatch):
 
     kwargs = saves.call_args.kwargs
     assert (kwargs["account_id"], kwargs["entered_by_participant_id"]) == (14, 1)
-    # Still written until the old columns are dropped, so reverting this deploy is safe.
-    assert (kwargs["account_desc"], kwargs["account_owner"], kwargs["entered_by"]) == ("Old Card", "Alice", "111111")
+    for key in ("account_desc", "account_owner", "entered_by"):
+        assert key not in kwargs
 
 
 async def test_a_failed_save_on_a_closed_card_brings_back_save_anyway(monkeypatch):

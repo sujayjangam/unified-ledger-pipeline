@@ -28,7 +28,9 @@ participants and accounts as Postgres tables, replacing the env vars
 1. **Done, merged 2026-11-11** ([#84](https://github.com/sujayjangam/unified-ledger-pipeline/pull/84),
    which records how it was rolled out): migration 0004, the seed script, and the bot, CLI and
    REST API reading the tables while writing both the new ids and the old text columns.
-2. Stop writing the old text columns (`account_desc`, `account_owner`, `entered_by`).
+2. Stop writing the old text columns (`account_desc`, `account_owner`, `entered_by`). PR open,
+   not yet merged. REST GET now returns the account name as `account` (from `accounts`) instead
+   of `account_owner`.
 3. Migration 0005 drops them. Take a backup first.
 
 The post-merge production checks (plan Task 9 in `docs/superpowers/`) passed on 2026-11-14: real
@@ -36,9 +38,9 @@ sends from both people, a test account added and then closed, a seed-script reru
 old env vars and their secrets removed from Cloud Run (that last step took a second try; see the
 plan's Task 9 notes).
 
-**Next action:** after a few days of normal use, merge step 2 — the bot, CLI and REST API stop
-writing the old text columns. It is written (local branch `feat/stop-text-columns-53`) but not yet
-pushed. Merging it removes the revert safety net.
+**Next action:** after a few days of normal use since the 2026-11-14 checks, merge step 2 — the
+bot, CLI and REST API stop writing the old text columns. It is rebased on `main` and passes the
+gate. Merging it removes the revert safety net.
 
 Before step 3 (migration 0005) can run, two things (found 2026-11-13):
 - **5 production rows have no `account_id`**, so 0005's guard refuses to run. They never recorded
@@ -71,7 +73,7 @@ Every Phase 0 item that was still open when the phase closed had already moved t
 
 **Open top-level issues:**
 [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53)
-participants and accounts as tables; old text columns still written (Phase 1) ·
+participants and accounts as tables; old text columns to stop and drop (Phase 1) ·
 [#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27) unpinned dependencies (Phase 1) ·
 [#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22) entries can't be corrected (Phase 1) ·
 [#17](https://github.com/sujayjangam/unified-ledger-pipeline/issues/17) unused REST API (Phase 5) ·
