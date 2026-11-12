@@ -141,7 +141,8 @@ Env vars (`.env.example` shows the format):
 - **Old text columns (#53, in progress).** The bot, CLI and REST API write only the id columns
   (`account_id`, `entered_by_participant_id`). The old text ones (`account_desc`,
   `account_owner`, `entered_by`) are no longer written; they still hold older rows' values until
-  migration 0005 drops them — see `ROADMAP.md`. Never write or read them in new code.
+  migration 0005 (`0005_drop_text_account_columns`, not yet applied to production) drops them —
+  see `ROADMAP.md`. Never write or read them in new code.
 - `ON CONFLICT (idempotency_key) DO NOTHING` stops a double-tapped Confirm inserting twice
   ([ADR-0011](docs/decisions/0011-idempotency-key-over-update-id.md)). Duplicate webhook
   deliveries (`update_id`) are a different problem, deduped only in memory today.

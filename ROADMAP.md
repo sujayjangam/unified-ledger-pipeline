@@ -28,22 +28,21 @@ participants and accounts as Postgres tables, replacing the env vars
 1. **Done, merged 2026-11-11** ([#84](https://github.com/sujayjangam/unified-ledger-pipeline/pull/84),
    which records how it was rolled out): migration 0004, the seed script, and the bot, CLI and
    REST API reading the tables while writing both the new ids and the old text columns.
-2. Stop writing the old text columns (`account_desc`, `account_owner`, `entered_by`). PR open,
-   not yet merged. REST GET now returns the account name as `account` (from `accounts`) instead
-   of `account_owner`.
-3. Migration 0005 drops them. Take a backup first.
+2. **Done, merged 2026-11-14** ([#90](https://github.com/sujayjangam/unified-ledger-pipeline/pull/90)):
+   the bot, CLI and REST API stop writing the old text columns (`account_desc`, `account_owner`,
+   `entered_by`). REST GET returns the account name as `account` (from `accounts`) instead of
+   `account_owner`. Merged without waiting for a few days of normal use: the columns are being
+   dropped anyway, so any bug it exposed would need fixing either way.
+3. Migration 0005 makes `account_id` required and drops the old columns. Written on
+   `feat/migration-0005-53`, not run anywhere. Take a backup first.
 
 The post-merge production checks (plan Task 9 in `docs/superpowers/`) passed on 2026-11-14: real
 sends from both people, a test account added and then closed, a seed-script rerun, and the three
 old env vars and their secrets removed from Cloud Run (that last step took a second try; see the
 plan's Task 9 notes).
 
-**Next action:** merge step 2 — the bot, CLI and REST API stop writing the old text columns.
-Decided 2026-11-14 not to wait for a few days of normal use first: the columns are being dropped
-anyway, so any bug this exposes would need fixing either way. Merging it removes the revert safety
-net. Then step 3.
-
-Before step 3 (migration 0005) can run, two things (found 2026-11-13):
+**Next action:** step 3. Before migration 0005 can run, two things (found 2026-11-13), in this
+order, since the first uses the part of the seed script the second removes:
 - **5 production rows have no `account_id`**, so 0005's guard refuses to run. They never recorded
   a card. Decision: assign each one a card (adding a card if needed) through `transaction_overrides`
   and `accounts` in `directory_seed.local.json`, not a hand-typed `UPDATE`, because the script
