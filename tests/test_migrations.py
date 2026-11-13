@@ -1,6 +1,6 @@
 """Structural checks on the Alembic revision chain.
 
-CI has no Postgres to run migrations against (see ROADMAP.md section 3a), so these tests
+CI has no Postgres to run migrations against (see the "Migrations applied from scratch" item in ROADMAP.md's Phase 1), so these tests
 cannot prove a migration's SQL works. What they catch is a broken *chain*: a new revision whose
 down_revision points at the wrong parent, or two revisions claiming the same parent, which
 leaves Alembic with two heads and makes `alembic upgrade head` refuse to run.

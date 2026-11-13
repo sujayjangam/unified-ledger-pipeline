@@ -24,7 +24,9 @@
   multiplied out later can't guarantee that: 0.5 of SGD 5.55 rounds to 2.78 for both people
   (ADR-0028).
 - **category**: Budget group
-- **transaction_type**: 'income' or 'expense'
+- **transaction_type**: 'Expense' or 'Transfer' (a YouTrip top-up or other money moved between
+  accounts). Nullable, with no check constraint. 'Income' is planned for statement upload (see
+  `ROADMAP.md`).
 - **source**: Data origin
 - **reconciliation_status**: 'settled' or 'unsettled'
 - **account_desc**: Payment method / card the transaction was charged to (e.g. 'YouTrip',
