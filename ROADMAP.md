@@ -64,25 +64,27 @@ scope was extended on 2026-08-20 to cover capture friction
 participants and accounts as Postgres tables, replacing the env vars
 ([ADR-0032](docs/decisions/0032-participants-and-accounts-in-postgres.md),
 [ADR-0033](docs/decisions/0033-entered-by-participant-id.md); design and plan in
-`docs/superpowers/`). Built on the `feat/participants-switchover-53` branch
-(2026-11-11), not yet merged. The database changes must land in production in order:
+`docs/superpowers/`). The database changes must land in production in order:
 
-1. Migration 0004 (the two tables, two id columns and `accounts.expires_on`) and
+1. **Done, merged 2026-11-11** ([#84](https://github.com/sujayjangam/unified-ledger-pipeline/pull/84)).
+   Migration 0004 (the two tables, two id columns and `accounts.expires_on`) and
    `scripts/seed_directory.py`, then the bot, CLI and REST API reading the tables and writing both
    the new ids and the old text columns. Planned as two PRs, so the code couldn't merge before
    production was seeded (the bot fails closed); production was migrated and seeded first, so they
-   ship as one.
+   shipped as one. Before the merge: test rows deleted and two misnamed cards renamed so old rows
+   match the seed, rehearsed on a Neon branch, then 0004 applied and the seed written (32 of 37
+   rows linked; the other 5 never recorded a card). It passed against the test bot on the seeded
+   Neon branch: default card, a named card owned by someone else, foreign currency on the wallet,
+   a top-up as a Transfer from the funding card, an unknown sender refused, and access back on the
+   next message with no restart.
 2. Stop writing the old text columns (`account_desc`, `account_owner`, `entered_by`).
 3. Migration 0005 drops them. Take a backup first.
 
-Done for step 1 on production (2026-11-11): test rows deleted and two misnamed cards renamed so
-old rows match the seed, rehearsed on a Neon branch, then 0004 applied and the seed written (32 of
-37 rows linked; the other 5 never recorded a card).
-
-**Next action:** merge step 1's PR ([#84](https://github.com/sujayjangam/unified-ledger-pipeline/pull/84)).
-It passed against the test bot on the seeded Neon branch on 2026-11-11: default card, a named card
-owned by someone else, foreign currency on the wallet, a top-up as a Transfer from the funding
-card, an unknown sender refused, and access back on the next message with no restart.
+**Next action:** confirm the post-merge production checks (plan Task 9 in `docs/superpowers/`:
+real sends from each person's Telegram, a test account added then closed, a seed-script rerun, and
+the three old env vars removed from Cloud Run), then merge step 2 — the bot, CLI and REST API stop
+writing the old text columns. Step 2 can be written before those checks, but not merged: it
+removes the revert safety net.
 Adding and closing cards from Telegram is
 [#83](https://github.com/sujayjangam/unified-ledger-pipeline/issues/83), after #53.
 
@@ -91,7 +93,7 @@ Every Phase 0 item that was still open when the phase closed had already moved t
 
 **Open top-level issues:**
 [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53)
-household accounts live in env secrets (Phase 1) ·
+participants and accounts as tables; old text columns still written (Phase 1) ·
 [#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27) unpinned dependencies (Phase 1) ·
 [#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22) entries can't be corrected (Phase 1) ·
 [#17](https://github.com/sujayjangam/unified-ledger-pipeline/issues/17) unused REST API (Phase 5) ·
@@ -265,13 +267,15 @@ Found 2026-09-03, while reviewing #33's test suite PRs, not yet actioned:
   while a hardcoded payment-method default was in force. The code cause was removed on 2026-09-04,
   when the prompt's list started coming from `ACCOUNT_OWNERS`. Needs a specific, reviewed plan and
   a row count before running, not an ad hoc `UPDATE`; it is a data fix only. Account names stay out
-  of this file, since this repo is public. Once #53 lands, this is part of its backfill:
+  of this file, since this repo is public. Now part of #53's backfill:
   `scripts/seed_directory.py` lists every row whose `account_desc` matches no account, for a
-  per-row decision.
-- Move household participants and accounts (the `ACCOUNT_OWNERS` and `ALLOWED_TG_IDS`
+  per-row decision; on production (2026-11-11) 5 of 37 rows matched none, all with no card
+  recorded.
+- Move household participants and accounts (formerly the `ACCOUNT_OWNERS` and `ALLOWED_TG_IDS`
   JSON objects plus the `PRIMARY_ACCOUNT_OWNER` string, hand-maintained in `.env`) into
   Postgres tables — filed as
-  [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53), in progress in Phase 1
+  [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53); the tables shipped in
+  #84 (2026-11-11), the rest is in progress in Phase 1
   (decided 2026-09-04: the matcher needs accounts as rows with stable ids, so it is built against
   that model from the start rather than migrated onto it). Moving *categories* into a table stays
   a candidate tied to Phase 2's auto-categorisation work below, not part of #53.
@@ -399,7 +403,7 @@ In working order. Items marked *(from Phase 0)* moved here by
 `PRIMARY_ACCOUNT_OWNER` / `ALLOWED_TG_IDS` env vars —
 [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53). Goes before the staging
 table so statement lines attach to an account row, not a string. The Phase 3 `participants` table
-below is this one. In progress: four PRs, see "Current status".
+below is this one. In progress: step 1 of 3 merged (#84), see "Current status".
 - [ ] Refund and reversal representation — `app/add_expense.py` rejects `amount <= 0` today, and
 real statements contain refunds almost immediately (see "Known issues"). Needs an ADR on how a
 refund is stored before the staging table is designed.
@@ -469,8 +473,8 @@ rule, not random, so the same entry always splits the same way; decide it here (
 whoever's card paid).
 - [ ] A database view that shows each entry's sender by name: `entered_by_participant_id` joined to
 the `participants` table from [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53), so the base table keeps storing only the id
-([ADR-0033](docs/decisions/0033-entered-by-participant-id.md)) while anything reading the ledger sees names. Not possible before #53, since names
-live only in env secrets until then. Deliberately after Phase 2 (decided 2026-09-12).
+([ADR-0033](docs/decisions/0033-entered-by-participant-id.md)) while anything reading the ledger sees names. Possible now that #84 put names in the
+`participants` table. Deliberately after Phase 2 (decided 2026-09-12).
 - [ ] Trips and groups (design note from #53, 2026-11-11; may move earlier than Phase 3). A trip is
 a group of participants with optional start and end dates. Expenses tagged to it are split and
 settled within it, and one dated outside the trip gets a non-blocking ⚠️ line on the card, since

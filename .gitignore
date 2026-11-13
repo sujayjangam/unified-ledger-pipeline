@@ -37,3 +37,6 @@ claude-plan-*.md
 # directory_seed.example.json shows the format with fictional names.
 directory_seed.local.json
 .neon
+
+# Worker briefs and output (Codex, agy) - see "Workers" in CLAUDE.md
+.work/

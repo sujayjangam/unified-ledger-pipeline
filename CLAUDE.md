@@ -305,6 +305,40 @@ closed-card or shared-name row. Safe to rerun. Point `DATABASE_URL` at a Neon br
 source file no longer exists, so it can't run again. It is kept on purpose as a reference — don't
 delete it.
 
+## Workers (Codex, agy)
+
+Claude writes the brief, sorts the findings, runs the gate and commits. Workers do the heavy
+reading and writing.
+
+| Job | Worker |
+|---|---|
+| Deep code review, writing code from a brief | Codex |
+| Doc cold reads, mechanical cross-checks, bulk reading and writing | agy, with its Claude models only: `claude-opus-4-6-thinking` for reviews and careful reads, `claude-sonnet-4-6` for mechanical work. Skip its Gemini models (2 of 4 claims were wrong in a 2026-11-12 trial). When agy is out of quota, Claude does the job. agy is extra capacity, not a second opinion; Codex is the second set of eyes. |
+
+- Write the brief to `.work/briefs/<task>.md` (`.work/` is gitignored). Name the files and line
+  ranges; don't paste their content. Say what the result must look like.
+- Pipe the brief in on stdin (the repo path has a space, and PowerShell 5.1 mangles quoted
+  arguments). Write output to `.work/out/`. Read only the worker's final message and
+  `git diff --stat`.
+  - Codex: `Get-Content .work\briefs\X.md -Raw | codex exec --sandbox read-only -o .work\out\X.txt -`
+    (`--sandbox workspace-write` for code tasks). For a review of finished work,
+    `codex exec review --uncommitted` or `codex exec review --base main`.
+  - agy: `agy --model <model> --mode plan "--print=Read the file .work/briefs/X.md and do what it says. Use only file read and search tools, never shell commands." > .work\out\X.txt`
+  - agy's `-p`/`--print` takes the prompt as its value and doesn't read stdin, so the prompt points
+    at the brief file. Headless mode auto-denies shell tools; reviews don't need them.
+  - agy only sees the files you name. Check its claims against code outside that scope before
+    accepting them.
+- Gate, run by Claude after any worker writes code — the same three checks CI requires: `pytest`,
+  `ruff check .`, and the import smoke check in `.github/workflows/ci.yml`.
+- Run workers in the background, and tell the user before starting anything longer than about a
+  minute.
+- Fences: workers only see this repo. No `--add-dir`, no `--dangerously-skip-permissions`, no
+  content from other folders on this machine. Workers never read `.env`, `.env.local`,
+  `directory_seed.local.json`, `claude-plan-*.md` or `Test PDF_CSV/`; never run `alembic`,
+  `scripts/seed_directory.py`, the bot or anything else that opens a database connection; and never
+  commit, push, deploy, or create issues or PRs.
+- Delegate only when briefing is cheaper than doing it. Small fixes stay with Claude.
+
 ## GitHub issue conventions
 
 - **Ask before filing.** Don't create a GitHub issue proactively without the user asking for it in
