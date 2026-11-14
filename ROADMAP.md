@@ -41,19 +41,18 @@ sends from both people, a test account added and then closed, a seed-script reru
 old env vars and their secrets removed from Cloud Run (that last step took a second try; see the
 plan's Task 9 notes).
 
-**Next action:** step 3. Before migration 0005 can run, two things (found 2026-11-13), in this
-order, since the first uses the part of the seed script the second removes:
-- **5 production rows have no `account_id`**, so 0005's guard refuses to run. They never recorded
-  a card. Decision: assign each one a card (adding a card if needed) through `transaction_overrides`
-  and `accounts` in `directory_seed.local.json`, not a hand-typed `UPDATE`, because the script
-  checks the names and the closed dates and keeps a record. Order: list the rows
-  (`WHERE account_id IS NULL`), edit the seed file, dry run (it rolls back), run the backup
-  workflow, then `--write`, then check the count is 0. Their `account_owner` text is wrong too (a
-  card name, or "unknown", in place of a person); leave it, since 0005 drops that column and its
-  downgrade refills it from `account_id`.
-- **`scripts/seed_directory.py` reads `account_desc` and `entered_by`**, which 0005 drops. Done on
-  `feat/migration-0005-53`: the transaction-linking part is removed, the seeding part kept. So the
-  five-row fix above runs from `main`, before this branch merges.
+**Next action:** step 3, migration 0005. Rehearse it on a Neon branch (upgrade, downgrade,
+upgrade), take a backup, run it on production, then merge `feat/migration-0005-53`. Its two
+blockers (found 2026-11-13) are cleared:
+- **5 production rows had no `account_id`**, which 0005's guard refuses. Done 2026-11-14 by hand
+  in SQL, after a backup: one `UPDATE ... WHERE transaction_id = ... AND account_id IS NULL` per
+  row, using the account's numeric id, and the count checked at 0. Chosen over the seed file's
+  `transaction_overrides` (the 2026-11-13 plan) as simpler for 5 rows; the closed-date check was
+  done by eye. Their wrong `account_owner` text and empty `entered_by` and `idempotency_key` were
+  left as they are: 0005 drops the first two, and an empty `idempotency_key` is normal for rows
+  older than that column.
+- **`scripts/seed_directory.py` read `account_desc` and `entered_by`**, which 0005 drops. On
+  `feat/migration-0005-53` the transaction-linking part is removed and the seeding part kept.
 
 **After #53: group-trip splitting** (decided 2026-11-14). There's a real group trip with a fixed
 deadline, kept out of this public repo. It pulls trips, splitting and settling up forward from
