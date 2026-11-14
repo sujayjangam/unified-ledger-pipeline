@@ -46,7 +46,7 @@ def format_cents(amount_cents: int) -> str:
     return f"{sign}{dollars}.{cents:02d}"
 
 def add_expense(date_str, description, amount_dollars, category, currency="SGD", transaction_type="Expense", source="Manual CLI", idempotency_key=None,
-                account_id=None, entered_by_participant_id=None):
+                account_id=None, entered_by_participant_id=None, trip_id=None):
     try:
         # 1. Validation: Convert to Integer Cents (Mathematical Precision)
         # We call function dollars_to_cents to convert to cents for us
@@ -78,13 +78,14 @@ def add_expense(date_str, description, amount_dollars, category, currency="SGD",
                 source,
                 idempotency_key,
                 account_id,
-                entered_by_participant_id
+                entered_by_participant_id,
+                trip_id
             )
             VALUES (
                 :transaction_id, :date, :description, :amount, :currency,
                 :base_amount, :category, :transaction_type,
                 :reconciliation_status, :source, :idempotency_key,
-                :account_id, :entered_by_participant_id
+                :account_id, :entered_by_participant_id, :trip_id
             )
             ON CONFLICT (idempotency_key) DO NOTHING
         ''')
@@ -105,6 +106,9 @@ def add_expense(date_str, description, amount_dollars, category, currency="SGD",
                 "idempotency_key": idempotency_key,
                 "account_id": account_id,
                 "entered_by_participant_id": entered_by_participant_id,
+                # The trip the bot tagged it to. None (NULL) for an everyday entry, and always
+                # for the CLI and REST API, which have no active-trip check.
+                "trip_id": trip_id,
             })
 
             was_duplicate = result.rowcount == 0

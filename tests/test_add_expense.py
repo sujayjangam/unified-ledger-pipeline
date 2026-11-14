@@ -107,3 +107,18 @@ def test_duplicate_query_selects_the_participant_id(monkeypatch):
     conn = _fake_connection(monkeypatch, ledger_queries)
     ledger_queries.find_recent_duplicate(1200, "SGD", 5)
     assert "entered_by_participant_id" in str(conn.execute.call_args.args[0])
+
+
+@pytest.mark.parametrize("trip_id", [7, None])
+def test_add_expense_writes_trip_id(monkeypatch, directory, trip_id):
+    conn = _fake_connection(monkeypatch, add_expense_module)
+    account = directory.accounts[0]
+    assert add_expense_module.add_expense(
+        "2026-11-11", "lunch", 12, "Food", account_id=account.id, trip_id=trip_id,
+    ) is True
+    conn.execute.assert_called_once()
+    sql, params = conn.execute.call_args.args
+    assert params["trip_id"] == trip_id
+    assert re.search(r"\btrip_id\b", str(sql).split("VALUES")[0])
+    assert ":trip_id" in str(sql).split("VALUES")[1]
+    conn.commit.assert_called_once_with()

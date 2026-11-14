@@ -46,6 +46,10 @@
   when shown. NULL means "sender not recorded": rows from before the sender was recorded, and
   every row from the CLI or REST API. Not to be confused with the account's owner, which is
   whose card paid and is often not the sender.
+- **trip_id**: BIGINT, nullable, FK → `trips.id` (revision `0006_add_trips`). The trip that was
+  active when the bot logged the entry, unless "Not trip" was tapped on the card
+  ([ADR-0035](decisions/0035-trips-tagged-at-log-time.md)). Tagged by when the entry was logged,
+  not by its `date`. NULL for everyday entries, and always for the CLI and REST API.
 - **Dropped** by `0005_drop_text_account_columns` (#53): `account_desc` (the card's name as
   text), `account_owner` (the card owner's display name, inferred by first match) and
   `entered_by` (the sender's Telegram user ID as text). The ids above replace them.
@@ -82,6 +86,27 @@ Who may use the bot, and the accounts money is paid from, are rows rather than s
 Two open accounts can't share a name, ignoring case (`uq_accounts_open_name_ci`, a partial
 unique index on `lower(name)` where `closed_on IS NULL`). A closed card and its open replacement
 can.
+
+## trips and trip_members (revision `0006_add_trips`)
+
+A trip is a named group of participants in families
+([ADR-0035](decisions/0035-trips-tagged-at-log-time.md)). Rows come from the gitignored seed file
+via `scripts/seed_directory.py`.
+
+**trips**
+- **id**: BIGINT identity, primary key
+- **name**: TEXT, NOT NULL. Unique ignoring case (`uq_trips_name_ci`), since `/trip on <name>`
+  matches it that way.
+- **active**: BOOLEAN, NOT NULL, default false. The trip new bot entries are tagged with. At most
+  one row may be true (`uq_trips_one_active`, a partial unique index where `active`). Switched by
+  `/trip on <name>` and `/trip off`, never by the seed script.
+- **created_at**: TIMESTAMPTZ, NOT NULL, `DEFAULT now()`
+
+**trip_members**
+- **trip_id**: BIGINT, FK → `trips.id`; with `participant_id`, the primary key
+- **participant_id**: BIGINT, FK → `participants.id`
+- **family**: TEXT, NOT NULL. A label shared by everyone on the trip who settles together. Stored
+  per trip, so a person can be grouped differently on another trip.
 
 ## Business date vs. write time
 

@@ -32,7 +32,11 @@ columns) and [#91](https://github.com/sujayjangam/unified-ledger-pipeline/pull/9
 production 2026-11-14 after a Neon-branch rehearsal and a backup). Before 0005, the 5 rows with
 no `account_id` were given a card by hand in SQL, one guarded `UPDATE` per `transaction_id`.
 
-**Next action:** group-trip splitting, below.
+**Next action:** group-trip splitting, below. Step 1 (trips) is built on branch `feat/trips`
+(2026-11-14, [ADR-0035](docs/decisions/0035-trips-tagged-at-log-time.md)): migration 0006, trips
+in the seed file, `/trip on|off`, and a trip line and toggle on the card. Before merging, apply
+0006 to production by hand (after a Neon-branch rehearsal), then seed the real trip. Step 2,
+paid-by, comes next.
 
 **Group-trip splitting** (decided 2026-11-14). There's a real group trip with a fixed
 deadline, kept out of this public repo. It pulls trips, splitting and settling up forward from
@@ -369,7 +373,9 @@ the `participants` table from [#53](https://github.com/sujayjangam/unified-ledge
 2026-11-14; the household as a group stays here.* A trip is
 a group of participants with optional start and end dates. Expenses tagged to it are split and
 settled within it, and one dated outside the trip gets a non-blocking ⚠️ line on the card, since
-post-trip expenses are real. The household becomes a group with no end date, so splitting is
+post-trip expenses are real. (Migration 0006 built trips without dates: an entry is tagged by when
+it is logged, not by its date, [ADR-0035](docs/decisions/0035-trips-tagged-at-log-time.md). Dates,
+and that warning, would be a later addition.) The household becomes a group with no end date, so splitting is
 written once for both. #53 adds participants without a Telegram ID for exactly this: people who
 are split with but never use the bot.
 - [ ] Fewer false duplicate warnings. Today any two entries with the same amount and currency

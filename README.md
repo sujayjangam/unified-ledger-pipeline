@@ -119,6 +119,10 @@ its context, rejected alternatives and cost. The ones that shaped the system mos
   keeps its name; an entry against it asks before saving.
 - Read commands over the ledger (`/recent`, `/today`, `/week`, `/month` and per-category
   variants), aggregated per currency.
+- Trips: `/trip on <name>` tags every entry logged from then on to that trip until `/trip off`,
+  one setting shared by everyone who logs. The card shows the trip, with a button to mark a
+  single entry as not part of it. Trips and their members, grouped in families, come from the
+  same gitignored seed file.
 - CI on every pull request: clean dependency install, lint, an import smoke check across `app/`,
   and a pytest suite over the money and date invariants — required to pass before a merge to
   `main`, enforced by a repository ruleset rather than merely reported on.
@@ -148,7 +152,7 @@ packages).
 ```bash
 pip install -r requirements.txt
 
-# Initialize the DB (Alembic creates the `transactions`, `participants` and `accounts` tables). This targets DATABASE_URL
+# Initialize the DB (Alembic creates the `transactions`, `participants`, `accounts`, `trips` and `trip_members` tables). This targets DATABASE_URL
 # from .env; to migrate a test branch instead, see docs/LOCAL_TESTING.md.
 alembic upgrade head
 

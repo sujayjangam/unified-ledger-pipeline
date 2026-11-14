@@ -13,6 +13,7 @@ from app.database import get_connection
 from app.services.participants import (
     CLOSED_CARD_WARNING, NO_WALLET_MESSAGE, Directory, WalletNotSetUp, load_directory, resolve_payment,
 )
+from app.services.trips import Trip, load_active_trip, switch_trip_off, switch_trip_on, trip_names
 
 # use the local windows persmissions
 truststore.inject_into_ssl()
@@ -39,6 +40,19 @@ def _load_directory() -> Directory:
     """
     with get_connection() as conn:
         return load_directory(conn)
+
+
+def _load_active_trip() -> Trip | None:
+    """Reads which trip, if any, is on. Read fresh for every entry, like the directory, so a
+    /trip switch by either person applies to the very next message. Its own function so tests can
+    swap it out without a database."""
+    with get_connection() as conn:
+        return load_active_trip(conn)
+
+
+# Shown on the card when the trip couldn't be read. Not a refusal: missing a trip tag can be put
+# right in SQL afterwards, but a bot that refuses entries mid-trip means nothing gets logged.
+TRIP_UNKNOWN_WARNING = "⚠️ Couldn't check the active trip, so this entry isn't tagged to one."
 
 
 # The Gatekeeper (Authorization Check)
@@ -232,6 +246,56 @@ async def cat_month_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- Confirmation-card state -------------------------------------------------------------
 #
+TRIP_USAGE = "Use `/trip on <name>` to tag new entries to a trip, or `/trip off` to stop."
+
+
+async def trip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/trip shows the active trip, /trip on <name> switches one on, /trip off switches it off.
+
+    One setting for everyone who logs, stored in the trips table, not in this process: both
+    people's entries tag to the same trip, and it survives a restart or a redeploy. Only entries
+    logged after the switch are tagged; cards already on screen keep what they showed.
+    """
+    if await authorize(update) is None:
+        return
+
+    # context.args is the message split on spaces after the command: "/trip on Beach Trip" gives
+    # ["on", "Beach", "Trip"]. Trip names can contain spaces, so the rest is joined back up.
+    args = context.args or []
+    action = args[0].lower() if args else ""
+    name = " ".join(args[1:]).strip()
+    # Plain text for a reply that echoes what was typed: a stray * or _ in it would otherwise be
+    # read as Markdown, and Telegram rejects the whole message.
+    parse_mode = "Markdown"
+
+    try:
+        with get_connection() as conn:
+            if action == "on" and name:
+                trip = switch_trip_on(conn, name)
+                if trip is None:
+                    known = trip_names(conn)
+                    choices = ", ".join(known) if known else "none set up yet"
+                    reply = f"⚠️ No trip called {name!r}. Nothing changed.\nTrips: {choices}"
+                    parse_mode = None
+                else:
+                    reply = f"🧳 **{trip.name}** is on. New entries are tagged to it."
+            elif action == "off":
+                trip = switch_trip_off(conn)
+                reply = f"🏠 **{trip.name}** is off. New entries aren't tagged to a trip." if trip else "No trip was on."
+            elif action == "":
+                trip = load_active_trip(conn)
+                current = f"🧳 Active trip: **{trip.name}**" if trip else "🏠 No trip is on."
+                reply = f"{current}\n\n{TRIP_USAGE}"
+            else:
+                reply = TRIP_USAGE
+    except Exception as e:
+        # Logged in full for Cloud Run; nothing was switched (switch_trip_on commits only at the end).
+        print(f"❌ /trip failed: {e}")
+        reply = "❌ Couldn't change the trip, try again in a minute. Nothing changed."
+
+    await update.message.reply_text(reply, parse_mode=parse_mode)
+
+
 # Both caches below live in context.user_data (per Telegram user, pure process memory - the
 # bot configures no PTB persistence) and are keyed by the message_id of the card the buttons
 # are attached to. Keying by card rather than keeping a single "current" transaction is what
@@ -423,8 +487,47 @@ def _is_flagged(transaction: dict) -> bool:
 
 
 def _keyboard_for(transaction: dict) -> InlineKeyboardMarkup:
-    """The buttons a pending card carries: the warning pair if it was flagged, else Confirm/Cancel."""
-    return _duplicate_keyboard() if _is_flagged(transaction) else _confirm_keyboard()
+    """The buttons a pending card carries: the warning pair if it was flagged, else Confirm/Cancel,
+    and under them the trip toggle when a trip was on as the entry was logged."""
+    main = _duplicate_keyboard() if _is_flagged(transaction) else _confirm_keyboard()
+    offer = transaction.get('trip_offer')
+    if not offer:
+        return main
+    # One button that flips between the two states, so a mis-tap on "Not trip" can be undone.
+    # The callback_data is fixed and short: Telegram allows only 64 bytes, and the tap finds the
+    # entry by the card's message_id anyway.
+    label = "🏠 Not trip" if transaction.get('trip_id') else f"🧳 Tag to {offer['name']}"
+    return InlineKeyboardMarkup(
+        [*main.inline_keyboard, [InlineKeyboardButton(label, callback_data="trip_toggle")]]
+    )
+
+
+def _trip_lines(transaction: dict) -> str:
+    """The card's Trip line. Nothing when no trip was on, so everyday cards look as they always
+    have. .get() because a card stashed before trips shipped has none of these keys."""
+    if transaction.get('trip_warning'):
+        return f"{transaction['trip_warning']}\n"
+    offer = transaction.get('trip_offer')
+    if not offer:
+        return ""
+    if transaction.get('trip_id'):
+        return f"🧳 **Trip:** {offer['name']}\n"
+    return "🧳 **Trip:** not a trip entry\n"
+
+
+def _pending_card_text(transaction: dict) -> str:
+    """The text of a card waiting for Confirm. Built from the pending entry alone, so the trip
+    toggle can redraw the card without the directory or the model: the banner (duplicate and
+    closed-card warnings) is worked out once, when the entry is logged, and kept on the entry."""
+    return transaction.get('card_banner', "") + (
+        f"Please confirm your **{transaction.get('transaction_type', 'Expense')}**:\n\n"
+        f"💰 **Amount:** {_display_amount(transaction)}\n"
+        f"🏷️ **Category:** {transaction.get('category')}\n"
+        f"{_account_lines(transaction)}"
+        f"{_trip_lines(transaction)}"
+        f"📝 **Notes:** {transaction.get('description', 'None')}\n"
+        f"{_date_lines(transaction)}"
+    )
 
 
 # shared pipeline: raw text (transcript or typed) -> extraction -> pending confirmation card
@@ -508,6 +611,20 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
     # handle_button_click later tells a flagged card from a normal one on Cancel or a failed save.
     single_transaction['suspected_duplicate'] = _find_duplicate_of(single_transaction)
 
+    # Which trip, if any, this entry is tagged to: the one on right now, whatever the entry's date,
+    # so a booking paid before the trip still counts. Copied onto the entry here, so a /trip
+    # switch while this card waits doesn't change it, and the "Not trip" tap never reads the
+    # database. trip_offer remembers the trip even after "Not trip", so the tap can be undone.
+    try:
+        active_trip = _load_active_trip()
+    except Exception as e:
+        print(f"❌ Could not read the active trip: {e}")
+        active_trip = None
+        single_transaction['trip_warning'] = TRIP_UNKNOWN_WARNING
+    if active_trip:
+        single_transaction['trip_offer'] = {'id': active_trip.id, 'name': active_trip.name}
+    single_transaction['trip_id'] = active_trip.id if active_trip else None
+
     amount_text = _display_amount(single_transaction)
     banner = ""
     if single_transaction['suspected_duplicate']:
@@ -515,19 +632,14 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
     if single_transaction.get('closed_account'):
         # Under the duplicate banner when both apply - one card, every reason to look twice.
         banner += f"{CLOSED_CARD_WARNING}\n\n"
+    # Kept on the entry so the trip toggle can redraw the card exactly as it was (see
+    # _pending_card_text). The duplicate banner names people, which needs the directory.
+    single_transaction['card_banner'] = banner
 
-    # Reference 'single_transaction', in future this will read 'transactions' when support for multiple txn is added
-    summary_message = banner + (
-        f"Please confirm your **{single_transaction.get('transaction_type', 'Expense')}**:\n\n"
-        f"💰 **Amount:** {amount_text}\n"
-        f"🏷️ **Category:** {single_transaction.get('category')}\n"
-        f"{_account_lines(single_transaction)}"
-        f"📝 **Notes:** {single_transaction.get('description', 'None')}\n"
-        f"{_date_lines(single_transaction)}"
-    )
-
-    # Send the clean summary with its buttons attached - Confirm/Cancel, or Save anyway/Cancel if flagged
-    await status_msg.edit_text(summary_message, reply_markup=_keyboard_for(single_transaction), parse_mode="Markdown")
+    # Send the clean summary with its buttons attached - Confirm/Cancel, or Save anyway/Cancel if
+    # flagged, plus the trip toggle when a trip is on
+    await status_msg.edit_text(_pending_card_text(single_transaction), reply_markup=_keyboard_for(single_transaction),
+                               parse_mode="Markdown")
 
     # Stash the transaction against *this card's* message_id, only once the card exists - the
     # button press that comes back carries the message_id and nothing else, so that is the
@@ -658,6 +770,8 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
             # the user confirmed is what gets saved.
             account_id=transaction_to_save.get('account_id'),
             entered_by_participant_id=transaction_to_save.get('entered_by_participant_id'),
+            # The trip as the card showed it, after any "Not trip" tap. None for an everyday entry.
+            trip_id=transaction_to_save.get('trip_id'),
         )
 
         if save_success:
@@ -669,6 +783,7 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
                 f"🏷️ **Category:** {transaction_to_save.get('category')}\n"
                 # The account stays on record in the chat after the buttons go (#92)
                 f"{_account_lines(transaction_to_save)}"
+                f"{_trip_lines(transaction_to_save)}"
                 f"📝 **Notes:** {transaction_to_save.get('description', 'None')}\n"
                 f"📅 **Date:** {transaction_to_save.get('date')}\n"
             )
@@ -690,6 +805,7 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
                 f"🏷️ **Category:** {transaction_to_save.get('category')}\n"
                 # The card is live again, so it shows the account a retry would save against
                 f"{_account_lines(transaction_to_save)}"
+                f"{_trip_lines(transaction_to_save)}"
                 f"📝 **Notes:** {transaction_to_save.get('description', 'None')}\n"
                 # Same date lines as the first card, ⚠️ included: this card is live again,
                 # so it should still say what was odd about the date being retried.
@@ -721,6 +837,30 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
             cancel_text = "❌ **Cancelled.** Nothing was saved to the Ledger."
         await query.edit_message_text(cancel_text, parse_mode="Markdown")
 
+    elif query.data == "trip_toggle":
+        # Flips the pending entry between "tagged to the trip" and "not a trip entry", then redraws
+        # the card. Only the in-memory entry changes: nothing is saved, and the database isn't read.
+        outcome = _card_outcome(context, message_id)
+        if outcome == "saved":
+            await query.answer("✅ Already saved to the ledger.")
+            return
+        if outcome == "cancelled":
+            await query.answer("❌ This entry was cancelled.")
+            return
+
+        # Looked up, not taken: the entry stays pending for Confirm. Missing while a save is in
+        # flight (Confirm takes it out), after a restart, or on a card from before trips.
+        pending = context.user_data.get('pending_cards', {}).get(message_id)
+        if pending is None or not pending.get('trip_offer'):
+            await query.answer("⚠️ This entry can't be changed now.")
+            return
+
+        offer = pending['trip_offer']
+        pending['trip_id'] = None if pending.get('trip_id') else offer['id']
+        await query.answer("🏠 Not a trip entry." if pending['trip_id'] is None else f"🧳 Tagged to {offer['name']}.")
+        await query.edit_message_text(_pending_card_text(pending), reply_markup=_keyboard_for(pending),
+                                      parse_mode="Markdown")
+
     else:
         # An unrecognised callback_data - a card from an older deployment whose buttons this
         # version no longer knows about. Answer anyway: an unanswered query leaves the button
@@ -746,6 +886,7 @@ def get_application():
     app.add_handler(CommandHandler("cat_today", cat_today_command))
     app.add_handler(CommandHandler("cat_week", cat_week_command))
     app.add_handler(CommandHandler("cat_month", cat_month_command))
+    app.add_handler(CommandHandler("trip", trip_command))
 
     # voice handler
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
