@@ -33,7 +33,8 @@ participants and accounts as Postgres tables, replacing the env vars
 
 The post-merge production checks (plan Task 9 in `docs/superpowers/`) passed on 2026-11-14: real
 sends from both people, a test account added and then closed, a seed-script rerun, and the three
-old env vars and their secrets removed from Cloud Run.
+old env vars and their secrets removed from Cloud Run (that last step took a second try; see the
+plan's Task 9 notes).
 
 **Next action:** after a few days of normal use, merge step 2 — the bot, CLI and REST API stop
 writing the old text columns. It is written (local branch `feat/stop-text-columns-53`) but not yet

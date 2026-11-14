@@ -748,8 +748,14 @@ Done 2026-11-14. Notes:
   amount (the model read "test 1" as part of the name); "1 on zebra test card" worked.
 - Step 4: the `--write` run asked nothing and matched its dry run. The 5 rows with no card (found
   2026-11-13) are still unmatched; they are a blocker for migration 0005, not for this task.
-- Step 5: the secrets were deleted, not disabled. Rolling back to a Cloud Run revision from before
-  PR 2 now means recreating them first.
+- Step 5: the secrets were deleted, not disabled, but the console edit that should have removed
+  them from the service never deployed. The next automatic deploy (from the #87 merge, revision
+  00086) then failed with "Secret ... was not found", because the Cloud Build trigger only swaps the
+  image and keeps the service's settings. Fixed with
+  `gcloud run services update unified-ledger-bot --remove-secrets ALLOWED_TG_IDS,ACCOUNT_OWNERS,PRIMARY_ACCOUNT_OWNER`
+  (revision 00087), and a test message worked on it. Every revision before 00087 still names the
+  deleted secrets, so rolling back to one means recreating them first. Lesson: after a console
+  edit, check that a new revision appeared and is serving.
 
 ### Task 10: Stop writing the old columns
 
