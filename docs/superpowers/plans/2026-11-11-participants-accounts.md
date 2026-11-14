@@ -729,18 +729,27 @@ Open PR 2 (Tasks 5-8). Merge only after Task 4 Step 5.
 
 ### Task 9: Operations — switch-over
 
-- [ ] **Step 1:** Merge PR 2 and wait for the Cloud Run deploy.
-- [ ] **Step 2:** From each person's Telegram, send a shared-account payment (e.g. "coffee 4 cash")
+- [x] **Step 1:** Merge PR 2 and wait for the Cloud Run deploy.
+- [x] **Step 2:** From each person's Telegram, send a shared-account payment (e.g. "coffee 4 cash")
   and a single-owner card payment, and confirm both. The cards show the expected owner (spec
   verification 3).
-- [ ] **Step 3:** Insert a test account in the Neon SQL editor; the next message's extraction can
+- [x] **Step 3:** Insert a test account in the Neon SQL editor; the next message's extraction can
   pick it (send "test 1 <name>", then Cancel). Then close it with `UPDATE accounts SET closed_on =
   current_date WHERE id = <id>` (spec verification 2).
-- [ ] **Step 4:** Rerun the seed script against production with `--write`. It reports zero filled
+- [x] **Step 4:** Rerun the seed script against production with `--write`. It reports zero filled
   or only the rows saved between Task 4 and the deploy, and zero unmatched.
-- [ ] **Step 5:** Remove `ALLOWED_TG_IDS`, `ACCOUNT_OWNERS`, `PRIMARY_ACCOUNT_OWNER` from the Cloud
+- [x] **Step 5:** Remove `ALLOWED_TG_IDS`, `ACCOUNT_OWNERS`, `PRIMARY_ACCOUNT_OWNER` from the Cloud
   Run service (and their Secret Manager secrets) and from local `.env`. Send one more message; it
   still works.
+
+Done 2026-11-14. Notes:
+- Step 3: the test account is "Zebra Test Card", left in place with `closed_on` set. The bot asked
+  "are you sure?" when it was named after closing. "test 1 zebra test card" came back with no
+  amount (the model read "test 1" as part of the name); "1 on zebra test card" worked.
+- Step 4: the `--write` run asked nothing and matched its dry run. The 5 rows with no card (found
+  2026-11-13) are still unmatched; they are a blocker for migration 0005, not for this task.
+- Step 5: the secrets were deleted, not disabled. Rolling back to a Cloud Run revision from before
+  PR 2 now means recreating them first.
 
 ### Task 10: Stop writing the old columns
 
