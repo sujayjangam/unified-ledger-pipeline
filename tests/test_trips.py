@@ -252,3 +252,29 @@ async def test_confirm_saves_selected_trip_and_keeps_trip_line(monkeypatch, dire
         assert bot_core._card_outcome(context, 500) is None
         rows = reply.kwargs["reply_markup"].inline_keyboard
         assert rows[1][0].text == ("🧳 Tag to Beach Trip" if toggle else "🏠 Not trip")
+
+
+# --- found by the Codex review ---
+
+async def test_a_failed_toggle_redraw_leaves_the_entry_as_the_card_shows_it():
+    # The card still shows the old trip line after a failed redraw, so Confirm must save that.
+    context = _context()
+    pending = _pending(trip_id=7, trip_offer={"id": 7, "name": "Beach Trip"})
+    bot_core._remember_pending_card(context, 500, pending)
+    update, query = _tap("trip_toggle")
+    query.edit_message_text.side_effect = RuntimeError("Telegram unavailable")
+
+    await bot_core.handle_button_click(update, context)
+
+    assert pending["trip_id"] == 7
+    query.answer.assert_awaited_once()
+    assert "Couldn't change" in query.answer.await_args.args[0]
+
+
+async def test_a_trip_name_with_markdown_characters_is_escaped_on_the_card(monkeypatch, directory):
+    # An unescaped _ opens italics that never close, and Telegram rejects the whole card.
+    monkeypatch.setattr(bot_core, "_load_active_trip", lambda: trips.Trip(7, "Beach_2026"))
+    context, card, _ = await _show_card(monkeypatch, directory, ALICE)
+    assert "🧳 **Trip:** Beach\_2026" in card.edit_text.await_args.args[0]
+    # The stored name and the button label stay as typed.
+    assert context.user_data["pending_cards"][500]["trip_offer"]["name"] == "Beach_2026"

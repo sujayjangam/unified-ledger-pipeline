@@ -3,6 +3,7 @@ import os
 import uuid
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.helpers import escape_markdown
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 import tempfile
 from app.add_expense import add_expense, dollars_to_cents, format_cents
@@ -246,6 +247,14 @@ async def cat_month_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- Confirmation-card state -------------------------------------------------------------
 #
+def _md(name: str) -> str:
+    """A name escaped for Telegram's Markdown, so a trip called "Beach_2026" shows as typed. An
+    unescaped _ or * starts a format that never closes, and Telegram then rejects the whole
+    message - on a card, that would stop every entry while the trip is on. Only for text sent with
+    parse_mode="Markdown"; button labels and toasts are plain text and need none."""
+    return escape_markdown(name, version=1)
+
+
 TRIP_USAGE = "Use `/trip on <name>` to tag new entries to a trip, or `/trip off` to stop."
 
 
@@ -278,13 +287,13 @@ async def trip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply = f"⚠️ No trip called {name!r}. Nothing changed.\nTrips: {choices}"
                     parse_mode = None
                 else:
-                    reply = f"🧳 **{trip.name}** is on. New entries are tagged to it."
+                    reply = f"🧳 **{_md(trip.name)}** is on. New entries are tagged to it."
             elif action == "off":
                 trip = switch_trip_off(conn)
-                reply = f"🏠 **{trip.name}** is off. New entries aren't tagged to a trip." if trip else "No trip was on."
+                reply = f"🏠 **{_md(trip.name)}** is off. New entries aren't tagged to a trip." if trip else "No trip was on."
             elif action == "":
                 trip = load_active_trip(conn)
-                current = f"🧳 Active trip: **{trip.name}**" if trip else "🏠 No trip is on."
+                current = f"🧳 Active trip: **{_md(trip.name)}**" if trip else "🏠 No trip is on."
                 reply = f"{current}\n\n{TRIP_USAGE}"
             else:
                 reply = TRIP_USAGE
@@ -511,7 +520,7 @@ def _trip_lines(transaction: dict) -> str:
     if not offer:
         return ""
     if transaction.get('trip_id'):
-        return f"🧳 **Trip:** {offer['name']}\n"
+        return f"🧳 **Trip:** {_md(offer['name'])}\n"
     return "🧳 **Trip:** not a trip entry\n"
 
 
@@ -856,10 +865,22 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
 
         offer = pending['trip_offer']
-        pending['trip_id'] = None if pending.get('trip_id') else offer['id']
-        await query.answer("🏠 Not a trip entry." if pending['trip_id'] is None else f"🧳 Tagged to {offer['name']}.")
-        await query.edit_message_text(_pending_card_text(pending), reply_markup=_keyboard_for(pending),
-                                      parse_mode="Markdown")
+        new_trip_id = None if pending.get('trip_id') else offer['id']
+        # Redraw from a copy first, and change the pending entry only once the card shows the new
+        # state. If the redraw fails, the card still shows the old trip line, so the entry must
+        # keep it too: Confirm saves exactly what the card showed.
+        toggled = {**pending, 'trip_id': new_trip_id}
+        try:
+            await query.edit_message_text(_pending_card_text(toggled), reply_markup=_keyboard_for(toggled),
+                                          parse_mode="Markdown")
+        except Exception as e:
+            print(f"❌ Trip toggle redraw failed: {e}")
+            await query.answer("⚠️ Couldn't change the trip, try again.")
+            return
+        pending['trip_id'] = new_trip_id
+        # Answered last, so the single answer() can say what actually happened. Plain text, so
+        # the name needs no escaping here.
+        await query.answer("🏠 Not a trip entry." if new_trip_id is None else f"🧳 Tagged to {offer['name']}.")
 
     else:
         # An unrecognised callback_data - a card from an older deployment whose buttons this
