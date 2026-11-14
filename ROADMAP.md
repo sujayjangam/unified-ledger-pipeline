@@ -257,7 +257,7 @@ In working order. Items marked *(from Phase 0)* moved here by
 `PRIMARY_ACCOUNT_OWNER` / `ALLOWED_TG_IDS` env vars —
 [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53). Goes before the staging
 table so statement lines attach to an account row, not a string. The Phase 3 `participants` table
-below is this one. In progress: step 1 of 3 merged (#84), see "Current status".
+below is this one. In progress: steps 1 and 2 of 3 merged (#84, #90), see "Current status".
 - [ ] **Group-trip splitting** (pulled forward from Phase 3 on 2026-11-14 for a real trip, see
 "Current status"). Two people log; the other members are participants without a Telegram ID, and
 only shared costs they pay get logged. Travel minimum, in build order:

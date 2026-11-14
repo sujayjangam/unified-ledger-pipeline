@@ -1,7 +1,7 @@
 """require an account id and drop the superseded account and sender text columns
 
 Migration 0004 introduced participants and accounts so transactions could point to stable ids
-instead of duplicating names and Telegram user ids. The seed script links older transactions to
+instead of duplicating names and Telegram user ids. The seed script linked older transactions to
 those rows, and step 2 of issue #53 stops the bot, CLI and REST API writing the old text columns.
 This contraction makes account_id required and removes account_desc, account_owner and entered_by,
 leaving the directory as the source of their names and ownership.
