@@ -31,11 +31,29 @@ participants and accounts as Postgres tables, replacing the env vars
 2. Stop writing the old text columns (`account_desc`, `account_owner`, `entered_by`).
 3. Migration 0005 drops them. Take a backup first.
 
-**Next action:** confirm the post-merge production checks (plan Task 9 in `docs/superpowers/`:
-real sends from each person's Telegram, a test account added then closed, a seed-script rerun, and
-the three old env vars removed from Cloud Run), then merge step 2 — the bot, CLI and REST API stop
-writing the old text columns. Step 2 can be written before those checks, but not merged: it
-removes the revert safety net.
+The post-merge production checks (plan Task 9 in `docs/superpowers/`) passed on 2026-11-14: real
+sends from both people, a test account added and then closed, a seed-script rerun, and the three
+old env vars and their secrets removed from Cloud Run.
+
+**Next action:** after a few days of normal use, merge step 2 — the bot, CLI and REST API stop
+writing the old text columns. It is written (local branch `feat/stop-text-columns-53`) but not yet
+pushed. Merging it removes the revert safety net.
+
+Before step 3 (migration 0005) can run, two things (found 2026-11-13):
+- **5 production rows have no `account_id`**, so 0005's guard refuses to run. They never recorded
+  a card. Decision: assign each one a card (adding a card if needed) through `transaction_overrides`
+  and `accounts` in `directory_seed.local.json`, not a hand-typed `UPDATE`, because the script
+  checks the names and the closed dates and keeps a record. Order: list the rows
+  (`WHERE account_id IS NULL`), edit the seed file, dry run (it rolls back), run the backup
+  workflow, then `--write`, then check the count is 0. Their `account_owner` text is wrong too (a
+  card name, or "unknown", in place of a person); leave it, since 0005 drops that column and its
+  downgrade refills it from `account_id`.
+- **`scripts/seed_directory.py` reads `account_desc` and `entered_by`**, which 0005 drops. The 0005
+  PR removes the transaction-linking part of the script and keeps the seeding part.
+
+Follow-up: "test 1 zebra test card" came back with no amount (the model read "test 1" as part of a
+name). Add it to the list in `scripts/check_extraction.py`.
+
 Adding and closing cards from Telegram is
 [#83](https://github.com/sujayjangam/unified-ledger-pipeline/issues/83), after #53.
 
