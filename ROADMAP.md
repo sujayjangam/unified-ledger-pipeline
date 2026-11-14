@@ -46,7 +46,9 @@ there: the pin's service message got a "not authorized" reply, and a trip across
 only the end year. An old banner is deleted on switch-off or a change of trip (or, past
 Telegram's 48-hour delete limit, unpinned and edited to say the trip ended; unit-tested only),
 and the "pinned a message" notice is deleted as it arrives. Picking it up:
-1. Push and open the PR (don't merge: a merge to `main` auto-deploys).
+1. PR [#95](https://github.com/sujayjangam/unified-ledger-pipeline/pull/95) is open (don't merge
+   yet: a merge to `main` auto-deploys). First, one short test-bot run of the final code: switch
+   on and off, and once with message deletion failing, to see the "trip ended" fallback live.
 2. Before merging: back up production, apply 0006 to it by hand, and seed the real trip with its
    dates. The bot code reads the new tables and columns, so 0006 must be on production first.
 
