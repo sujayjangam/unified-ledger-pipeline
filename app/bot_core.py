@@ -339,6 +339,21 @@ def _display_amount(transaction: dict) -> str:
         return f"{currency} {float(transaction.get('amount')):.2f}"
 
 
+def _account_lines(transaction: dict) -> str:
+    """The card's Account and Account Owner lines, shared by every card for one entry (#92).
+
+    The account is the field most likely to be wrong - it is inferred (a named card, the wallet
+    for foreign currency, or the sender's default) - so the message left in the chat after a save
+    must still say which card the entry went against and whose it was. One helper keeps the
+    confirm, saved and error cards from drifting apart. Both values come from the pending entry,
+    so no database read is needed.
+    """
+    return (
+        f"💳 **Account:** {transaction.get('payment_method', 'Unspecified')}\n"
+        f"💳 **Account Owner:** {transaction.get('account_owner', 'Unspecified')}\n"
+    )
+
+
 def _date_lines(transaction: dict) -> str:
     """The card's date line, plus a ⚠️ line straight under it if the date looks wrong (#74).
 
@@ -506,8 +521,7 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
         f"Please confirm your **{single_transaction.get('transaction_type', 'Expense')}**:\n\n"
         f"💰 **Amount:** {amount_text}\n"
         f"🏷️ **Category:** {single_transaction.get('category')}\n"
-        f"💳 **Account:** {single_transaction.get('payment_method', 'Unspecified')}\n"
-        f"💳 **Account Owner:** {single_transaction.get('account_owner', 'Unspecified')}\n"
+        f"{_account_lines(single_transaction)}"
         f"📝 **Notes:** {single_transaction.get('description', 'None')}\n"
         f"{_date_lines(single_transaction)}"
     )
@@ -653,6 +667,8 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
                 f"✅ **Saved to Ledger!**\n\n"
                 f"💰 **Amount:** {_display_amount(transaction_to_save)}\n"
                 f"🏷️ **Category:** {transaction_to_save.get('category')}\n"
+                # The account stays on record in the chat after the buttons go (#92)
+                f"{_account_lines(transaction_to_save)}"
                 f"📝 **Notes:** {transaction_to_save.get('description', 'None')}\n"
                 f"📅 **Date:** {transaction_to_save.get('date')}\n"
             )
@@ -672,6 +688,8 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
                 f"❌ **Database Error! Could not save:**\n\n"
                 f"💰 **Amount:** {_display_amount(transaction_to_save)}\n"
                 f"🏷️ **Category:** {transaction_to_save.get('category')}\n"
+                # The card is live again, so it shows the account a retry would save against
+                f"{_account_lines(transaction_to_save)}"
                 f"📝 **Notes:** {transaction_to_save.get('description', 'None')}\n"
                 # Same date lines as the first card, ⚠️ included: this card is live again,
                 # so it should still say what was odd about the date being retried.

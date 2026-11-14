@@ -46,14 +46,13 @@ name). Add it to the list in `scripts/check_extraction.py`.
 
 Adding and closing cards from Telegram is
 [#83](https://github.com/sujayjangam/unified-ledger-pipeline/issues/83). The "Saved to Ledger!"
-message doesn't show the account an entry was saved to:
-[#92](https://github.com/sujayjangam/unified-ledger-pipeline/issues/92), a small capture fix.
+message, and the error card a failed save leaves, now show the account and its owner
+([#92](https://github.com/sujayjangam/unified-ledger-pipeline/issues/92), done 2026-11-14).
 
 Every Phase 0 item that was still open when the phase closed had already moved to a later phase
 (decided 2026-09-23, [ADR-0029](docs/decisions/0029-close-phase-0-on-date-parsing.md)).
 
 **Open top-level issues:**
-[#92](https://github.com/sujayjangam/unified-ledger-pipeline/issues/92) saved message hides the account (Phase 1) ·
 [#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27) unpinned dependencies (Phase 1) ·
 [#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22) entries can't be corrected (Phase 1) ·
 [#17](https://github.com/sujayjangam/unified-ledger-pipeline/issues/17) unused REST API (Phase 5) ·
