@@ -51,8 +51,9 @@ order, since the first uses the part of the seed script the second removes:
   workflow, then `--write`, then check the count is 0. Their `account_owner` text is wrong too (a
   card name, or "unknown", in place of a person); leave it, since 0005 drops that column and its
   downgrade refills it from `account_id`.
-- **`scripts/seed_directory.py` reads `account_desc` and `entered_by`**, which 0005 drops. The 0005
-  PR removes the transaction-linking part of the script and keeps the seeding part.
+- **`scripts/seed_directory.py` reads `account_desc` and `entered_by`**, which 0005 drops. Done on
+  `feat/migration-0005-53`: the transaction-linking part is removed, the seeding part kept. So the
+  five-row fix above runs from `main`, before this branch merges.
 
 **After #53: group-trip splitting** (decided 2026-11-14). There's a real group trip with a fixed
 deadline, kept out of this public repo. It pulls trips, splitting and settling up forward from
@@ -73,7 +74,7 @@ Every Phase 0 item that was still open when the phase closed had already moved t
 
 **Open top-level issues:**
 [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53)
-participants and accounts as tables; old text columns to stop and drop (Phase 1) ·
+participants and accounts as tables; old text columns to drop (Phase 1) ·
 [#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27) unpinned dependencies (Phase 1) ·
 [#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22) entries can't be corrected (Phase 1) ·
 [#17](https://github.com/sujayjangam/unified-ledger-pipeline/issues/17) unused REST API (Phase 5) ·

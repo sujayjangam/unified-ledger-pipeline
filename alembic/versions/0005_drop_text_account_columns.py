@@ -9,8 +9,9 @@ leaving the directory as the source of their names and ownership.
 Do not run this migration before the code that stops writing those columns (step 2) is deployed:
 the old code still inserts into them and would fail after they are dropped. Take a pg_dump first
 (gh workflow run backup.yml), and wait for the backup to complete successfully before upgrading.
-The guard refuses to change the schema while any transaction still has no account_id; run
-scripts/seed_directory.py or decide how to handle those rows first.
+The guard refuses to change the schema while any transaction still has no account_id. Give those
+rows a card with the seed script's transaction_overrides, run from a commit before this one: this
+revision's PR removed that part of the script, since it reads the columns dropped here.
 
 Downgrade rebuilds the text from the current directory, not the original historical values. It
 does not recover the old first-match account_owner guesses on shared accounts, nor the "Shared"
@@ -42,7 +43,7 @@ def upgrade() -> None:
     if missing_accounts != 0:
         raise RuntimeError(
             f"{missing_accounts} transactions have NULL account_id; "
-            "run scripts/seed_directory.py (or decide how to handle those rows) first."
+            "give each one a card first (see this revision's docstring)."
         )
 
     op.alter_column("transactions", "account_id", nullable=False)

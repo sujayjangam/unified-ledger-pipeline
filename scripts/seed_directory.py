@@ -1,13 +1,8 @@
-"""Seeds the participants and accounts tables, and links old transactions to them (#53).
+"""Seeds the participants and accounts tables (#53).
 
 Migration 0004 created the tables empty on purpose: this repo is public, and the rows are real
 names and card labels. They live in a gitignored file instead - directory_seed.local.json, in the
-format of directory_seed.example.json - and this script copies them in. Then it backfills the two
-id columns 0004 added to transactions:
-
-  - account_id, by matching each row's old account_desc text to an account name (spaces and case
-    ignored), using the transaction's date to tell a closed card from an open one;
-  - entered_by_participant_id, by matching the old entered_by Telegram ID.
+format of directory_seed.example.json - and this script copies them in.
 
 Run from the repo root. Point DATABASE_URL at a Neon branch first and check the host it prints:
 
@@ -15,16 +10,14 @@ Run from the repo root. Point DATABASE_URL at a Neon branch first and check the 
     python -m scripts.seed_directory --write    # same, then commits
 
 A dry run performs the real inserts inside a transaction and rolls them back, so its report is
-exactly what --write would do. Only --write asks questions:
+exactly what --write would do. Before committing, the script reads everything back the way the bot
+will, and rolls back instead if the bot would refuse everyone. Rerunning is always safe: rows that
+exist are left alone.
 
-  - a row dated after its card's closed_on: "This card is already closed, do you want to proceed
-    with saving? [y/N]" - a late refund on a cancelled card is real, but a person should say so;
-  - a name shared by more than one account (a replacement card): which one it was.
-
-Anything left unmatched is listed for a decision: add the retired card to the seed file as a
-closed account, or give that one row a transaction_overrides entry. Before committing, the script reads
-everything back the way the bot will, and rolls back instead if the bot would refuse everyone. Rerunning is always safe: rows
-that exist are left alone, and only empty id columns are filled.
+It used to link old transactions to these tables too, by matching their account_desc and
+entered_by text. Migration 0005 dropped those columns, so that part was removed; the
+transaction_overrides in the seed file are still checked but no longer applied - they stay as the
+record of which card each unlabelled row was given.
 """
 
 import argparse
@@ -32,19 +25,16 @@ import calendar
 import json
 import re
 import sys
-from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
 from sqlalchemy import text
 
-from app.add_expense import format_cents
 from app.database import get_engine
-from app.services.participants import Account, DirectoryError, load_directory
+from app.services.participants import DirectoryError, load_directory
 
 DEFAULT_SEED = "directory_seed.local.json"
-CLOSED_QUESTION = "This card is already closed, do you want to proceed with saving? [y/N] "
 
 
 def _key(name: str | None) -> str | None:
@@ -129,32 +119,6 @@ def parse_seed(raw: dict) -> SeedData:
     return SeedData(participants, accounts, overrides)
 
 
-def match_account(account_desc: str | None, txn_date: date, accounts: list[Account]) -> tuple[str, list[int]]:
-    """Which account an old transaction's card text means, on that transaction's date.
-
-    Returns ("matched", [id]) when exactly one account has the name and it was open that day;
-    ("closed", [id]) when exactly one has it but it was already closed - a person confirms;
-    ("ambiguous", [ids]) when several accounts share the name - a person picks, because any of
-    those rows could be a late refund on the old card; ("unmatched", []) otherwise.
-    """
-    candidates = [a for a in accounts if account_desc and _key(a.name) == _key(account_desc)]
-    if not candidates:
-        return ("unmatched", [])
-    if len(candidates) > 1:
-        return ("ambiguous", [a.id for a in candidates])
-    only = candidates[0]
-    return ("matched" if only.is_open_on(txn_date) else "closed", [only.id])
-
-
-# --- Database half: checked by hand on a Neon branch, never by the test suite ------------------
-
-
-def _load_accounts(conn) -> list[Account]:
-    rows = conn.execute(text(
-        "SELECT id, name, owner_participant_id, funded_by_account_id, closed_on FROM accounts ORDER BY id"
-    )).all()
-    return [Account(*row) for row in rows]
-
 
 def _seed(conn, seed: SeedData) -> dict:
     """Inserts the participants and accounts that don't exist yet, then wires up defaults and
@@ -207,69 +171,9 @@ def _seed(conn, seed: SeedData) -> dict:
     return counts
 
 
-def _ask(question: str) -> str:
-    # No terminal (e.g. piped input) counts as "no answer", which leaves the row for later.
-    try:
-        return input(question).strip()
-    except EOFError:
-        return ""
-
-
-def _backfill_accounts(conn, seed: SeedData, write: bool) -> tuple[int, list[tuple]]:
-    """Fills transactions.account_id where it is empty. Returns (filled, rows needing a decision)."""
-    accounts = _load_accounts(conn)
-    by_id = {a.id: a for a in accounts}
-    rows = conn.execute(text("""
-        SELECT transaction_id, date, account_desc, amount, currency, description
-        FROM transactions WHERE account_id IS NULL ORDER BY date, created_at
-    """)).all()
-
-    filled, undecided = 0, []
-    for transaction_id, date_text, account_desc, amount, currency, description in rows:
-        txn_date = date.fromisoformat(date_text)
-        # An override is the user's explicit decision, so it is applied whatever the date says.
-        name = seed.transaction_overrides.get(transaction_id, account_desc)
-        status, ids = match_account(name, txn_date, accounts)
-        if transaction_id in seed.transaction_overrides and status == "closed":
-            status = "matched"
-
-        chosen = ids[0] if status == "matched" else None
-        if status in ("closed", "ambiguous") and write:
-            print(f"\n{transaction_id}  {date_text}  {currency} {format_cents(amount)}  {description!r}")
-            if status == "closed":
-                print(f"  {by_id[ids[0]].name} was closed on {by_id[ids[0]].closed_on}.")
-                if _ask("  " + CLOSED_QUESTION).lower() == "y":
-                    chosen = ids[0]
-            else:
-                for n, account_id in enumerate(ids, 1):
-                    a = by_id[account_id]
-                    print(f"  {n}. {a.name} (id {a.id}, {'open' if a.is_open else f'closed {a.closed_on}'})")
-                answer = _ask("  Which account? Number, or Enter to skip: ")
-                if answer.isdigit() and 1 <= int(answer) <= len(ids):
-                    chosen = ids[int(answer) - 1]
-
-        if chosen is None:
-            undecided.append((status, transaction_id, date_text, account_desc))
-            continue
-        conn.execute(text("UPDATE transactions SET account_id = :a WHERE transaction_id = :t"),
-                     {"a": chosen, "t": transaction_id})
-        filled += 1
-    return filled, undecided
-
-
-def _backfill_entered_by(conn) -> int:
-    """Fills transactions.entered_by_participant_id from the old Telegram ID text. Rows from before
-    entered_by existed, and CLI/REST rows, have no ID and stay empty: "not recorded"."""
-    return conn.execute(text("""
-        UPDATE transactions t SET entered_by_participant_id = p.id
-        FROM participants p
-        WHERE t.entered_by_participant_id IS NULL AND t.entered_by IS NOT NULL
-          AND p.telegram_user_id = t.entered_by
-    """)).rowcount
-
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="Seed participants/accounts and backfill transactions (#53)")
+    parser = argparse.ArgumentParser(description="Seed the participants and accounts tables (#53)")
     parser.add_argument("--seed", default=DEFAULT_SEED, help=f"seed file (default {DEFAULT_SEED})")
     parser.add_argument("--write", action="store_true", help="commit; without it everything is rolled back")
     args = parser.parse_args(argv)
@@ -282,8 +186,6 @@ def main(argv=None) -> int:
     with engine.connect() as conn:
         trans = conn.begin()
         counts = _seed(conn, seed)
-        filled, undecided = _backfill_accounts(conn, seed, args.write)
-        senders = _backfill_entered_by(conn)
 
         # Read everything back the way the bot will, inside the same transaction, before anything
         # is committed. A directory the bot would reject locks the whole household out, so a
@@ -304,21 +206,6 @@ def main(argv=None) -> int:
 
     print(f"\nParticipants inserted: {counts['participants']}")
     print(f"Accounts inserted:     {counts['accounts']}")
-    print(f"account_id filled:     {filled}")
-    print(f"entered_by_participant_id filled: {senders}")
-
-    if undecided:
-        # Grouped by the old card text, so each distinct name is decided once.
-        groups = defaultdict(list)
-        for status, transaction_id, date_text, account_desc in undecided:
-            groups[(account_desc, status)].append((transaction_id, date_text))
-        print(f"\n{len(undecided)} rows still need a decision (closed card in the seed, or an override):")
-        for (account_desc, status), rows in sorted(groups.items(), key=lambda g: str(g[0])):
-            print(f"\n  {account_desc!r} - {status}, {len(rows)} rows")
-            for transaction_id, date_text in rows:
-                print(f"    {transaction_id}  {date_text}")
-    else:
-        print("\nNo rows need a decision.")
     return 0
 
 
