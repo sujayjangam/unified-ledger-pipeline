@@ -38,9 +38,10 @@ sends from both people, a test account added and then closed, a seed-script reru
 old env vars and their secrets removed from Cloud Run (that last step took a second try; see the
 plan's Task 9 notes).
 
-**Next action:** after a few days of normal use since the 2026-11-14 checks, merge step 2 — the
-bot, CLI and REST API stop writing the old text columns. It is rebased on `main` and passes the
-gate. Merging it removes the revert safety net.
+**Next action:** merge step 2 — the bot, CLI and REST API stop writing the old text columns.
+Decided 2026-11-14 not to wait for a few days of normal use first: the columns are being dropped
+anyway, so any bug this exposes would need fixing either way. Merging it removes the revert safety
+net. Then step 3.
 
 Before step 3 (migration 0005) can run, two things (found 2026-11-13):
 - **5 production rows have no `account_id`**, so 0005's guard refuses to run. They never recorded
