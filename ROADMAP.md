@@ -34,9 +34,23 @@ no `account_id` were given a card by hand in SQL, one guarded `UPDATE` per `tran
 
 **Next action:** group-trip splitting, below. Step 1 (trips) is built on branch `feat/trips`
 (2026-11-14, [ADR-0035](docs/decisions/0035-trips-tagged-at-log-time.md)): migration 0006, trips
-in the seed file, `/trip on|off`, and a trip line and toggle on the card. Before merging, apply
-0006 to production by hand (after a Neon-branch rehearsal), then seed the real trip. Step 2,
-paid-by, comes next.
+in the seed file, `/trip on|off`, and a trip line and toggle on the card. Committed locally, not
+pushed; the gate passes and a Codex review's two findings are fixed. Not yet run against a
+database. Picking it up, in order:
+1. Test on the polling bot. The Neon test branch was reset to production (0005) on 2026-11-14.
+   With `feat/trips` checked out, migrate that branch to 0006 (`docs/LOCAL_TESTING.md`, "Running
+   migrations against the branch": `alembic current` must show the branch host first).
+2. Add a trip to the gitignored `directory_seed.local.json` (format in
+   `directory_seed.example.json`, "trips"), then run `scripts.seed_directory` against the branch:
+   dry run, then `--write`.
+3. Run `python -m app.bot_local`. Check `/trip`, `/trip on <name>`, an entry with the Trip line,
+   the "Not trip" toggle both ways, Confirm (`trip_id` set, or NULL after "Not trip"), `/trip off`,
+   and an unknown name.
+4. Push, open the PR. Before merging: back up production, apply 0006 to it by hand, and seed the
+   real trip. The bot code reads the new table, so 0006 must be on production first.
+
+Step 2, paid-by, comes next. Also unpushed: branch `chore/check-extraction-zebra` (the misread
+message below, as a `check_extraction` case).
 
 **Group-trip splitting** (decided 2026-11-14). There's a real group trip with a fixed
 deadline, kept out of this public repo. It pulls trips, splitting and settling up forward from
@@ -45,8 +59,9 @@ below. Deploy freeze: nothing merges to `main` for the last two days
 before the deadline, because a merge auto-deploys and a broken bot mid-trip means nothing gets
 logged. Test on a Neon branch with a fictional trip-sized directory first.
 
-Follow-up: "test 1 zebra test card" came back with no amount (the model read "test 1" as part of a
-name). Add it to the list in `scripts/check_extraction.py`.
+Follow-up: "test 1 zebra test card" comes back with no amount (the model reads "test 1" as part
+of a name). It is now a case in `scripts/check_extraction.py`, which fails it 10 times out of 10
+(2026-11-14). The prompt fix is still open.
 
 Adding and closing cards from Telegram is
 [#83](https://github.com/sujayjangam/unified-ledger-pipeline/issues/83). The "Saved to Ledger!"
