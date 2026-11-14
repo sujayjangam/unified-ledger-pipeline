@@ -317,3 +317,20 @@ async def test_the_saved_and_error_cards_show_the_saved_amount(monkeypatch, save
     text = query.edit_message_text.await_args.args[0]
     assert header in text
     assert "SGD 1.01" in text
+
+
+@pytest.mark.parametrize("save_result, header", [(True, "Saved to Ledger"), (False, "Database Error")])
+async def test_the_saved_and_error_cards_show_the_account_and_owner(monkeypatch, save_result, header):
+    # #92: once the buttons go, the message left in the chat is the only record of which card
+    # the entry was saved against, so it must keep the confirm card's Account and Account Owner.
+    monkeypatch.setattr(bot_core, "add_expense", MagicMock(return_value=save_result))
+    context = _fresh_context()
+    bot_core._remember_pending_card(context, 100, _txn())
+
+    update, _, query = _make_callback(message_id=100)
+    await bot_core.handle_button_click(update, context)
+
+    text = query.edit_message_text.await_args.args[0]
+    assert header in text
+    assert "**Account:** Cash" in text
+    assert "**Account Owner:** Alice" in text
