@@ -138,11 +138,10 @@ Env vars (`.env.example` shows the format):
   ([ADR-0024](docs/decisions/0024-created-at-write-time-column.md)).
 - `entered_by_participant_id` stores the sender's id, never a name. NULL means "not recorded".
   Tests use fictional ids only ([ADR-0033](docs/decisions/0033-entered-by-participant-id.md)).
-- **Old text columns (#53, in progress).** The bot, CLI and REST API write only the id columns
-  (`account_id`, `entered_by_participant_id`). The old text ones (`account_desc`,
-  `account_owner`, `entered_by`) are no longer written; they still hold older rows' values until
-  migration 0005 (`0005_drop_text_account_columns`, not yet applied to production) drops them —
-  see `ROADMAP.md`. Never write or read them in new code.
+- `transactions` records the account and sender as ids only (`account_id`, required, and
+  `entered_by_participant_id`). Names and owners are looked up from `accounts` and
+  `participants` when shown. Migration 0005 dropped the old text columns (`account_desc`,
+  `account_owner`, `entered_by`); never bring a stored name back.
 - `ON CONFLICT (idempotency_key) DO NOTHING` stops a double-tapped Confirm inserting twice
   ([ADR-0011](docs/decisions/0011-idempotency-key-over-update-id.md)). Duplicate webhook
   deliveries (`update_id`) are a different problem, deduped only in memory today.

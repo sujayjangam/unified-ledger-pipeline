@@ -14,51 +14,30 @@ What has shipped is in git history, the closed issues and the ADRs, not here.
 ## Current status
 
 **Phase:** Phase 0 — Foundation & ownership closed on 2026-11-10, when its last item (the
-date warning, #74) shipped. Phase 1 — Reconciliation engine has started, with #53 in progress. Phase 0's
+date warning, #74) shipped. Phase 1 — Reconciliation engine has started; its first item, #53, closed on 2026-11-14. Phase 0's
 scope was extended on 2026-08-20 to cover capture friction
 ([ADR-0017](docs/decisions/0017-extend-phase-0-for-capture-friction.md)), and its end was fixed on
 2026-09-23 ([ADR-0029](docs/decisions/0029-close-phase-0-on-date-parsing.md)).
 
-**In progress:** [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53),
+**Done 2026-11-14:** [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53),
 participants and accounts as Postgres tables, replacing the env vars
 ([ADR-0032](docs/decisions/0032-participants-and-accounts-in-postgres.md),
 [ADR-0033](docs/decisions/0033-entered-by-participant-id.md); design and plan in
-`docs/superpowers/`). The database changes must land in production in order:
+`docs/superpowers/`). It landed in three steps, each recorded in its PR:
+[#84](https://github.com/sujayjangam/unified-ledger-pipeline/pull/84) (migration 0004, the seed
+script, reading the tables and writing both ids and text),
+[#90](https://github.com/sujayjangam/unified-ledger-pipeline/pull/90) (stop writing the text
+columns) and [#91](https://github.com/sujayjangam/unified-ledger-pipeline/pull/91) (migration
+0005: `account_id` required, `account_desc`, `account_owner` and `entered_by` dropped; applied to
+production 2026-11-14 after a Neon-branch rehearsal and a backup). Before 0005, the 5 rows with
+no `account_id` were given a card by hand in SQL, one guarded `UPDATE` per `transaction_id`.
 
-1. **Done, merged 2026-11-11** ([#84](https://github.com/sujayjangam/unified-ledger-pipeline/pull/84),
-   which records how it was rolled out): migration 0004, the seed script, and the bot, CLI and
-   REST API reading the tables while writing both the new ids and the old text columns.
-2. **Done, merged 2026-11-14** ([#90](https://github.com/sujayjangam/unified-ledger-pipeline/pull/90)):
-   the bot, CLI and REST API stop writing the old text columns (`account_desc`, `account_owner`,
-   `entered_by`). REST GET returns the account name as `account` (from `accounts`) instead of
-   `account_owner`. Merged without waiting for a few days of normal use: the columns are being
-   dropped anyway, so any bug it exposed would need fixing either way.
-3. Migration 0005 makes `account_id` required and drops the old columns. Written on
-   `feat/migration-0005-53`, not run anywhere. Take a backup first.
+**Next action:** group-trip splitting, below.
 
-The post-merge production checks (plan Task 9 in `docs/superpowers/`) passed on 2026-11-14: real
-sends from both people, a test account added and then closed, a seed-script rerun, and the three
-old env vars and their secrets removed from Cloud Run (that last step took a second try; see the
-plan's Task 9 notes).
-
-**Next action:** step 3, migration 0005. Rehearse it on a Neon branch (upgrade, downgrade,
-upgrade), take a backup, run it on production, then merge `feat/migration-0005-53`. Its two
-blockers (found 2026-11-13) are cleared:
-- **5 production rows had no `account_id`**, which 0005's guard refuses. Done 2026-11-14 by hand
-  in SQL, after a backup: one `UPDATE ... WHERE transaction_id = ... AND account_id IS NULL` per
-  row, using the account's numeric id, and the count checked at 0. Chosen over the seed file's
-  `transaction_overrides` (the 2026-11-13 plan) as simpler for 5 rows; the closed-date check was
-  done by eye. Their wrong `account_owner` text and empty `entered_by` and `idempotency_key` were
-  left as they are: 0005 drops the first two, and an empty `idempotency_key` is normal for rows
-  older than that column.
-- **`scripts/seed_directory.py` read `account_desc` and `entered_by`**, which 0005 drops. On
-  `feat/migration-0005-53` the transaction-linking part is removed and the seeding part kept.
-
-**After #53: group-trip splitting** (decided 2026-11-14). There's a real group trip with a fixed
+**Group-trip splitting** (decided 2026-11-14). There's a real group trip with a fixed
 deadline, kept out of this public repo. It pulls trips, splitting and settling up forward from
 Phase 3, ahead of the rest of Phase 1. The scope is under "Group-trip splitting" in Phase 1
-below. #53 finishes first (step 2, then migration 0005). Time-box it, and if it runs long, park
-step 3 until after the trip rather than eat into the trip build. Deploy freeze: nothing merges to `main` for the last two days
+below. Deploy freeze: nothing merges to `main` for the last two days
 before the deadline, because a merge auto-deploys and a broken bot mid-trip means nothing gets
 logged. Test on a Neon branch with a fictional trip-sized directory first.
 
@@ -66,14 +45,15 @@ Follow-up: "test 1 zebra test card" came back with no amount (the model read "te
 name). Add it to the list in `scripts/check_extraction.py`.
 
 Adding and closing cards from Telegram is
-[#83](https://github.com/sujayjangam/unified-ledger-pipeline/issues/83), after #53.
+[#83](https://github.com/sujayjangam/unified-ledger-pipeline/issues/83). The "Saved to Ledger!"
+message doesn't show the account an entry was saved to:
+[#92](https://github.com/sujayjangam/unified-ledger-pipeline/issues/92), a small capture fix.
 
 Every Phase 0 item that was still open when the phase closed had already moved to a later phase
 (decided 2026-09-23, [ADR-0029](docs/decisions/0029-close-phase-0-on-date-parsing.md)).
 
 **Open top-level issues:**
-[#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53)
-participants and accounts as tables; old text columns to drop (Phase 1) ·
+[#92](https://github.com/sujayjangam/unified-ledger-pipeline/issues/92) saved message hides the account (Phase 1) ·
 [#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27) unpinned dependencies (Phase 1) ·
 [#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22) entries can't be corrected (Phase 1) ·
 [#17](https://github.com/sujayjangam/unified-ledger-pipeline/issues/17) unused REST API (Phase 5) ·
@@ -252,11 +232,11 @@ still-unconfirmed cards for the same spend don't warn each other
 In working order. Items marked *(from Phase 0)* moved here by
 [ADR-0029](docs/decisions/0029-close-phase-0-on-date-parsing.md).
 
-- [ ] Household participants and accounts as Postgres tables, replacing the `ACCOUNT_OWNERS` /
+- [x] Household participants and accounts as Postgres tables, replacing the `ACCOUNT_OWNERS` /
 `PRIMARY_ACCOUNT_OWNER` / `ALLOWED_TG_IDS` env vars —
 [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53). Goes before the staging
 table so statement lines attach to an account row, not a string. The Phase 3 `participants` table
-below is this one. In progress: steps 1 and 2 of 3 merged (#84, #90), see "Current status".
+below is this one. Done 2026-11-14 (#84, #90, #91).
 - [ ] **Group-trip splitting** (pulled forward from Phase 3 on 2026-11-14 for a real trip, see
 "Current status"). Two people log; the other members are participants without a Telegram ID, and
 only shared costs they pay get logged. Travel minimum, in build order:
@@ -269,7 +249,7 @@ only shared costs they pay get logged. Travel minimum, in build order:
      required. Each non-household payer gets a stand-in account. `accounts.owner_participant_id`
      may give the payer for free; shared accounts (Cash) have no owner, so an explicit paid-by is
      still needed there. Stand-in names join the model's account list, so run
-     `scripts/check_extraction`. Until #53 drops them, new writers fill the old text columns too.
+     `scripts/check_extraction`.
   3. Uneven splits from the start, with an even split as the easy case. Per-person shares, rolling
      up to family. A message that says nothing about splitting is personal, and the card gets an
      "Add split" button. That opens a menu of the active trip's members only, one row per family,
