@@ -1,4 +1,5 @@
 from decimal import Decimal
+import re
 
 import pytest
 from app.add_expense import dollars_to_cents, format_cents
@@ -69,7 +70,7 @@ def test_format_cents(cents, text):
     assert format_cents(cents) == text
 
 
-# --- The #53 id columns, written alongside the old text ones until PR 3 drops them --------------
+# --- The #53 id columns replace the old text columns -----------------------------------------
 
 from unittest.mock import MagicMock  # noqa: E402 - grouped with the tests that use it
 
@@ -86,15 +87,20 @@ def _fake_connection(monkeypatch, module):
     return conn
 
 
-def test_add_expense_writes_both_old_and_new_columns(monkeypatch):
+def test_add_expense_writes_ids_without_old_text_columns(monkeypatch):
     conn = _fake_connection(monkeypatch, add_expense_module)
     add_expense_module.add_expense(
-        "2026-11-11", "lunch", 12, "Food", account_desc="Card A", account_owner="Alice",
-        entered_by="111111", account_id=10, entered_by_participant_id=1,
+        "2026-11-11", "lunch", 12, "Food", account_id=10, entered_by_participant_id=1,
     )
     params = conn.execute.call_args.args[1]
     assert (params["account_id"], params["entered_by_participant_id"]) == (10, 1)
-    assert (params["account_desc"], params["account_owner"], params["entered_by"]) == ("Card A", "Alice", "111111")
+    sql = str(conn.execute.call_args.args[0])
+    for key in ("account_desc", "account_owner", "entered_by"):
+        assert key not in params
+        assert re.search(rf"\b{key}\b", sql) is None
+    for key in ("account_id", "entered_by_participant_id"):
+        assert re.search(rf"\b{key}\b", sql)
+        assert f":{key}" in sql
 
 
 def test_duplicate_query_selects_the_participant_id(monkeypatch):

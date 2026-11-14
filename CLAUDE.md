@@ -138,11 +138,10 @@ Env vars (`.env.example` shows the format):
   ([ADR-0024](docs/decisions/0024-created-at-write-time-column.md)).
 - `entered_by_participant_id` stores the sender's id, never a name. NULL means "not recorded".
   Tests use fictional ids only ([ADR-0033](docs/decisions/0033-entered-by-participant-id.md)).
-- **Dual-write (#53, in progress).** The bot, CLI and REST API write both the id columns
-  (`account_id`, `entered_by_participant_id`) and the old text ones (`account_desc`,
-  `account_owner`, `entered_by`), so reverting a deploy loses nothing. Keep writing both until the
-  PR that stops it — see `ROADMAP.md`. The REST API writes a shared account's `account_owner` as
-  `"Shared"`, never a person's name.
+- **Old text columns (#53, in progress).** The bot, CLI and REST API write only the id columns
+  (`account_id`, `entered_by_participant_id`). The old text ones (`account_desc`,
+  `account_owner`, `entered_by`) are no longer written; they still hold older rows' values until
+  migration 0005 drops them — see `ROADMAP.md`. Never write or read them in new code.
 - `ON CONFLICT (idempotency_key) DO NOTHING` stops a double-tapped Confirm inserting twice
   ([ADR-0011](docs/decisions/0011-idempotency-key-over-update-id.md)). Duplicate webhook
   deliveries (`update_id`) are a different problem, deduped only in memory today.

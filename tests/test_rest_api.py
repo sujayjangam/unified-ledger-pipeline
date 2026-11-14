@@ -63,8 +63,27 @@ def test_post_resolves_the_account_name(monkeypatch, directory):
     assert response.status_code == 200
     params = conn.execute.call_args.args[1]
     assert params["account_id"] == 10
-    # The old text columns are still written until they are dropped (#53).
-    assert (params["account_desc"], params["account_owner"]) == ("Card A", "Alice")
+    for key in ("account_desc", "account_owner", "entered_by"):
+        assert key not in params
+
+
+def test_get_returns_account_names_and_keeps_rows_without_accounts(monkeypatch):
+    conn = _fake_db(monkeypatch)
+    conn.execute.return_value.fetchall.return_value = [
+        ("2026-11-11", "lunch", 1200, "Food", "Card A"),
+        ("2026-11-10", "old entry", 550, "Food", None),
+    ]
+
+    response = TestClient(main.app).get("/transactions")
+
+    assert response.status_code == 200
+    sql = " ".join(str(conn.execute.call_args.args[0]).split())
+    assert "LEFT JOIN accounts a ON a.id = t.account_id" in sql
+    assert "a.name" in sql
+    assert response.json() == [
+        {"date": "2026-11-11", "description": "lunch", "amount": 12, "category": "Food", "account": "Card A"},
+        {"date": "2026-11-10", "description": "old entry", "amount": 5.5, "category": "Food", "account": None},
+    ]
 
 
 def test_post_rejects_an_unknown_account(monkeypatch, directory):

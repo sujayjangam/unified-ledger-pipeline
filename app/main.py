@@ -25,9 +25,14 @@ def read_root():
 
 @app.get("/transactions")
 def get_transactions():
-    """Fetches all transactions including the owner."""
+    """Fetches all transactions including the account name."""
     # for now we select only the following fields from our database
-    query = text("SELECT date, description, amount, category, account_owner FROM transactions")
+    # Keep old rows with no account_id; their account name is NULL.
+    query = text('''
+        SELECT t.date, t.description, t.amount, t.category, a.name
+        FROM transactions t
+        LEFT JOIN accounts a ON a.id = t.account_id
+    ''')
     with get_connection() as conn:
         rows = conn.execute(query).fetchall()
 
@@ -39,7 +44,7 @@ def get_transactions():
             "description": r[1], 
             "amount": r[2]/100, 
             "category": r[3],
-            "account_owner": r[4]
+            "account": r[4]
         } for r in rows
     ]
 
@@ -66,21 +71,19 @@ def add_transaction(item: Transaction):
     account = directory.open_account_named(item.account)
     if account is None:
         raise HTTPException(status_code=422, detail=f"Unknown or closed account: {item.account}")
-    owner = directory.participant(account.owner_participant_id)
 
     try:
         transaction_id = str(uuid.uuid4())
         
-        # 🏗️ The SQL query now handles the owner field
         query = text('''
             INSERT INTO transactions (
                 transaction_id, date, description, amount,
-                base_amount, category, account_desc, account_owner, account_id,
+                base_amount, category, account_id,
                 reconciliation_status, source
             )
             VALUES (
                 :transaction_id, :date, :description, :amount,
-                :base_amount, :category, :account_desc, :account_owner, :account_id,
+                :base_amount, :category, :account_id,
                 :reconciliation_status, :source
             )
         ''')
@@ -93,11 +96,6 @@ def add_transaction(item: Transaction):
                 "amount": amount_cents,
                 "base_amount": amount_cents,
                 "category": item.category,
-                # account_desc and account_owner are the old text columns, still written until
-                # they are dropped (#53). A shared account (Cash, the wallet) has no owner, and an
-                # API call has no sender to fall back on, so it stays "Shared" as before.
-                "account_desc": account.name,
-                "account_owner": owner.display_name if owner else "Shared",
                 "account_id": account.id,
                 "reconciliation_status": 'unsettled',
                 "source": 'API',

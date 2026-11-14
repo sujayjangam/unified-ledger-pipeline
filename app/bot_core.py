@@ -484,13 +484,8 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
     # save attempt for this same prompt, so a double-tap or webhook retry can't insert twice.
     single_transaction['idempotency_key'] = str(uuid.uuid4())
 
-    # Who sent this message, as their Telegram user ID - the same string participants.telegram_user_id
-    # holds. Saved on the row as entered_by (#60) so an entry can always be traced back to
-    # its sender; account_owner (whose card paid) is inferred and is not the same thing. The ID
-    # rather than a display name because it never changes - names are looked up from it when shown.
-    single_transaction['entered_by'] = user_id
-    # The same sender as a participant id (#53, ADR-0033). Both are written until the old text
-    # column is dropped, so reverting this deploy loses nothing.
+    # The participant id is the only record of the sender, so names can change without
+    # rewriting entries. account_owner is only whose card paid, not who sent the message.
     single_transaction['entered_by_participant_id'] = sender.id
 
     # Does this look like a repeat of something saved moments ago, by anyone? (#58) Kept on the
@@ -643,11 +638,8 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
             category=transaction_to_save.get('category'),
             currency=transaction_to_save.get('currency', 'SGD'),
             transaction_type=transaction_to_save.get('transaction_type', 'Expense'),
-            account_desc=transaction_to_save.get('payment_method'),
-            account_owner=transaction_to_save.get('account_owner'),
             source="Telegram Bot",
             idempotency_key=transaction_to_save.get('idempotency_key'),
-            entered_by=transaction_to_save.get('entered_by'),
             # The ids the card was built from (#53). Never re-read from the directory here: what
             # the user confirmed is what gets saved.
             account_id=transaction_to_save.get('account_id'),

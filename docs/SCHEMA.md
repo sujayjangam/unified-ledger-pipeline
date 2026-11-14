@@ -16,8 +16,8 @@
 - **amount**: Positive integer (cents)
 - **currency**: ISO 3-letter code
 - **base_amount**: Final value in SGD (Integer Cents)
-- **account_owner**: Card owner's display name (e.g., 'Alice', 'Bob'). Being replaced by
-  `account_id` (#53): still written alongside it until it is dropped.
+- **account_owner**: Card owner's display name (e.g., 'Alice', 'Bob'). Replaced by
+  `account_id` (#53): no longer written, kept only on older rows until migration 0005 drops it.
 - **benefit_of**: Beneficiary (e.g., 'Alice', 'Bob', 'Shared')
 - **split_ratio**: Decimal (e.g., 0.5). Written by no code today. Phase 3 plans to replace it
   with each person's share stored as whole cents that add up to `amount`, because a ratio
@@ -30,8 +30,8 @@
 - **source**: Data origin
 - **reconciliation_status**: 'settled' or 'unsettled'
 - **account_desc**: Payment method / card the transaction was charged to (e.g. 'YouTrip',
-  'Cash'). Nullable. Being replaced by `account_id` (#53): still written alongside it until it
-  is dropped.
+  'Cash'). Nullable. Replaced by `account_id` (#53): no longer written, kept only on older rows
+  until migration 0005 drops it.
 - **account_id**: BIGINT, nullable, FK → `accounts.id` (revision `0004_participants_accounts`).
   The account that paid. Written by the bot, CLI and REST API; older rows are linked by
   `scripts/seed_directory.py`, which matches their `account_desc` text.
@@ -45,8 +45,9 @@
   (migration `0002_add_created_at`) were backfilled to midnight Singapore time on their own `date`,
   so an exact `00:00:00+08` means "time of day unknown", not "logged at midnight".
 - **entered_by**: TEXT, nullable. The Telegram user ID of the household member whose message
-  created the row, as a string (revision `0003_add_entered_by`). Being replaced by
-  `entered_by_participant_id` ([ADR-0033](decisions/0033-entered-by-participant-id.md)). Display names are never stored; they're looked up from the ID when
+  created the row, as a string (revision `0003_add_entered_by`). Replaced by
+  `entered_by_participant_id` ([ADR-0033](decisions/0033-entered-by-participant-id.md)): no
+  longer written, kept only on older rows until migration 0005 drops it. Display names are never stored; they're looked up from the ID when
   shown. NULL means "sender not recorded": every row that predates the column, and every row
   from the CLI or REST API. Not to be confused with `account_owner`, which records whose card
   paid, is inferred from the payment method, and is often not the sender.

@@ -54,6 +54,8 @@ def _txn(idempotency_key="key-1"):
         "transaction_type": "Expense",
         "payment_method": "Cash",
         "account_owner": "Alice",
+        "account_id": 12,
+        "entered_by_participant_id": 1,
         "idempotency_key": idempotency_key,
     }
 
@@ -243,19 +245,22 @@ async def test_confirm_passes_the_sender_through_to_add_expense(monkeypatch):
 
     context = _fresh_context()
     txn = _txn()
-    txn["entered_by"] = "111111"  # a fictional Telegram user ID
+    txn["entered_by_participant_id"] = 2  # a fictional participant id
     bot_core._remember_pending_card(context, 100, txn)
 
     update, _, _ = _make_callback(message_id=100)
     await bot_core.handle_button_click(update, context)
 
-    assert saves.call_args.kwargs["entered_by"] == "111111"
+    assert saves.call_args.kwargs["entered_by_participant_id"] == 2
+    assert saves.call_args.kwargs["account_id"] == 12
+    for key in ("account_desc", "account_owner", "entered_by"):
+        assert key not in saves.call_args.kwargs
 
 
-async def test_new_entry_is_stamped_with_the_senders_telegram_id(monkeypatch, directory):
+async def test_new_entry_is_stamped_with_the_senders_participant_id(monkeypatch, directory):
     # process_expense_text end to end, minus the network: extraction is faked and the card
-    # message is a mock. The pending entry must carry the sender's ID as a string - the same
-    # form participants.telegram_user_id stores - as well as their participant id (#53).
+    # message is a mock. The pending entry must carry the participant id so a save records
+    # the sender without copying their Telegram id (#53).
     monkeypatch.setattr(bot_core, "extract_transactions", AsyncMock(return_value={"transactions": [{
         "amount": 5.0, "currency": "SGD", "category": "Food", "date_reference": {"kind": "unstated"},
         "transaction_type": "Expense", "payment_method": None,
@@ -270,7 +275,7 @@ async def test_new_entry_is_stamped_with_the_senders_telegram_id(monkeypatch, di
 
     await bot_core.process_expense_text(update, context, "coffee 5 dollars", status_msg, directory)
 
-    assert context.user_data["pending_cards"][500]["entered_by"] == "111111"
+    assert "entered_by" not in context.user_data["pending_cards"][500]
     assert context.user_data["pending_cards"][500]["entered_by_participant_id"] == 1
 
 
