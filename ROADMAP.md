@@ -52,6 +52,14 @@ Before step 3 (migration 0005) can run, two things (found 2026-11-13):
 - **`scripts/seed_directory.py` reads `account_desc` and `entered_by`**, which 0005 drops. The 0005
   PR removes the transaction-linking part of the script and keeps the seeding part.
 
+**After #53: group-trip splitting** (decided 2026-11-14). There's a real group trip with a fixed
+deadline, kept out of this public repo. It pulls trips, splitting and settling up forward from
+Phase 3, ahead of the rest of Phase 1. The scope is under "Group-trip splitting" in Phase 1
+below. #53 finishes first (step 2, then migration 0005). Time-box it, and if it runs long, park
+step 3 until after the trip rather than eat into the trip build. Deploy freeze: nothing merges to `main` for the last two days
+before the deadline, because a merge auto-deploys and a broken bot mid-trip means nothing gets
+logged. Test on a Neon branch with a fictional trip-sized directory first.
+
 Follow-up: "test 1 zebra test card" came back with no amount (the model read "test 1" as part of a
 name). Add it to the list in `scripts/check_extraction.py`.
 
@@ -89,9 +97,11 @@ infrastructure.
 - Ownership: much of the current codebase was written with AI assistance — ownership is solid on
 the simple parts, weaker on async/await, Pydantic schemas, and FastAPI's `lifespan` handling. Close
 that gap deliberately, not by skipping the code — a standing rule for every phase rather than a
-Phase 0 task ([ADR-0029](docs/decisions/0029-close-phase-0-on-date-parsing.md)). This applies to new AI-assisted work
-as well as old: nothing gets committed that couldn't be explained, line by line, without the
-assistant in the room.
+Phase 0 task ([ADR-0029](docs/decisions/0029-close-phase-0-on-date-parsing.md)). Relaxed
+2026-11-14: code no longer has to be explainable line by line, without the assistant, before it is
+committed. At the pace AI-assisted work moves, that gate isn't realistic. The goal of closing the
+gap stands; the per-commit gate is gone
+([ADR-0034](docs/decisions/0034-drop-line-by-line-ownership-gate.md)).
 - Intended as live household infrastructure for two real users, not a demo — but **currently below
 that bar**, and honestly so. Real usage is limited by capture friction, not by capacity or
 reliability. Until that closes, claims about production usage belong in this file as
@@ -245,6 +255,52 @@ In working order. Items marked *(from Phase 0)* moved here by
 [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53). Goes before the staging
 table so statement lines attach to an account row, not a string. The Phase 3 `participants` table
 below is this one. In progress: step 1 of 3 merged (#84), see "Current status".
+- [ ] **Group-trip splitting** (pulled forward from Phase 3 on 2026-11-14 for a real trip, see
+"Current status"). Two people log; the other members are participants without a Telegram ID, and
+only shared costs they pay get logged. Travel minimum, in build order:
+  1. Trips: a trip is a group of participants in families, set up from the gitignored seed file.
+     `/trip on <name>` and `/trip off`, with at most one active trip (enforced in the database) and
+     one setting shared by both senders. An entry is tagged by when it is logged, not by its date,
+     so pre-trip bookings count. The card shows the trip, with a "Not trip" button. The bot reads
+     the active trip on every message, like the directory.
+  2. Paid-by: who paid, separate from who logged it and which card. The payment method stays
+     required. Each non-household payer gets a stand-in account. `accounts.owner_participant_id`
+     may give the payer for free; shared accounts (Cash) have no owner, so an explicit paid-by is
+     still needed there. Stand-in names join the model's account list, so run
+     `scripts/check_extraction`. Until #53 drops them, new writers fill the old text columns too.
+  3. Uneven splits from the start, with an even split as the easy case. Per-person shares, rolling
+     up to family. A message that says nothing about splitting is personal, and the card gets an
+     "Add split" button. That opens a menu of the active trip's members only, one row per family,
+     with an "all of this family" toggle and a tap to toggle individuals. Trip members are copied
+     into the pending entry (a tap never loads the directory). Button data stays inside Telegram's
+     64-byte limit. Shares are in whole cents and must add up to the amount (see the whole-cents
+     item under Phase 3). Decide the leftover-cent rule for a payer who isn't in the split, and how
+     refunds split.
+  4. `/balances`: per person and per family, in separate currencies (no FX conversion), with a
+     breakdown that can be forwarded to the group ("why do I owe 340?"). The suggested payments are
+     simplified: the fewest payments that settle everyone. Matching the largest debtor to the
+     largest creditor is enough at this size. Families settle by default, and a person marked as
+     settling alone gets their own line.
+  5. Settlement as its own entry type: one person paying another back, in full or in part. It moves
+     balances and never counts as spending.
+  6. `/recent` (today the last 5 entries) gets paging and a delete button per entry. A soft delete
+     is suggested: the row stays but drops out of balances and totals.
+
+  Stretch: split instructions in the message text ("split between me, Alice and Bob").
+  The model picks names from the member list only, "me" resolves in Python from the sender, and
+  Python works out the cents. Also an "Edit" button on the card before saving (reply with the
+  corrected text, reprocessed through `process_expense_text`), and fixing the split and payer
+  after saving.
+
+  Must not break: `/today`, `/week`, `/month` and `cat_*` must not count other people's payments or
+  the full amount of a shared bill as household spending; decide between own-share and excluding
+  stand-in accounts. Settlements and deleted rows are filtered out of every query, including
+  `find_recent_duplicate`. Entries already logged before this ships get their splits added by hand
+  in SQL. A database check on the splits table rejects shares that don't add up.
+
+  Open: a settlement paid in a different currency from the balance it clears (deferred). Not
+  planned for now: more than one payer per bill (log two entries), itemised bills, FX conversion.
+  After the trip: a chat flow for creating trips, and the expense dashboard (Phase 4).
 - [ ] Refund and reversal representation — `app/add_expense.py` rejects `amount <= 0` today, and
 real statements contain refunds almost immediately (see "Known issues"). Needs an ADR on how a
 refund is stored before the staging table is designed.
@@ -283,6 +339,10 @@ hard-vs-soft-delete decision first. Add routing coverage for the new callback ha
 - [ ] Receipt image capture (Telegram photo message) as a second ingestion path alongside voice
 notes — store the image (GCS) and link it to the transaction row; reuses the rule-based +
 LLM-fallback extraction architecture above rather than building a separate one-off pipeline.
+Good to have, not needed for the trip (2026-11-14). The first use is as a memory aid ("why did this
+cost $100?"): store the photo with the entry and show it again later, with no extraction. Storing
+Telegram's `file_id` may be enough. Check how long Telegram keeps photos before relying on it; GCS
+is the fallback.
 
 ### Phase 2 — Evaluation harness
 
@@ -303,9 +363,14 @@ lookup (`whose_card_paid` in `app/services/participants.py`, an env var before #
 
 ### Phase 3 — Household splitting
 
-- [ ] Schema: `transaction_splits` child table, `split_type` enum (the `participants` table itself
-lands in Phase 1 via [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53))
-- [ ] Application logic: even-split and one uneven-split mode to start (who-owes-who calculation)
+The trip, split and settle-up items here moved to Phase 1 ("Group-trip splitting") on 2026-11-14.
+What stays here builds on them: the household as a group with no end date, and the items below that
+weren't pulled forward.
+
+- [ ] Schema: `transaction_splits` child table, `split_type` enum. *Moved to Phase 1, Group-trip
+splitting.*
+- [ ] Application logic: who-owes-who calculation. *Moved to Phase 1, Group-trip splitting, with
+uneven splits from the start.*
 - [ ] Extend as real usage surfaces the need for more flexible splitting
 - [ ] Split in whole cents, so the parts always add up to the entry's amount (reconciliation
 depends on it; the rule is recorded in [ADR-0028](docs/decisions/0028-exact-cent-conversion-half-up.md)). Store each person's share as integer
@@ -319,7 +384,8 @@ whoever's card paid).
 the `participants` table from [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53), so the base table keeps storing only the id
 ([ADR-0033](docs/decisions/0033-entered-by-participant-id.md)) while anything reading the ledger sees names. Possible now that #84 put names in the
 `participants` table. Deliberately after Phase 2 (decided 2026-09-12).
-- [ ] Trips and groups (design note from #53, 2026-11-11; may move earlier than Phase 3). A trip is
+- [ ] Trips and groups (design note from #53, 2026-11-11). *Trips moved to Phase 1 on
+2026-11-14; the household as a group stays here.* A trip is
 a group of participants with optional start and end dates. Expenses tagged to it are split and
 settled within it, and one dated outside the trip gets a non-blocking ⚠️ line on the card, since
 post-trip expenses are real. The household becomes a group with no end date, so splitting is
@@ -338,6 +404,11 @@ before choosing (decided 2026-09-12).
 - [ ] Spend-vs-budget view
 - [ ] Weekly digest (Telegram)
 - [ ] Reconciled vs. unreconciled breakdown
+- [ ] Expense dashboard, filterable by trip, category, person and date (asked for 2026-11-14). It
+could be read-only, served by the existing FastAPI app on Cloud Run. Access control is the open
+question: a hard-to-guess link per trip, or a real login.
+- [ ] Creating trips from Telegram (a chat flow), after the trip build. Until then, trips come from
+the seed file.
 
 **Capture conveniences** (moved from Phase 0 by
 [ADR-0029](docs/decisions/0029-close-phase-0-on-date-parsing.md); both already have a workaround —

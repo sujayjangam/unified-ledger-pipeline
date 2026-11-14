@@ -41,6 +41,7 @@ supersedes the old one rather than editing history.
 | [0031](0031-last-week-from-message-text.md) | Tell "last Tuesday" from "Tuesday last week" with a text match, not the model; check prompts against the real model | Accepted | 2026-10-11 |
 | [0032](0032-participants-and-accounts-in-postgres.md) | Keep participants and accounts in Postgres tables, read on every message, and fail closed | Accepted | 2026-11-11 |
 | [0033](0033-entered-by-participant-id.md) | Record the sender as a participant id, not a Telegram user ID | Accepted | 2026-11-11 |
+| [0034](0034-drop-line-by-line-ownership-gate.md) | Drop the line-by-line ownership gate before commit | Accepted | 2026-11-14 |
 
 ## Writing a new one
 
