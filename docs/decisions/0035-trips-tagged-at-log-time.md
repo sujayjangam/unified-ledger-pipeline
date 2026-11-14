@@ -1,6 +1,6 @@
 # ADR-0035: Trips: one active trip in the database, entries tagged when logged, families per trip
 
-**Status:** Accepted
+**Status:** Accepted; the one-shared-switch part superseded by [ADR-0036](0036-trip-switch-per-person.md)
 **Date:** 2026-11-14
 **Code:** `alembic/versions/0006_add_trips.py`, `app/services/trips.py`, `app/bot_core.py::trip_command`, `app/bot_core.py::process_expense_text`, `scripts/seed_directory.py`
 

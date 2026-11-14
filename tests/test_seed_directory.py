@@ -112,12 +112,12 @@ def _with_trip(families, name="Beach Trip", people=("Alice", "Bob", "Carol")):
     return parse_seed({
         "participants": [{"display_name": p} for p in people],
         "accounts": [],
-        "trips": [{"name": name, "families": families}],
+        "trips": [{"name": name, "start": "2026-12-01", "end": "2026-12-07", "families": families}],
     })
 
 def test_a_trip_flattens_its_families_into_members():
     seed = _with_trip({"Alice and Bob": ["Alice", "Bob"], "Carol's": ["Carol"]})
-    assert seed.trips == [{"name": "Beach Trip",
+    assert seed.trips == [{"name": "Beach Trip", "start_date": date(2026, 12, 1), "end_date": date(2026, 12, 7),
                            "members": [("Alice", "Alice and Bob"), ("Bob", "Alice and Bob"), ("Carol", "Carol's")]}]
 
 def test_a_trip_member_must_be_a_listed_participant():
@@ -131,8 +131,8 @@ def test_a_person_can_be_in_only_one_family_per_trip():
 def test_two_trips_cannot_share_a_name_ignoring_case():
     with pytest.raises(ValueError, match="share this name"):
         parse_seed({"participants": [{"display_name": "Alice"}], "accounts": [],
-                    "trips": [{"name": "Beach Trip", "families": {"F": ["Alice"]}},
-                              {"name": "beach trip ", "families": {"F": ["Alice"]}}]})
+                    "trips": [{"name": "Beach Trip", "start": "2026-12-01", "end": "2026-12-07", "families": {"F": ["Alice"]}},
+                              {"name": "beach trip ", "start": "2026-12-01", "end": "2026-12-07", "families": {"F": ["Alice"]}}]})
 
 def test_a_trip_with_no_members_is_refused():
     with pytest.raises(ValueError, match="no members"):
@@ -140,3 +140,29 @@ def test_a_trip_with_no_members_is_refused():
 
 def test_a_seed_file_without_trips_still_parses():
     assert parse_seed({"participants": [], "accounts": []}).trips == []
+
+
+@pytest.mark.parametrize("fields", [
+    {}, {"start": "2026-12-01"}, {"end": "2026-12-07"},
+    {"start": "20261201", "end": "2026-12-07"},
+    {"start": "2026-2-01", "end": "2026-12-07"},
+    {"start": "2026-02-30", "end": "2026-12-07"},
+    {"start": "2026-12-01", "end": "2026-11-30"},
+    {"start": None, "end": "2026-12-07"},
+    {"start": "2026-12-01", "end": 20261207},
+])
+def test_trip_dates_are_required_and_valid(fields):
+    with pytest.raises(ValueError, match="Trip Beach Trip:"):
+        parse_seed({"participants": [{"display_name": "Alice"}],
+                    "trips": [{"name": "Beach Trip", "families": {"F": ["Alice"]}, **fields}]})
+
+
+def test_single_day_trip_and_inserted_dates():
+    seed = parse_seed({"participants": [{"display_name": "Alice"}],
+                       "trips": [{"name": "Beach Trip", "families": {"F": ["Alice"]},
+                                  "start": "2026-12-01", "end": "2026-12-01"}]})
+    conn = MagicMock()
+    conn.execute.return_value.rowcount = 1
+    seed_directory._seed(conn, seed)
+    call = next(c for c in conn.execute.call_args_list if "INSERT INTO trips" in str(c.args[0]))
+    assert call.args[1] == {"name": "Beach Trip", "start_date": date(2026, 12, 1), "end_date": date(2026, 12, 1)}

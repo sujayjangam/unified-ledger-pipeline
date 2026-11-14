@@ -119,9 +119,10 @@ its context, rejected alternatives and cost. The ones that shaped the system mos
   keeps its name; an entry against it asks before saving.
 - Read commands over the ledger (`/recent`, `/today`, `/week`, `/month` and per-category
   variants), aggregated per currency.
-- Trips: `/trip on <name>` tags every entry logged from then on to that trip until `/trip off`,
-  one setting shared by everyone who logs. The card shows the trip, with a button to mark a
-  single entry as not part of it. Trips and their members, grouped in families, come from the
+- Trips: `/trip` lists your trips as buttons (newest first, with dates, three at a time). Tap one
+  and every entry you log is tagged to it until you turn trip mode off; each person has their
+  own switch, and a banner is pinned in your chat while it is on. The card shows the trip, with
+  a button to mark a single entry as not part of it. Trips and their members, grouped in families, come from the
   same gitignored seed file.
 - CI on every pull request: clean dependency install, lint, an import smoke check across `app/`,
   and a pytest suite over the money and date invariants — required to pass before a merge to

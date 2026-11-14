@@ -20,8 +20,8 @@ transaction_overrides in the seed file are still checked but no longer applied -
 record of which card each unlabelled row was given.
 
 Trips (migration 0006) come from the same file: each trip names its families and the
-participants in each. The script never makes a trip active - that is `/trip on <name>` in the
-bot - and leaves an existing member's family alone on a rerun, like every other existing row.
+participants in each, with start and end dates. The script never changes a person's trip
+switch and leaves an existing member's family alone on a rerun, like every other existing row.
 """
 
 import argparse
@@ -51,7 +51,7 @@ class SeedData:
     participants: list[dict]
     accounts: list[dict]
     transaction_overrides: dict[str, str]
-    # Each trip as {"name": ..., "members": [(participant display_name, family), ...]}.
+    # Each trip has name, start_date, end_date and members [(display_name, family), ...].
     trips: list[dict]
 
 
@@ -143,6 +143,20 @@ def _parse_trips(raw_trips: list, people: set) -> list[dict]:
             raise ValueError(f"Trip {name}: two trips share this name")
         seen_names.add(_key(name))
 
+        # fromisoformat also accepts compact dates; require the seed's explicit YYYY-MM-DD
+        # spelling first so malformed or absent dates fail here, before any database access.
+        dates = {}
+        for field in ("start", "end"):
+            value = t.get(field)
+            if not isinstance(value, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
+                raise ValueError(f"Trip {name}: {field} must be YYYY-MM-DD")
+            try:
+                dates[field] = date.fromisoformat(value)
+            except ValueError:
+                raise ValueError(f"Trip {name}: {field} must be a valid YYYY-MM-DD date") from None
+        if dates["end"] < dates["start"]:
+            raise ValueError(f"Trip {name}: end must be on or after start")
+
         members, placed = [], set()
         for family, people_in_family in (t.get("families") or {}).items():
             family = family.strip()
@@ -158,7 +172,7 @@ def _parse_trips(raw_trips: list, people: set) -> list[dict]:
                 members.append((person, family))
         if not members:
             raise ValueError(f"Trip {name}: no members")
-        trips.append({"name": name, "members": members})
+        trips.append({"name": name, "start_date": dates["start"], "end_date": dates["end"], "members": members})
     return trips
 
 
@@ -212,13 +226,14 @@ def _seed(conn, seed: SeedData) -> dict:
                   AND funded_by_account_id IS NULL
             """), {"funder": id_for(a["funded_by"]), "name": a["name"], "closed_on": a.get("closed_on")})
 
-    # Trips last: members point at participants, which now all exist. A new trip is inserted
-    # inactive (the column default); only /trip on makes one active.
+    # Trips last: members point at participants, which now all exist. Only the bot changes
+    # participants' switches; seeding a trip must not start tagging anyone's entries.
     for t in seed.trips:
         counts["trips"] += conn.execute(text("""
-            INSERT INTO trips (name)
-            SELECT :name WHERE NOT EXISTS (SELECT 1 FROM trips WHERE lower(name) = lower(:name))
-        """), {"name": t["name"]}).rowcount
+            INSERT INTO trips (name, start_date, end_date)
+            SELECT :name, :start_date, :end_date
+            WHERE NOT EXISTS (SELECT 1 FROM trips WHERE lower(name) = lower(:name))
+        """), {"name": t["name"], "start_date": t["start_date"], "end_date": t["end_date"]}).rowcount
         for person, family in t["members"]:
             counts["trip_members"] += conn.execute(text("""
                 INSERT INTO trip_members (trip_id, participant_id, family)

@@ -1,18 +1,11 @@
-"""Trips: which trip, if any, new entries are tagged with (group-trip splitting, step 1).
+"""Per-person trip switches, read fresh when an entry is logged, not by its business date.
 
-A trip is a named group of participants in families (migration 0006). At most one trip is
-active at a time - the database enforces it with a partial unique index - and it is one setting
-for everyone who logs, switched with `/trip on <name>` and `/trip off` in the bot.
-
-An entry is tagged by when it is *logged*: process_expense_text reads the active trip for every
-message, the same way authorize() reads the directory, so a /trip switch takes effect on the
-next message and a booking paid weeks before the trip still counts as the trip's.
-
-Like participants.py, these functions take a connection and do nothing else, so tests can hand
-them a fake one; bot_core owns opening the connection.
+Functions take a connection so the bot owns I/O and tests can use fakes. The participant's
+single active_trip_id survives restarts; its composite foreign key requires membership.
 """
 
 from dataclasses import dataclass
+from datetime import date
 
 from sqlalchemy import text
 
@@ -21,43 +14,88 @@ from sqlalchemy import text
 class Trip:
     id: int
     name: str
+    start_date: date
+    end_date: date
 
 
-def load_active_trip(conn) -> Trip | None:
-    """The active trip, or None when no trip is on."""
-    row = conn.execute(text("SELECT id, name FROM trips WHERE active")).first()
+def load_active_trip(conn, participant_id: int) -> Trip | None:
+    """Read only this person's switch, so another member can log everyday expenses."""
+    row = conn.execute(text("""
+        SELECT t.id, t.name, t.start_date, t.end_date
+        FROM participants p JOIN trips t ON t.id = p.active_trip_id
+        WHERE p.id = :participant_id
+    """), {"participant_id": participant_id}).first()
     return Trip(*row) if row else None
 
 
-def trip_names(conn) -> list[str]:
-    """Every trip's name, oldest first: the choices `/trip on` offers when a name doesn't match."""
-    return [row[0] for row in conn.execute(text("SELECT name FROM trips ORDER BY id")).all()]
+def member_trips(conn, participant_id: int, offset: int, limit: int) -> tuple[list[Trip], bool]:
+    """Fetch one extra choice to decide whether the menu needs an Older button."""
+    rows = conn.execute(text("""
+        SELECT t.id, t.name, t.start_date, t.end_date
+        FROM trips t JOIN trip_members m ON m.trip_id = t.id
+        WHERE m.participant_id = :participant_id
+        ORDER BY t.start_date DESC, t.id DESC LIMIT :limit OFFSET :offset
+    """), {"participant_id": participant_id, "offset": offset, "limit": limit + 1}).all()
+    return [Trip(*row) for row in rows[:limit]], len(rows) > limit
 
 
-def switch_trip_on(conn, name: str) -> Trip | None:
-    """Makes the trip with this name (case and outer spaces ignored) the active one, turning off
-    whichever trip was active before, and commits. Returns the trip now active, or None - with
-    nothing changed - when no trip has that name.
+def switch_trip_on(conn, participant_id: int, trip_id: int) -> Trip | None:
+    """Atomically check membership and change only this person's switch, then commit."""
+    row = conn.execute(text("""
+        UPDATE participants p SET active_trip_id = t.id
+        FROM trips t JOIN trip_members m ON m.trip_id = t.id
+        WHERE p.id = :participant_id AND m.participant_id = p.id AND t.id = :trip_id
+        RETURNING t.id, t.name, t.start_date, t.end_date
+    """), {"participant_id": participant_id, "trip_id": trip_id}).first()
+    conn.commit()
+    return Trip(*row) if row else None
 
-    Two UPDATEs, not one: Postgres checks a unique index row by row as an UPDATE goes, so a single
-    statement that turns one trip off and another on could briefly see two active rows and fail.
-    Turning the old one off first, inside the same transaction, means the switch either happens
-    completely or not at all.
+
+def switch_trip_off(conn, participant_id: int) -> Trip | None:
+    """Return the trip cleared by this update, without a separate read that could race."""
+    row = conn.execute(text("""
+        UPDATE participants p SET active_trip_id = NULL
+        FROM trips t WHERE p.id = :participant_id AND t.id = p.active_trip_id
+        RETURNING t.id, t.name, t.start_date, t.end_date
+    """), {"participant_id": participant_id}).first()
+    conn.commit()
+    return Trip(*row) if row else None
+
+
+def banner_message_id(conn, participant_id: int) -> int | None:
+    """Remember the exact banner so switching never unpins an unrelated chat message."""
+    return conn.execute(text("""
+        SELECT trip_banner_message_id FROM participants WHERE id = :participant_id
+    """), {"participant_id": participant_id}).scalar()
+
+
+def set_banner_message_id(conn, participant_id: int, id_or_none: int | None):
+    """Persist banner bookkeeping separately: Telegram failures must not undo a switch."""
+    conn.execute(text("""
+        UPDATE participants SET trip_banner_message_id = :message_id WHERE id = :participant_id
+    """), {"participant_id": participant_id, "message_id": id_or_none})
+    conn.commit()
+
+
+def format_trip_dates(trip: Trip, today: date) -> str:
+    """A trip's dates, short enough for a button: "3–9 Mar", "27 Apr–4 May".
+
+    The year is left out when both dates are in this year, which is the usual case. Otherwise
+    it is added: once at the end when the trip sits inside one year ("27 Apr–4 May 2027"), and
+    on both dates when it crosses New Year ("28 Dec 2025–4 Jan 2026"), because a single year at
+    the end would make the start read as the wrong December.
     """
-    row = conn.execute(
-        text("SELECT id, name FROM trips WHERE lower(name) = lower(:name)"), {"name": name.strip()}
-    ).first()
-    if row is None:
-        return None
-    trip = Trip(*row)
-    conn.execute(text("UPDATE trips SET active = false WHERE active AND id <> :id"), {"id": trip.id})
-    conn.execute(text("UPDATE trips SET active = true WHERE id = :id"), {"id": trip.id})
-    conn.commit()
-    return trip
-
-
-def switch_trip_off(conn) -> Trip | None:
-    """Turns the active trip off and commits. Returns the trip that was on, or None if none was."""
-    row = conn.execute(text("UPDATE trips SET active = false WHERE active RETURNING id, name")).first()
-    conn.commit()
-    return Trip(*row) if row else None
+    start, end = trip.start_date, trip.end_date
+    # Month names spelled out here, not strftime("%b"), so the label doesn't change with the
+    # server's locale.
+    months = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+    end_text = f"{end.day} {months[end.month - 1]}"
+    if start.year != end.year:
+        return f"{start.day} {months[start.month - 1]} {start.year}–{end_text} {end.year}"
+    start_text = str(start.day)
+    if start.month != end.month:
+        start_text += f" {months[start.month - 1]}"
+    result = f"{start_text}–{end_text}"
+    if end.year != today.year:
+        result += f" {end.year}"
+    return result

@@ -13,7 +13,7 @@
     {"name": "Old Card", "owner": "Alice", "closed_on": "2026-03-31"}
   ],
   "trips": [
-    {"name": "Beach Trip", "families": {"Alice and Bob": ["Alice", "Bob"], "Carol and Dave": ["Carol", "Dave"]}}
+    {"name": "Beach Trip", "start": "2026-12-01", "end": "2026-12-07", "families": {"Alice and Bob": ["Alice", "Bob"], "Carol and Dave": ["Carol", "Dave"]}}
   ],
   "transaction_overrides": {}
 }

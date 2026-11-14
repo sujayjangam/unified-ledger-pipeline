@@ -30,7 +30,7 @@ def _no_active_trip(monkeypatch):
     patches bot_core._load_active_trip again to return a Trip, or to raise."""
     import app.bot_core
 
-    monkeypatch.setattr(app.bot_core, "_load_active_trip", lambda: None)
+    monkeypatch.setattr(app.bot_core, "_load_active_trip", lambda participant_id: None)
 
 
 @pytest.fixture
