@@ -28,32 +28,31 @@ participants and accounts as Postgres tables, replacing the env vars
 1. **Done, merged 2026-11-11** ([#84](https://github.com/sujayjangam/unified-ledger-pipeline/pull/84),
    which records how it was rolled out): migration 0004, the seed script, and the bot, CLI and
    REST API reading the tables while writing both the new ids and the old text columns.
-2. Stop writing the old text columns (`account_desc`, `account_owner`, `entered_by`). PR open,
-   not yet merged. REST GET now returns the account name as `account` (from `accounts`) instead
-   of `account_owner`.
-3. Migration 0005 drops them. Take a backup first.
+2. **Done, merged 2026-11-14** ([#90](https://github.com/sujayjangam/unified-ledger-pipeline/pull/90)):
+   the bot, CLI and REST API stop writing the old text columns (`account_desc`, `account_owner`,
+   `entered_by`). REST GET returns the account name as `account` (from `accounts`) instead of
+   `account_owner`. Merged without waiting for a few days of normal use: the columns are being
+   dropped anyway, so any bug it exposed would need fixing either way.
+3. Migration 0005 makes `account_id` required and drops the old columns. Written on
+   `feat/migration-0005-53`, not run anywhere. Take a backup first.
 
 The post-merge production checks (plan Task 9 in `docs/superpowers/`) passed on 2026-11-14: real
 sends from both people, a test account added and then closed, a seed-script rerun, and the three
 old env vars and their secrets removed from Cloud Run (that last step took a second try; see the
 plan's Task 9 notes).
 
-**Next action:** merge step 2 — the bot, CLI and REST API stop writing the old text columns.
-Decided 2026-11-14 not to wait for a few days of normal use first: the columns are being dropped
-anyway, so any bug this exposes would need fixing either way. Merging it removes the revert safety
-net. Then step 3.
-
-Before step 3 (migration 0005) can run, two things (found 2026-11-13):
-- **5 production rows have no `account_id`**, so 0005's guard refuses to run. They never recorded
-  a card. Decision: assign each one a card (adding a card if needed) through `transaction_overrides`
-  and `accounts` in `directory_seed.local.json`, not a hand-typed `UPDATE`, because the script
-  checks the names and the closed dates and keeps a record. Order: list the rows
-  (`WHERE account_id IS NULL`), edit the seed file, dry run (it rolls back), run the backup
-  workflow, then `--write`, then check the count is 0. Their `account_owner` text is wrong too (a
-  card name, or "unknown", in place of a person); leave it, since 0005 drops that column and its
-  downgrade refills it from `account_id`.
-- **`scripts/seed_directory.py` reads `account_desc` and `entered_by`**, which 0005 drops. The 0005
-  PR removes the transaction-linking part of the script and keeps the seeding part.
+**Next action:** step 3, migration 0005. Rehearse it on a Neon branch (upgrade, downgrade,
+upgrade), take a backup, run it on production, then merge `feat/migration-0005-53`. Its two
+blockers (found 2026-11-13) are cleared:
+- **5 production rows had no `account_id`**, which 0005's guard refuses. Done 2026-11-14 by hand
+  in SQL, after a backup: one `UPDATE ... WHERE transaction_id = ... AND account_id IS NULL` per
+  row, using the account's numeric id, and the count checked at 0. Chosen over the seed file's
+  `transaction_overrides` (the 2026-11-13 plan) as simpler for 5 rows; the closed-date check was
+  done by eye. Their wrong `account_owner` text and empty `entered_by` and `idempotency_key` were
+  left as they are: 0005 drops the first two, and an empty `idempotency_key` is normal for rows
+  older than that column.
+- **`scripts/seed_directory.py` read `account_desc` and `entered_by`**, which 0005 drops. On
+  `feat/migration-0005-53` the transaction-linking part is removed and the seeding part kept.
 
 **After #53: group-trip splitting** (decided 2026-11-14). There's a real group trip with a fixed
 deadline, kept out of this public repo. It pulls trips, splitting and settling up forward from
@@ -74,7 +73,7 @@ Every Phase 0 item that was still open when the phase closed had already moved t
 
 **Open top-level issues:**
 [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53)
-participants and accounts as tables; old text columns to stop and drop (Phase 1) ·
+participants and accounts as tables; old text columns to drop (Phase 1) ·
 [#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27) unpinned dependencies (Phase 1) ·
 [#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22) entries can't be corrected (Phase 1) ·
 [#17](https://github.com/sujayjangam/unified-ledger-pipeline/issues/17) unused REST API (Phase 5) ·
@@ -257,7 +256,7 @@ In working order. Items marked *(from Phase 0)* moved here by
 `PRIMARY_ACCOUNT_OWNER` / `ALLOWED_TG_IDS` env vars —
 [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53). Goes before the staging
 table so statement lines attach to an account row, not a string. The Phase 3 `participants` table
-below is this one. In progress: step 1 of 3 merged (#84), see "Current status".
+below is this one. In progress: steps 1 and 2 of 3 merged (#84, #90), see "Current status".
 - [ ] **Group-trip splitting** (pulled forward from Phase 3 on 2026-11-14 for a real trip, see
 "Current status"). Two people log; the other members are participants without a Telegram ID, and
 only shared costs they pay get logged. Travel minimum, in build order:

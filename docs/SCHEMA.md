@@ -1,7 +1,7 @@
 # Ledger Canonical Schema (v1.3 - Household Unified)
 
 ## Core Design Decisions
-1. **Multi-Entity Tracking**: Records ownership (account_owner) vs. beneficiary (benefit_of).
+1. **Multi-Entity Tracking**: Records the paying account (account_id, whose owner is in `accounts`) vs. beneficiary (benefit_of).
 2. **Flexible Splitting**: 'split_ratio' handles shared (0.5) or personal (1.0) allocation.
 3. **Multi-Currency Support**: Tracks raw transaction data vs. base SGD amount.
 4. **Integer Cents**: All money stored as integers for mathematical precision. Dollars are
@@ -16,8 +16,6 @@
 - **amount**: Positive integer (cents)
 - **currency**: ISO 3-letter code
 - **base_amount**: Final value in SGD (Integer Cents)
-- **account_owner**: Card owner's display name (e.g., 'Alice', 'Bob'). Replaced by
-  `account_id` (#53): no longer written, kept only on older rows until migration 0005 drops it.
 - **benefit_of**: Beneficiary (e.g., 'Alice', 'Bob', 'Shared')
 - **split_ratio**: Decimal (e.g., 0.5). Written by no code today. Phase 3 plans to replace it
   with each person's share stored as whole cents that add up to `amount`, because a ratio
@@ -29,12 +27,10 @@
   `ROADMAP.md`).
 - **source**: Data origin
 - **reconciliation_status**: 'settled' or 'unsettled'
-- **account_desc**: Payment method / card the transaction was charged to (e.g. 'YouTrip',
-  'Cash'). Nullable. Replaced by `account_id` (#53): no longer written, kept only on older rows
-  until migration 0005 drops it.
-- **account_id**: BIGINT, nullable, FK → `accounts.id` (revision `0004_participants_accounts`).
-  The account that paid. Written by the bot, CLI and REST API; older rows are linked by
-  `scripts/seed_directory.py`, which matches their `account_desc` text.
+- **account_id**: BIGINT, NOT NULL, FK → `accounts.id` (added nullable in revision
+  `0004_participants_accounts`, made NOT NULL by `0005_drop_text_account_columns`). The account
+  that paid; its name and owner are looked up from `accounts` when shown. Written by the bot, CLI
+  and REST API.
 - **idempotency_key**: UUID, nullable, UNIQUE. Set by the Telegram bot (one per confirm prompt,
   generated when the transaction is presented for confirmation, reused on every save attempt for
   that same prompt) so a double-tap or webhook redelivery can't insert the same transaction twice.
@@ -44,16 +40,15 @@
   names its columns and omits this one). Rows that already existed when the column was added
   (migration `0002_add_created_at`) were backfilled to midnight Singapore time on their own `date`,
   so an exact `00:00:00+08` means "time of day unknown", not "logged at midnight".
-- **entered_by**: TEXT, nullable. The Telegram user ID of the household member whose message
-  created the row, as a string (revision `0003_add_entered_by`). Replaced by
-  `entered_by_participant_id` ([ADR-0033](decisions/0033-entered-by-participant-id.md)): no
-  longer written, kept only on older rows until migration 0005 drops it. Display names are never stored; they're looked up from the ID when
-  shown. NULL means "sender not recorded": every row that predates the column, and every row
-  from the CLI or REST API. Not to be confused with `account_owner`, which records whose card
-  paid, is inferred from the payment method, and is often not the sender.
 - **entered_by_participant_id**: BIGINT, nullable, FK → `participants.id` (revision
-  `0004_participants_accounts`). The sender as a participant. NULL means "not recorded", as for
-  `entered_by`.
+  `0004_participants_accounts`). The participant whose message created the row
+  ([ADR-0033](decisions/0033-entered-by-participant-id.md)); display names are looked up from it
+  when shown. NULL means "sender not recorded": rows from before the sender was recorded, and
+  every row from the CLI or REST API. Not to be confused with the account's owner, which is
+  whose card paid and is often not the sender.
+- **Dropped** by `0005_drop_text_account_columns` (#53): `account_desc` (the card's name as
+  text), `account_owner` (the card owner's display name, inferred by first match) and
+  `entered_by` (the sender's Telegram user ID as text). The ids above replace them.
 
 ## participants and accounts (#53)
 

@@ -43,6 +43,7 @@ def test_revision_chain_has_exactly_one_head():
     # ...and exactly one revision is nobody's parent. Two heads means two migrations were
     # written against the same parent, e.g. a future 0003 that also revises 0001.
     assert len(ids - parents) == 1
+    assert ids - parents == {"0005_drop_text_account_columns"}
 
 
 def test_exactly_one_revision_is_the_root():
@@ -60,3 +61,9 @@ def test_participants_accounts_revises_entered_by():
     entered_by = _load(VERSIONS / "0003_add_entered_by.py")
     directory = _load(VERSIONS / "0004_add_participants_and_accounts.py")
     assert directory.down_revision == entered_by.revision
+
+
+def test_contraction_revises_participants_accounts():
+    directory = _load(VERSIONS / "0004_add_participants_and_accounts.py")
+    contraction = _load(VERSIONS / "0005_drop_text_account_columns.py")
+    assert contraction.down_revision == directory.revision

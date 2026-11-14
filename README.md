@@ -180,7 +180,7 @@ Deployment: `Dockerfile` installs `requirements.txt` and runs
 Who may use the bot, and the cards they pay with, are not settings: they are rows in the
 `participants` and `accounts` tables, read on every message. If those tables can't be read, the
 bot lets nobody in. `scripts/seed_directory.py` fills them from a gitignored JSON file in the
-format of `directory_seed.example.json`, and links existing transactions to them.
+format of `directory_seed.example.json`.
 
 ## Docs
 
