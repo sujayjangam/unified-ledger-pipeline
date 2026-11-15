@@ -16,6 +16,16 @@ class Trip:
     name: str
     start_date: date
     end_date: date
+    member_ids: tuple[int, ...] = ()
+
+
+def trip_member_ids(conn, trip_id: int) -> tuple[int, ...]:
+    """Read payer candidates with the trip, without another connection checkout."""
+    rows = conn.execute(text("""
+        SELECT participant_id FROM trip_members WHERE trip_id = :trip_id
+        ORDER BY participant_id
+    """), {"trip_id": trip_id}).all()
+    return tuple(row[0] for row in rows)
 
 
 def load_active_trip(conn, participant_id: int) -> Trip | None:

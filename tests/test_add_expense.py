@@ -91,14 +91,16 @@ def test_add_expense_writes_ids_without_old_text_columns(monkeypatch):
     conn = _fake_connection(monkeypatch, add_expense_module)
     add_expense_module.add_expense(
         "2026-11-11", "lunch", 12, "Food", account_id=10, entered_by_participant_id=1,
+        paid_by_participant_id=2,
     )
     params = conn.execute.call_args.args[1]
     assert (params["account_id"], params["entered_by_participant_id"]) == (10, 1)
+    assert params["paid_by_participant_id"] == 2
     sql = str(conn.execute.call_args.args[0])
     for key in ("account_desc", "account_owner", "entered_by"):
         assert key not in params
         assert re.search(rf"\b{key}\b", sql) is None
-    for key in ("account_id", "entered_by_participant_id"):
+    for key in ("account_id", "entered_by_participant_id", "paid_by_participant_id"):
         assert re.search(rf"\b{key}\b", sql)
         assert f":{key}" in sql
 
@@ -119,6 +121,22 @@ def test_add_expense_writes_trip_id(monkeypatch, directory, trip_id):
     conn.execute.assert_called_once()
     sql, params = conn.execute.call_args.args
     assert params["trip_id"] == trip_id
+    assert params["paid_by_participant_id"] is None
     assert re.search(r"\btrip_id\b", str(sql).split("VALUES")[0])
     assert ":trip_id" in str(sql).split("VALUES")[1]
     conn.commit.assert_called_once_with()
+
+
+def test_only_summary_queries_filter_outside_payers(monkeypatch):
+    """Capture all five statements without connecting; NULL must still count in totals."""
+    conn = _fake_connection(monkeypatch, ledger_queries)
+    ledger_queries.get_period_summary("2026-11-01", "2026-11-30")
+    ledger_queries.get_category_summary("2026-11-01", "2026-11-30")
+    ledger_queries.get_recent_entries()
+    ledger_queries.find_recent_duplicate(4000, "SGD", 5)
+    statements = [" ".join(str(call.args[0]).split()) for call in conn.execute.call_args_list]
+    assert len(statements) == 5
+    for sql in statements[:3]:
+        assert "AND (paid_by_participant_id IS NULL OR paid_by_participant_id IN (SELECT id FROM participants WHERE is_household))" in sql
+    for sql in statements[3:]:
+        assert "paid_by_participant_id" not in sql

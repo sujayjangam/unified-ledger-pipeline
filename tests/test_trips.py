@@ -11,6 +11,39 @@ from test_bot_core import ALICE, BOB, _context, _pending, _show_card, _tap, _upd
 
 BEACH = trips.Trip(7, "Beach Trip", date(2026, 12, 1), date(2026, 12, 7))
 TODAY = date(2026, 11, 14)
+# Keep the real function before the autouse fixture replaces it for unrelated card tests.
+_real_load_active_trip = bot_core._load_active_trip
+
+
+def test_trip_member_ids():
+    conn = MagicMock()
+    conn.execute.return_value.all.return_value = [(1,), (2,), (3,)]
+    assert trips.trip_member_ids(conn, 7) == (1, 2, 3)
+    conn.execute.assert_called_once()
+    sql, params = conn.execute.call_args.args
+    assert "FROM trip_members WHERE trip_id = :trip_id" in str(sql)
+    assert params == {"trip_id": 7}
+    conn.commit.assert_not_called()
+
+
+@pytest.mark.parametrize("active", [BEACH, None])
+def test_bot_reads_trip_and_members_in_one_connection(monkeypatch, active):
+    manager = MagicMock()
+    connection = MagicMock(return_value=manager)
+    monkeypatch.setattr(bot_core, "get_connection", connection)
+    load = MagicMock(return_value=active)
+    members = MagicMock(return_value=(1, 2, 3))
+    monkeypatch.setattr(bot_core, "load_active_trip", load)
+    monkeypatch.setattr(bot_core, "trip_member_ids", members)
+    result = _real_load_active_trip(2)
+    connection.assert_called_once_with()
+    load.assert_called_once_with(manager.__enter__.return_value, 2)
+    if active:
+        members.assert_called_once_with(manager.__enter__.return_value, 7)
+        assert result == replace(BEACH, member_ids=(1, 2, 3))
+    else:
+        members.assert_not_called()
+        assert result is None
 
 
 @pytest.mark.parametrize("start,end,expected", [
