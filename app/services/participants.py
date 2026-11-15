@@ -220,8 +220,8 @@ def resolve_payment(transaction: dict, directory: Directory, sender: Participant
       1. A YouTrip top-up is paid from the wallet's funding card, whoever sent it, and is a
          Transfer. No open wallet or no funding card -> WalletNotSetUp: never guess.
       2. A named card is matched, closed cards included (closed_account is then True and the card
-         asks the user to confirm). A closed card counts only if the raw message (description)
-         contains its whole name; otherwise an open card the message names is used, or step 3.
+         asks the user to confirm). If the raw message (description) doesn't contain a closed
+         card's whole name but does name an open card, the open card is used instead.
       3. No card, or a name that matches nothing (the model invented one): a foreign-currency
          payment goes on the wallet, anything else on the sender's default card. The card shows
          which account was chosen, so the user sees it before confirming.
@@ -237,11 +237,12 @@ def resolve_payment(transaction: dict, directory: Directory, sender: Participant
         account = directory.account_named(transaction.get("payment_method"))
         message = transaction.get("description") or ""
         if account is not None and not account.is_open and not _names_account(message, account.name):
-            # The model picked a closed card the message never names in full: "Zebra test exp $25
-            # cash" once went on a closed "Zebra Test Card". A closed card is kept only when the
-            # sender clearly named it (a late refund); otherwise an open card the message does
-            # name wins, and failing that the usual defaults below apply.
-            account = _open_account_in(message, directory)
+            # The model picked a closed card the message never names in full, while the message
+            # does name an open one: "Zebra test exp $25 cash" once went on a closed "Zebra Test
+            # Card" instead of Cash. The open card wins. With no open card named, the closed card
+            # stays, with its warning and "Save anyway": a late refund said loosely ("my old
+            # visa", often from a voice transcript) must not slip onto the default card unseen.
+            account = _open_account_in(message, directory) or account
         if account is None and transaction.get("currency", "SGD") != "SGD":
             account = directory.open_account_named(WALLET_NAME)
         if account is None:

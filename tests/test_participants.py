@@ -77,16 +77,16 @@ def test_closed_card_is_kept_and_flagged(directory):
                          "description": "refund 20 on my OLD card"}, directory, directory.participant(2))
     assert (t["account_id"], t["account_owner"], t["closed_account"]) == (14, "Alice", True)
 
-@pytest.mark.parametrize("message,expected", [
-    ("old test exp 25 cash", 12),     # an open card named in the text wins over the guess
-    ("old stuff 25", 11),             # nothing named: the sender's default, like any unknown card
-    ("cashback old 25", 11),          # whole words only: "cash" is not inside "cashback"
+@pytest.mark.parametrize("message,expected,closed", [
+    ("old test exp 25 cash", 12, False),   # an open card named in the text wins over the guess
+    ("refund 25 my old one", 14, True),    # no open card named: the closed card and its warning stay
+    ("cashback old 25", 14, True),         # whole words only: "cash" is not inside "cashback"
 ])
-def test_a_closed_card_the_message_does_not_name_is_not_used(directory, message, expected):
+def test_a_closed_guess_yields_only_to_an_open_card_the_message_names(directory, message, expected, closed):
     """The model once put "Zebra test exp $25 cash" on a closed "Zebra Test Card"."""
     t = resolve_payment({"payment_method": "Old Card", "currency": "SGD", "description": message},
                         directory, directory.participant(2))
-    assert (t["account_id"], t["closed_account"]) == (expected, False)
+    assert (t["account_id"], t["closed_account"]) == (expected, closed)
 
 def test_closed_card_named_across_extra_spaces_still_counts(directory):
     t = resolve_payment({"payment_method": "Old Card", "currency": "SGD", "description": "old   card 5"},

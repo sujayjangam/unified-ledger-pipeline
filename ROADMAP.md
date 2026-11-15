@@ -45,9 +45,10 @@ An entry logged on production right after the deploy was tagged to the trip.
 
 **In progress:** a closed-card fix (branch `fix/closed-card-guess`), before paid-by. On production,
 "Zebra test exp $25 cash" was put on a closed "Zebra Test Card" instead of Cash: the model may
-pick a closed card, and nothing checked the message named it. `resolve_payment` now keeps a closed
-card only when the raw message contains its whole name; otherwise an open card the message names
-wins, then the usual defaults. The bad entry was deleted by hand (one guarded `DELETE`).
+pick a closed card, and nothing checked the message named it. Now, when the model picks a closed card
+whose whole name isn't in the raw message and the message names an open card, the open card wins.
+With no open card named, the closed card stays, with its warning, so a loosely said late refund
+isn't moved onto the default card unseen. The bad entry was deleted by hand (one guarded `DELETE`).
 
 Menu speed, measured from the laptop against the Neon test branch (us-east-2): one round trip is
 about 295ms. Each database block costs three extra round trips besides its queries (the pool's
@@ -71,8 +72,9 @@ before the deadline, because a merge auto-deploys and a broken bot mid-trip mean
 logged. Test on a Neon branch with a fictional trip-sized directory first.
 
 Follow-up: "test 1 zebra test card" comes back with no amount (the model reads "test 1" as part
-of a name). It is now a case in `scripts/check_extraction.py`, which fails it 10 times out of 10
-(2026-11-14). The prompt fix is still open.
+of a name). It is a case in `scripts/check_extraction.py` on the unpushed branch
+`chore/check-extraction-zebra`, where it fails 10 times out of 10 (2026-11-14). The prompt fix is
+still open.
 
 Adding and closing cards from Telegram is
 [#83](https://github.com/sujayjangam/unified-ledger-pipeline/issues/83). The "Saved to Ledger!"
@@ -270,7 +272,8 @@ below is this one. Done 2026-11-14 (#84, #90, #91).
 - [ ] **Group-trip splitting** (pulled forward from Phase 3 on 2026-11-14 for a real trip, see
 "Current status"). Two people log; the other members are participants without a Telegram ID, and
 only shared costs they pay get logged. Travel minimum, in build order:
-  1. Trips: a trip is a group of participants in families, set up from the gitignored seed file.
+  1. *(Done 2026-11-15, [#95](https://github.com/sujayjangam/unified-ledger-pipeline/pull/95).)*
+     Trips: a trip is a group of participants in families, set up from the gitignored seed file.
      Each person switches trip mode from `/trip`'s buttons; at most one trip on per person, only
      a trip they are a member of (enforced in the database), with a pinned banner while it is on.
      An entry is tagged by when it is logged, not by its date,
