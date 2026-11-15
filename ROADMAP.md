@@ -54,8 +54,9 @@ and the "pinned a message" notice is deleted as it arrives. Picking it up:
    answered before the banner swap; a failed answer never skips the redraw or banner. Gate passed
    after these changes (326 tests). Timing lines
    on `/trip` and each tap log where the time goes. Production was backed up the same day.
-2. Before merging: apply 0006 to production by hand, and seed the real trip with its dates. The
-   bot code reads the new tables and columns, so 0006 must be on production first.
+2. Done 2026-11-15, before merging: 0006 applied to production by hand (`alembic current` showed
+   `0006_add_trips`), and the real trip seeded with its dates and members (a dry run first, then
+   `--write`). Non-household trip members are participants with no Telegram ID.
 3. Menu speed, measured from the laptop against the Neon test branch (us-east-2): one round trip
    is about 295ms. Each database block costs three extra round trips besides its queries (the
    pool's ping, BEGIN and ROLLBACK), so `/trip` makes about 10 round trips for 4 queries, about 3s.
