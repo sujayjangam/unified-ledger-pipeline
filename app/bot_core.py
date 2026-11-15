@@ -470,16 +470,26 @@ async def handle_trip_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     db_done = time.perf_counter()
 
-    if toast == "Already on.":
-        await query.answer(toast)
-        return
     # Answer as soon as the outcome is known: the button keeps spinning until answer() runs,
     # and the banner swap below is several Telegram round trips. A banner failure is shown in
-    # the message text instead, since a query can only be answered once.
-    await query.answer(toast)
+    # the message text instead, since a query can only be answered once. A failed answer (a tap
+    # Telegram already considers stale) must not skip the redraw or banner of a committed switch.
+    try:
+        await query.answer(toast)
+    except Exception as e:
+        print(f"Could not answer trip tap: {e}")
     answered = time.perf_counter()
 
     status, keyboard = _trip_menu(active, choices, more, today)
+    if toast == "Already on.":
+        # An older menu tapped for the trip that is already on: collapse it like any other.
+        try:
+            # _trip_status, not the menu's status: no trip list was read for this tap.
+            await query.edit_message_text(
+                "✅ " + _trip_status(active, today), parse_mode="Markdown", reply_markup=None)
+        except Exception as e:
+            print(f"Could not redraw trip menu: {e}")
+        return
     if action != "page" and toast != "You're not on that trip.":
         # A switch was made (or off was already off): the menu has done its job, so it becomes a
         # plain status line with no buttons, saving screen space. This is an edit, not a delete,

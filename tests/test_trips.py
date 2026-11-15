@@ -176,7 +176,11 @@ async def test_trip_callback_paths_answer_once(command_db, action, active, selec
         query.edit_message_reply_markup.assert_awaited_once()
         query.edit_message_text.assert_not_awaited()
     elif toast == "Already on.":
-        query.edit_message_text.assert_not_awaited()
+        # An older menu tapped for the trip already on collapses too, without a trip list.
+        query.edit_message_text.assert_awaited_once()
+        reply = query.edit_message_text.await_args
+        assert reply.args[0].startswith("✅ ") and "not on any trips" not in reply.args[0]
+        assert reply.kwargs["reply_markup"] is None
         operations["switch_trip_on"].assert_not_called()
     else:
         query.edit_message_text.assert_awaited_once()
@@ -528,3 +532,13 @@ async def test_tap_is_answered_before_the_banner_swap(command_db):
     await bot_core.handle_trip_button(update, context)
     assert order == ["answer", "delete", "send"]
     query.answer.assert_awaited_once_with("Trip mode is on.")
+
+
+async def test_a_failed_answer_still_redraws_and_swaps_the_banner(command_db):
+    """The switch is committed before answer(), so a stale-tap error there must not skip the rest."""
+    update, context, query = _trip_tap("trip:on:7")
+    query.answer.side_effect = RuntimeError("query is too old")
+    await bot_core.handle_trip_button(update, context)
+    query.edit_message_text.assert_awaited_once()
+    context.bot.send_message.assert_awaited_once()
+    context.bot.pin_chat_message.assert_awaited_once()

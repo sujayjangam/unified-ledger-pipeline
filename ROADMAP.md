@@ -47,10 +47,20 @@ only the end year. An old banner is deleted on switch-off or a change of trip (o
 Telegram's 48-hour delete limit, unpinned and edited to say the trip ended; unit-tested only),
 and the "pinned a message" notice is deleted as it arrives. Picking it up:
 1. PR [#95](https://github.com/sujayjangam/unified-ledger-pipeline/pull/95) is open (don't merge
-   yet: a merge to `main` auto-deploys). First, one short test-bot run of the final code: switch
-   on and off, and once with message deletion failing, to see the "trip ended" fallback live.
-2. Before merging: back up production, apply 0006 to it by hand, and seed the real trip with its
-   dates. The bot code reads the new tables and columns, so 0006 must be on production first.
+   yet: a merge to `main` auto-deploys). The final test-bot run passed on 2026-11-15: switching on
+   and off, an entry saved, and the "trip ended" fallback seen live with a simulated failed
+   delete. From that feedback, a tapped `/trip` menu now becomes a plain status line with no
+   buttons once a switch is made, and the tap is answered before the banner swap. Timing lines
+   on `/trip` and each tap log where the time goes. Production was backed up the same day.
+2. Before merging: apply 0006 to production by hand, and seed the real trip with its dates. The
+   bot code reads the new tables and columns, so 0006 must be on production first.
+3. Menu speed, measured from the laptop against the Neon test branch (us-east-2): one round trip
+   is about 295ms. Each database block costs three extra round trips besides its queries (the
+   pool's ping, BEGIN and ROLLBACK), so `/trip` makes about 10 round trips for 4 queries, about 3s.
+   Autocommit for read-only blocks cuts a query from 2 round trips to 1 and the release to 0.
+   Candidate fix, not started: autocommit for read-only reads, and fewer separate blocks per
+   message. Production (Cloud Run in asia-southeast1, Neon in us-east-2) is unmeasured until the
+   timing lines deploy. Moving the two into one region is the structural fix, but a bigger job.
 
 Candidate follow-up: when a person's switch is off but an entry's date falls inside one of their
 trips, the card offers "Tag to <trip>?" (a suggestion, never an automatic tag; ADR-0036).
