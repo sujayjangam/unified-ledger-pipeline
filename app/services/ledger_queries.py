@@ -66,11 +66,15 @@ def get_period_summary(start_date: str, end_date: str):
     """Fetches counts and totals grouped by currency, separating expenses and transfers."""
     try:
         with get_connection() as conn:
+            # Outside people's money is not household spending. NULL means not recorded
+            # (old/CLI/API rows), which still counts as household in both totals.
             # Get Expenses grouped by currency
             expenses = conn.execute(text('''
                 SELECT currency, COUNT(*), SUM(amount)
                 FROM transactions
                 WHERE date BETWEEN :start_date AND :end_date AND category != 'Transfer'
+                  AND (paid_by_participant_id IS NULL OR paid_by_participant_id IN
+                       (SELECT id FROM participants WHERE is_household))
                 GROUP BY currency
             '''), {"start_date": start_date, "end_date": end_date}).fetchall()
 
@@ -79,6 +83,8 @@ def get_period_summary(start_date: str, end_date: str):
                 SELECT currency, COUNT(*), SUM(amount)
                 FROM transactions
                 WHERE date BETWEEN :start_date AND :end_date AND category = 'Transfer'
+                  AND (paid_by_participant_id IS NULL OR paid_by_participant_id IN
+                       (SELECT id FROM participants WHERE is_household))
                 GROUP BY currency
             '''), {"start_date": start_date, "end_date": end_date}).fetchall()
 
@@ -89,13 +95,15 @@ def get_period_summary(start_date: str, end_date: str):
         return [], []
 
 def get_category_summary(start_date: str, end_date: str):
-    """Fetches category statistics grouped by category AND currency, excluding transfers."""
+    """Household category totals: exclude outside payers, but retain old/CLI/API NULLs."""
     try:
         with get_connection() as conn:
             result = conn.execute(text('''
                 SELECT category, currency, COUNT(*), SUM(amount)
                 FROM transactions
                 WHERE date BETWEEN :start_date AND :end_date AND category != 'Transfer'
+                  AND (paid_by_participant_id IS NULL OR paid_by_participant_id IN
+                       (SELECT id FROM participants WHERE is_household))
                 GROUP BY category, currency
                 ORDER BY category, currency
             '''), {"start_date": start_date, "end_date": end_date})

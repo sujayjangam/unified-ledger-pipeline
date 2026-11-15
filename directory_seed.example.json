@@ -1,7 +1,7 @@
 {
   "participants": [
-    {"display_name": "Alice", "telegram_user_id": "111111", "default_account": "Card A"},
-    {"display_name": "Bob", "telegram_user_id": "222222", "default_account": "Card B"},
+    {"display_name": "Alice", "telegram_user_id": "111111", "default_account": "Card A", "household": true},
+    {"display_name": "Bob", "telegram_user_id": "222222", "default_account": "Card B", "household": true},
     {"display_name": "Carol"},
     {"display_name": "Dave"}
   ],
@@ -9,6 +9,7 @@
     {"name": "Card A", "owner": "Alice", "expires": "09/29"},
     {"name": "Card B", "owner": "Bob", "expires": "04/30"},
     {"name": "Cash", "owner": null},
+    {"name": "Paid by someone else", "owner": null},
     {"name": "YouTrip", "owner": "Alice", "funded_by": "Card A", "expires": "03/29"},
     {"name": "Old Card", "owner": "Alice", "closed_on": "2026-03-31"}
   ],

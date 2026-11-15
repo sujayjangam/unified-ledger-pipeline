@@ -1,6 +1,7 @@
 import truststore
 import os
 import uuid
+from dataclasses import replace
 from dotenv import load_dotenv
 from telegram import BotCommand, Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.helpers import escape_markdown
@@ -14,9 +15,10 @@ from app.services.dates import apply_date_resolution
 from app.database import get_connection
 from app.services.participants import (
     CLOSED_CARD_WARNING, NO_WALLET_MESSAGE, Directory, WalletNotSetUp, load_directory, resolve_payment,
+    NO_OUTSIDE_ACCOUNT_MESSAGE, PAYER_UNCLEAR_WARNING, OutsideAccountNotSetUp, read_payer,
 )
 from app.services.trips import (
-    Trip, load_active_trip, switch_trip_off, switch_trip_on, member_trips,
+    Trip, load_active_trip, trip_member_ids, switch_trip_off, switch_trip_on, member_trips,
     banner_message_id, set_banner_message_id, format_trip_dates,
 )
 
@@ -52,7 +54,9 @@ def _load_active_trip(participant_id: int) -> Trip | None:
     /trip switch by this person applies to the very next message. Its own function so tests can
     swap it out without a database."""
     with get_connection() as conn:
-        return load_active_trip(conn, participant_id)
+        trip = load_active_trip(conn, participant_id)
+        # Read members in this connection, without another checkout for payer inference.
+        return replace(trip, member_ids=trip_member_ids(conn, trip.id)) if trip else None
 
 
 # Shown on the card when the trip couldn't be read. Not a refusal: missing a trip tag can be put
@@ -106,7 +110,9 @@ def format_period_summary(title: str, expenses: list, transfers: list) -> str:
     
     if expenses:
         for curr, count, total_cents in expenses:
-            lines.append(f"  • {curr}: **{total_cents / 100.0:.2f}**")
+            # SUM over a BIGINT column comes back from Postgres as a Decimal, and money is
+            # only ever formatted through format_cents (ADR-0004), never via a float.
+            lines.append(f"  • {curr}: **{format_cents(int(total_cents))}**")
     else:
         lines.append("  • No expenses.")
         
@@ -114,7 +120,7 @@ def format_period_summary(title: str, expenses: list, transfers: list) -> str:
     lines.append("\n🔄 **Transfers:**")
     if transfers:
         for curr, count, total_cents in transfers:
-            lines.append(f"  • {curr}: **{total_cents / 100.0:.2f}** ({count} tx)")
+            lines.append(f"  • {curr}: **{format_cents(int(total_cents))}** ({count} tx)")
     else:
         lines.append("  • No transfers.")
         
@@ -143,7 +149,7 @@ def format_category_summary(title: str, category_data: list) -> str:
 
         # List each currency total underneath the category header
         for curr, count, total_cents in currencies:
-            lines.append(f"  • {curr}: **{total_cents / 100.0:.2f}**")
+            lines.append(f"  • {curr}: **{format_cents(int(total_cents))}**")
             
         lines.append("") # Blank line for readability
 
@@ -628,7 +634,7 @@ def _display_amount(transaction: dict) -> str:
 
 
 def _account_lines(transaction: dict) -> str:
-    """The card's Account and Account Owner lines, shared by every card for one entry (#92).
+    """The card's Account and Paid by lines, shared by every card for one entry (#92).
 
     The account is the field most likely to be wrong - it is inferred (a named card, the wallet
     for foreign currency, or the sender's default) - so the message left in the chat after a save
@@ -638,8 +644,20 @@ def _account_lines(transaction: dict) -> str:
     """
     return (
         f"💳 **Account:** {transaction.get('payment_method', 'Unspecified')}\n"
-        f"💳 **Account Owner:** {transaction.get('account_owner', 'Unspecified')}\n"
+        f"👤 **Paid by:** {_md(transaction.get('paid_by') or transaction.get('account_owner') or 'Unspecified')}\n"
     )
+
+
+def _live_account_lines(transaction: dict) -> str:
+    """Show the payer warning below Paid by on live cards, never the saved card.
+
+    This display-only warning never changes buttons or becomes a stored column.
+    Escape it because payment rules can include participant and account names.
+    """
+    lines = _account_lines(transaction)
+    if transaction.get('payer_warning'):
+        lines += f"{_md(transaction['payer_warning'])}\n"
+    return lines
 
 
 def _date_lines(transaction: dict) -> str:
@@ -747,7 +765,7 @@ def _pending_card_text(transaction: dict) -> str:
         f"Please confirm your **{transaction.get('transaction_type', 'Expense')}**:\n\n"
         f"💰 **Amount:** {_display_amount(transaction)}\n"
         f"🏷️ **Category:** {transaction.get('category')}\n"
-        f"{_account_lines(transaction)}"
+        f"{_live_account_lines(transaction)}"
         f"{_trip_lines(transaction)}"
         f"📝 **Notes:** {transaction.get('description', 'None')}\n"
         f"{_date_lines(transaction)}"
@@ -813,28 +831,6 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
     # counting back from the same 'today' the prompt was given (#15, ADR-0030).
     single_transaction = apply_date_resolution(single_transaction, today)
 
-    # Which account paid, and whose it is (app/services/participants.py has the rules). A top-up
-    # with no wallet set up is refused outright rather than guessed at: nothing is stashed, so
-    # there is no card to confirm.
-    try:
-        single_transaction = resolve_payment(single_transaction, directory, sender)
-    except WalletNotSetUp:
-        await status_msg.edit_text(NO_WALLET_MESSAGE)
-        return
-
-    # One idempotency key per confirm prompt (not per save attempt) - reused on every
-    # save attempt for this same prompt, so a double-tap or webhook retry can't insert twice.
-    single_transaction['idempotency_key'] = str(uuid.uuid4())
-
-    # The participant id is the only record of the sender, so names can change without
-    # rewriting entries. account_owner is only whose card paid, not who sent the message.
-    single_transaction['entered_by_participant_id'] = sender.id
-
-    # Does this look like a repeat of something saved moments ago, by anyone? (#58) Kept on the
-    # pending entry itself because a button tap carries only the card's message_id - this is how
-    # handle_button_click later tells a flagged card from a normal one on Cancel or a failed save.
-    single_transaction['suspected_duplicate'] = _find_duplicate_of(single_transaction)
-
     # Which trip, if any, this entry is tagged to: the one on right now, whatever the entry's date,
     # so a booking paid before the trip still counts. Copied onto the entry here, so a /trip
     # switch while this card waits doesn't change it, and the "Not trip" tap never reads the
@@ -848,6 +844,38 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
     if active_trip:
         single_transaction['trip_offer'] = {'id': active_trip.id, 'name': active_trip.name}
     single_transaction['trip_id'] = active_trip.id if active_trip else None
+
+    # Trip candidates are exact membership; a failed read falls back to household only.
+    candidates = (tuple(p for p in directory.participants if p.id in active_trip.member_ids)
+                  if active_trip else directory.household())
+    reading = read_payer(raw_text, candidates, sender, directory.account_names())
+
+    # Which account paid, and whose it is (app/services/participants.py has the rules). A top-up
+    # with no wallet set up is refused outright rather than guessed at: nothing is stashed, so
+    # there is no card to confirm.
+    try:
+        single_transaction = resolve_payment(single_transaction, directory, sender, text_payer=reading.payer)
+    except WalletNotSetUp:
+        await status_msg.edit_text(NO_WALLET_MESSAGE)
+        return
+    except OutsideAccountNotSetUp:
+        await status_msg.edit_text(NO_OUTSIDE_ACCOUNT_MESSAGE)
+        return
+    if reading.unclear:
+        single_transaction['payer_warning'] = PAYER_UNCLEAR_WARNING
+
+    # One idempotency key per confirm prompt (not per save attempt) - reused on every
+    # save attempt for this same prompt, so a double-tap or webhook retry can't insert twice.
+    single_transaction['idempotency_key'] = str(uuid.uuid4())
+
+    # The participant id is the only record of the sender, so names can change without
+    # rewriting entries. account_owner is only whose card paid, not who sent the message.
+    single_transaction['entered_by_participant_id'] = sender.id
+
+    # Does this look like a repeat of something saved moments ago, by anyone? (#58) Kept on the
+    # pending entry itself because a button tap carries only the card's message_id - this is how
+    # handle_button_click later tells a flagged card from a normal one on Cancel or a failed save.
+    single_transaction['suspected_duplicate'] = _find_duplicate_of(single_transaction)
 
     amount_text = _display_amount(single_transaction)
     banner = ""
@@ -1013,6 +1041,7 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
             entered_by_participant_id=transaction_to_save.get('entered_by_participant_id'),
             # The trip as the card showed it, after any "Not trip" tap. None for an everyday entry.
             trip_id=transaction_to_save.get('trip_id'),
+            paid_by_participant_id=transaction_to_save.get('paid_by_participant_id'),
         )
 
         if save_success:
@@ -1045,7 +1074,7 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
                 f"💰 **Amount:** {_display_amount(transaction_to_save)}\n"
                 f"🏷️ **Category:** {transaction_to_save.get('category')}\n"
                 # The card is live again, so it shows the account a retry would save against
-                f"{_account_lines(transaction_to_save)}"
+                f"{_live_account_lines(transaction_to_save)}"
                 f"{_trip_lines(transaction_to_save)}"
                 f"📝 **Notes:** {transaction_to_save.get('description', 'None')}\n"
                 # Same date lines as the first card, ⚠️ included: this card is live again,

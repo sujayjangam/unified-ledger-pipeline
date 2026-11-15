@@ -12,7 +12,9 @@ Run from the repo root. Point DATABASE_URL at a Neon branch first and check the 
 A dry run performs the real inserts inside a transaction and rolls them back, so its report is
 exactly what --write would do. Before committing, the script reads everything back the way the bot
 will, and rolls back instead if the bot would refuse everyone. Rerunning is always safe: rows that
-exist are left alone.
+exist are left alone, except empty defaults/funders and household flags that the file sets true.
+Household flags (migration 0007) are never cleared. Bot users must be household; the shared
+"Paid by someone else" account must have no owner.
 
 It used to link old transactions to these tables too, by matching their account_desc and
 entered_by text. Migration 0005 dropped those columns, so that part was removed; the
@@ -36,7 +38,7 @@ from pathlib import Path
 from sqlalchemy import text
 
 from app.database import get_engine
-from app.services.participants import DirectoryError, load_directory
+from app.services.participants import OUTSIDE_PAYER_ACCOUNT_NAME, DirectoryError, load_directory
 
 DEFAULT_SEED = "directory_seed.local.json"
 
@@ -88,6 +90,10 @@ def parse_seed(raw: dict) -> SeedData:
     open_names = {_key(a["name"]) for a in accounts if a.get("closed_on") is None}
 
     for p in participants:
+        if not isinstance(p.get("household", False), bool):
+            raise ValueError(f"Participant {p['display_name']}: household must be a bool")
+        if p.get("telegram_user_id") is not None and not p.get("household", False):
+            raise ValueError(f"Participant {p['display_name']}: uses the bot, so needs household: true")
         default = p.get("default_account")
         if default is not None and _key(default) not in account_names:
             raise ValueError(f"Participant {p['display_name']}: default_account {default!r} is not a listed account")
@@ -98,6 +104,8 @@ def parse_seed(raw: dict) -> SeedData:
 
     seen_open = set()
     for a in accounts:
+        if _key(a["name"]) == _key(OUTSIDE_PAYER_ACCOUNT_NAME) and a.get("owner") is not None:
+            raise ValueError(f"Account {a['name']}: outside-payer account must have no owner")
         if a.get("owner") is not None and a["owner"] not in people:
             raise ValueError(f"Account {a['name']}: owner {a['owner']!r} is not a listed participant")
         if a.get("funded_by") is not None and _key(a["funded_by"]) not in account_names:
@@ -180,14 +188,19 @@ def _parse_trips(raw_trips: list, people: set) -> list[dict]:
 def _seed(conn, seed: SeedData) -> dict:
     """Inserts the participants and accounts that don't exist yet, then wires up defaults and
     funding cards by name. Returns counts for the report."""
-    counts = {"participants": 0, "accounts": 0, "trips": 0, "trip_members": 0}
+    counts = {"participants": 0, "accounts": 0, "trips": 0, "trip_members": 0, "household_flags": 0}
 
     for p in seed.participants:
         inserted = conn.execute(text("""
-            INSERT INTO participants (display_name, telegram_user_id)
-            SELECT :name, :tg WHERE NOT EXISTS (SELECT 1 FROM participants WHERE display_name = :name)
-        """), {"name": p["display_name"], "tg": p.get("telegram_user_id")}).rowcount
+            INSERT INTO participants (display_name, telegram_user_id, is_household)
+            SELECT :name, :tg, :household WHERE NOT EXISTS (SELECT 1 FROM participants WHERE display_name = :name)
+        """), {"name": p["display_name"], "tg": p.get("telegram_user_id"), "household": p.get("household", False)}).rowcount
         counts["participants"] += inserted
+        if p.get("household", False):
+            # Reruns may promote an existing person, but must never clear a household flag.
+            counts["household_flags"] += conn.execute(text("""
+                UPDATE participants SET is_household = true WHERE display_name = :name AND NOT is_household
+            """), {"name": p["display_name"]}).rowcount
 
     for a in seed.accounts:
         # An account is "the same row" when its name (case ignored) and closed_on both match, so a
@@ -280,6 +293,7 @@ def main(argv=None) -> int:
 
     print(f"\nParticipants inserted: {counts['participants']}")
     print(f"Accounts inserted:     {counts['accounts']}")
+    print(f"Household flags set:   {counts.get('household_flags', 0)}")
     # .get: a stubbed _seed in the tests returns only the first two counts.
     print(f"Trips inserted:        {counts.get('trips', 0)}")
     print(f"Trip members inserted: {counts.get('trip_members', 0)}")

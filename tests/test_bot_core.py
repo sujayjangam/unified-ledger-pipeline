@@ -12,9 +12,14 @@ tests/test_routing.py, which uses real PTB objects).
 
 from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock
+from datetime import date
+
+import pytest
 
 import app.bot_core as bot_core
 from app.services.participants import CLOSED_CARD_WARNING, NO_WALLET_MESSAGE, DirectoryError
+from app.services.participants import NO_OUTSIDE_ACCOUNT_MESSAGE, PAYER_UNCLEAR_WARNING
+from app.services.trips import Trip
 
 # Fictional Telegram IDs, matching the fixture: Alice is 111111, Bob is 222222.
 ALICE, BOB = 111111, 222222
@@ -200,3 +205,82 @@ async def test_a_failed_save_on_a_closed_card_brings_back_save_anyway(monkeypatc
     call = query.edit_message_text.await_args
     assert [b.text for b in call.kwargs["reply_markup"].inline_keyboard[0]] == ["⚠️ Save anyway", "❌ Cancel"]
     assert "Save anyway" in call.args[0]
+
+
+@pytest.mark.parametrize("message,members,payer,account,unclear", [
+    ("Bob paid 40", None, 2, 11, False),
+    ("Carol paid 40", (1, 2, 3), 3, 15, False),
+    ("Carol paid 40", (1, 2), 1, 10, True),
+    ("Carol paid 40", None, 1, 10, True),
+    ("Bob paid 40", (1, 3), 1, 10, True),
+])
+async def test_payer_candidates_follow_trip_membership(monkeypatch, directory, message, members,
+                                                       payer, account, unclear):
+    trip = Trip(7, "Beach Trip", date(2026, 12, 1), date(2026, 12, 7), members) if members else None
+    monkeypatch.setattr(bot_core, "_load_active_trip", lambda participant_id: trip)
+    context, status, _ = await _show_card(monkeypatch, directory, ALICE, message, amount=40)
+    entry = context.user_data["pending_cards"][500]
+    assert (entry["paid_by_participant_id"], entry["account_id"]) == (payer, account)
+    text = status.edit_text.await_args.args[0]
+    assert f"Paid by:** {directory.participant(payer).display_name}" in text
+    assert (PAYER_UNCLEAR_WARNING in text) is unclear
+    buttons = status.edit_text.await_args.kwargs["reply_markup"].inline_keyboard[0]
+    assert "Confirm" in buttons[0].text
+    assert not bot_core._is_flagged(entry)
+
+
+async def test_failed_trip_read_keeps_both_warnings(monkeypatch, directory):
+    def fail(participant_id):
+        raise RuntimeError("trip unavailable")
+
+    monkeypatch.setattr(bot_core, "_load_active_trip", fail)
+    context, status, _ = await _show_card(monkeypatch, directory, ALICE, "Carol paid 40")
+    text = status.edit_text.await_args.args[0]
+    assert bot_core.TRIP_UNKNOWN_WARNING in text
+    assert PAYER_UNCLEAR_WARNING in text
+    assert context.user_data["pending_cards"][500]["paid_by_participant_id"] == 1
+
+
+async def test_missing_outside_account_refuses_without_stashing(monkeypatch, directory):
+    trip = Trip(7, "Beach Trip", date(2026, 12, 1), date(2026, 12, 7), (1, 2, 3))
+    monkeypatch.setattr(bot_core, "_load_active_trip", lambda participant_id: trip)
+    directory = replace(directory, accounts=tuple(a for a in directory.accounts if a.id != 15))
+    context, status, _ = await _show_card(monkeypatch, directory, ALICE, "Carol paid 40")
+    status.edit_text.assert_awaited_once_with(NO_OUTSIDE_ACCOUNT_MESSAGE)
+    assert not context.user_data.get("pending_cards")
+
+
+@pytest.mark.parametrize("success", [False, True])
+async def test_confirm_preserves_payer_and_only_live_cards_warn(monkeypatch, success):
+    save = MagicMock(return_value=success)
+    monkeypatch.setattr(bot_core, "add_expense", save)
+    context = _context()
+    entry = _pending(paid_by_participant_id=2, paid_by="Bob", payer_warning=PAYER_UNCLEAR_WARNING)
+    bot_core._remember_pending_card(context, 500, entry)
+    update, query = _tap()
+    await bot_core.handle_button_click(update, context)
+    assert save.call_args.kwargs["paid_by_participant_id"] == 2
+    assert "payer_warning" not in save.call_args.kwargs
+    text = query.edit_message_text.await_args.args[0]
+    assert "Paid by:** Bob" in text
+    assert (PAYER_UNCLEAR_WARNING in text) is not success
+    if not success:
+        assert "Paid by:** Bob\n" + PAYER_UNCLEAR_WARNING in text
+        assert "Confirm" in query.edit_message_text.await_args.kwargs["reply_markup"].inline_keyboard[0][0].text
+
+
+def test_paid_by_name_is_escaped_and_old_cards_fall_back():
+    assert r"Paid by:** A\_name" in bot_core._account_lines({"paid_by": "A_name"})
+    assert "Paid by:** Alice" in bot_core._account_lines({"account_owner": "Alice"})
+    assert "Paid by:** Unspecified" in bot_core._account_lines({})
+
+
+def test_summaries_format_postgres_decimal_sums_through_format_cents():
+    # Postgres returns SUM over a BIGINT column as a Decimal; dividing it by a float used to
+    # crash /today, /week, /month and the category views whenever there was an entry.
+    from decimal import Decimal
+
+    period = bot_core.format_period_summary("Today", [("SGD", 2, Decimal("8000"))], [("SGD", 1, Decimal("1005"))])
+    assert "SGD: **80.00**" in period and "SGD: **10.05** (1 tx)" in period
+    category = bot_core.format_category_summary("Today", [("Food", "SGD", 2, Decimal("8000"))])
+    assert "SGD: **80.00**" in category

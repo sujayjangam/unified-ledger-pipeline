@@ -89,7 +89,15 @@ Env vars (`.env.example` shows the format):
   [ADR-0031](docs/decisions/0031-last-week-from-message-text.md)). The date warning never blocks a
   save and is never stored.
 - `resolve_payment` never guesses: no open wallet or funding card for a YouTrip top-up → refuse the
-  entry (`WalletNotSetUp`).
+  entry (`WalletNotSetUp`); an outside payer with no open "Paid by someone else" account → refuse
+  it too (`OutsideAccountNotSetUp`).
+- The payer is read from the message by `read_payer` in Python, never by the model, so "split
+  with Carol" can't become "Carol paid". Candidates are the sender's trip members while a trip is
+  on, otherwise the household; one word of a name is enough when no other candidate shares it.
+  An owned account always decides the payer; "Paid by someone else"
+  is reached only by the outside-payer rule, never named in the prompt's account list
+  ([ADR-0037](docs/decisions/0037-paid-by-person-read-from-text.md)). Payer warnings are card
+  lines only: never stored, never block a save. Every bot user is household (a database check).
 - The duplicate check runs before the card is shown, never inside the insert, and a failed check
   gives a normal card — it must never block a save
   ([ADR-0027](docs/decisions/0027-duplicate-warning-before-the-card.md)).
@@ -146,6 +154,9 @@ Env vars (`.env.example` shows the format):
   Never substitute one for the other: "within the last N minutes" uses `created_at`. An exact
   `00:00:00+08` on an old row means "time unknown"
   ([ADR-0024](docs/decisions/0024-created-at-write-time-column.md)).
+- `paid_by_participant_id` is who paid, apart from who logged it and which account. NULL means
+  "not recorded" (old, CLI and API rows) and still counts in totals; the period and category
+  totals skip only a payer who is set and not household.
 - `entered_by_participant_id` stores the sender's id, never a name. NULL means "not recorded".
   Tests use fictional ids only ([ADR-0033](docs/decisions/0033-entered-by-participant-id.md)).
 - `transactions` records the account and sender as ids only (`account_id`, required, and

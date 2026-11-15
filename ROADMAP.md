@@ -32,7 +32,21 @@ columns) and [#91](https://github.com/sujayjangam/unified-ledger-pipeline/pull/9
 production 2026-11-14 after a Neon-branch rehearsal and a backup). Before 0005, the 5 rows with
 no `account_id` were given a card by hand in SQL, one guarded `UPDATE` per `transaction_id`.
 
-**Next action:** group-trip splitting, below. **Done 2026-11-15:** step 1, trips, merged as PR
+**Next action:** group-trip splitting, below: step 2, paid-by
+(`docs/superpowers/plans/2026-11-15-paid-by.md`, [ADR-0037](docs/decisions/0037-paid-by-person-read-from-text.md)).
+PR 1 is built on branch `feat/paid-by`, in review: migration 0007
+(`participants.is_household`, `transactions.paid_by_participant_id`), Python reading the payer
+from the message (a whole name, or one word of it no other candidate shares), the payer rules in
+`resolve_payment`, the card's "Paid by" line and warnings, and totals that skip outside payers.
+0007 is applied to the Neon test branch, and the test bot was run there 2026-11-15 with fictional
+trip guests: every payer case gave the right card. That run also found `/today`, `/week`,
+`/month` and the category views crashing on Postgres Decimal sums, older than this branch and
+fixed in it. Left before merging: production by hand (plan step 10): backup,
+`alembic upgrade head`, then seed the "Paid by someone else" account. 0007 must reach production
+before the merge: the new code reads `is_household`, and without it the directory load fails and
+the bot lets nobody in. PR 2, the "Paid by" button, comes after.
+
+**Done 2026-11-15:** step 1, trips, merged as PR
 [#95](https://github.com/sujayjangam/unified-ledger-pipeline/pull/95) and deployed
 ([ADR-0035](docs/decisions/0035-trips-tagged-at-log-time.md),
 [ADR-0036](docs/decisions/0036-trip-switch-per-person.md)): migration 0006, dated trips in the seed
@@ -43,7 +57,8 @@ production by hand and the real trip seeded (non-household members are participa
 Telegram ID); the test-bot run covered switching, saving and the "trip ended" banner fallback.
 An entry logged on production right after the deploy was tagged to the trip.
 
-**In progress:** a closed-card fix (branch `fix/closed-card-guess`), before paid-by. On production,
+**Done 2026-11-15:** a closed-card fix, merged as PR
+[#96](https://github.com/sujayjangam/unified-ledger-pipeline/pull/96). On production,
 "Zebra test exp $25 cash" was put on a closed "Zebra Test Card" instead of Cash: the model may
 pick a closed card, and nothing checked the message named it. Now, when the model picks a closed card
 whose whole name isn't in the raw message and the message names an open card, the open card wins.
@@ -61,8 +76,8 @@ them before choosing. Moving the two into one region is the structural fix, but 
 Candidate follow-up: when a person's switch is off but an entry's date falls inside one of their
 trips, the card offers "Tag to <trip>?" (a suggestion, never an automatic tag; ADR-0036).
 
-Step 2, paid-by, comes next. Also unpushed: branch `chore/check-extraction-zebra` (the misread
-message below, as a `check_extraction` case).
+Unpushed: branch `chore/check-extraction-zebra` (the misread message below, as a
+`check_extraction` case).
 
 **Group-trip splitting** (decided 2026-11-14). There's a real group trip with a fixed
 deadline, kept out of this public repo. It pulls trips, splitting and settling up forward from
@@ -280,10 +295,11 @@ only shared costs they pay get logged. Travel minimum, in build order:
      so pre-trip bookings count. The card shows the trip, with a "Not trip" button. The bot reads
      the sender's trip on every message, like the directory.
   2. Paid-by: who paid, separate from who logged it and which card. The payment method stays
-     required. Each non-household payer gets a stand-in account. `accounts.owner_participant_id`
-     may give the payer for free; shared accounts (Cash) have no owner, so an explicit paid-by is
-     still needed there. Stand-in names join the model's account list, so run
-     `scripts/check_extraction`.
+     required. Planned 2026-11-15 in `docs/superpowers/plans/2026-11-15-paid-by.md`: a payer
+     column read by Python from the message, a "Paid by" button to fix it, an owned account
+     always deciding the payer, and a shared "Paid by someone else" account for outside payers.
+     PR 1 (everything but the button) built and tested on the test bot 2026-11-15, in review; PR 2
+     is the button.
   3. Uneven splits from the start, with an even split as the easy case. Per-person shares, rolling
      up to family. A message that says nothing about splitting is personal, and the card gets an
      "Add split" button. That opens a menu of the active trip's members only, one row per family,
@@ -327,8 +343,9 @@ only shared costs they pay get logged. Travel minimum, in build order:
   after saving.
 
   Must not break: `/today`, `/week`, `/month` and `cat_*` must not count other people's payments or
-  the full amount of a shared bill as household spending; decide between own-share and excluding
-  stand-in accounts. Settlements and deleted rows are filtered out of every query, including
+  the full amount of a shared bill as household spending. Paid-by (step 2) skips entries paid
+  outside the household; a shared bill a household member paid still counts in full until step 3
+  decides on own-share. Settlements and deleted rows are filtered out of every query, including
   `find_recent_duplicate`. Entries already logged before this ships get their splits added by hand
   in SQL. A database check on the splits table rejects shares that don't add up.
 

@@ -50,6 +50,13 @@
   when the bot logged the entry ([ADR-0036](decisions/0036-trip-switch-per-person.md)), unless "Not trip" was tapped on the card
   ([ADR-0035](decisions/0035-trips-tagged-at-log-time.md)). Tagged by when the entry was logged,
   not by its `date`. NULL for everyday entries, and always for the CLI and REST API.
+- **paid_by_participant_id**: BIGINT, nullable, FK → `participants.id`
+  (`fk_transactions_paid_by`, revision `0007_add_paid_by`). Who paid
+  ([ADR-0037](decisions/0037-paid-by-person-read-from-text.md)): the account's owner, or for an
+  unowned account (Cash, the wallet) the payer the message names, else the sender; for an outside
+  payer, that person, on the shared "Paid by someone else" account. Every new bot entry sets it.
+  NULL means "not recorded" (older rows, the CLI and REST API) and is read as the account's owner,
+  or the sender for an unowned account. Totals skip a row whose payer is set and not household.
 - **Dropped** by `0005_drop_text_account_columns` (#53): `account_desc` (the card's name as
   text), `account_owner` (the card owner's display name, inferred by first match) and
   `entered_by` (the sender's Telegram user ID as text). The ids above replace them.
@@ -67,6 +74,10 @@ Who may use the bot, and the accounts money is paid from, are rows rather than s
   person who only appears in the ledger.
 - **default_account_id**: BIGINT, nullable, FK → `accounts.id`. Used when a message names no
   card. Anyone with a `telegram_user_id` must have one, and it must be open.
+- **is_household**: BOOLEAN, NOT NULL, default false (revision `0007_add_paid_by`). Whose
+  spending the totals count. The check `ck_participants_bot_user_is_household`
+  (`telegram_user_id IS NULL OR is_household`) means every bot user is household; a household
+  person need not use Telegram. The migration marked existing bot users true before adding it.
 - **active_trip_id**: BIGINT, nullable (revision `0006_add_trips`). This person's trip mode: the
   trip their new bot entries are tagged with, NULL when off. A composite FK
   (`fk_participants_active_trip_member`: `(active_trip_id, id)` → `trip_members (trip_id,
@@ -81,7 +92,10 @@ Who may use the bot, and the accounts money is paid from, are rows rather than s
 - **id**: BIGINT identity, primary key
 - **name**: TEXT, NOT NULL. The name the extraction prompt offers and the card shows.
 - **owner_participant_id**: BIGINT, nullable, FK → `participants.id`. NULL means shared (Cash,
-  the YouTrip wallet): the money is the sender's.
+  the YouTrip wallet): the money is the sender's, or that of the payer the message names. One
+  shared row, "Paid by someone else", holds every entry paid by someone outside the household. It
+  is left out of the extraction prompt's list: only the outside-payer rule puts an entry on it
+  ([ADR-0037](decisions/0037-paid-by-person-read-from-text.md)).
 - **funded_by_account_id**: BIGINT, nullable, FK → `accounts.id`. Only on the wallet: the card a
   YouTrip top-up is paid from, whoever sends it.
 - **closed_on**: DATE, nullable. A closed card keeps its real name and its id, so old rows stay
