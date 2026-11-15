@@ -44,7 +44,7 @@ text handled by `process_expense_text` in `app/bot_core.py`: GPT-4o-mini with Py
 structured output extracts amount, currency, category, payment method, transaction type and
 what was said about the date ("yday", "last tues", "3/7"). Deterministic rules then work out
 the date itself, in tested Python rather than in the model, and infer the payment account and
-its owner. Nothing is written
+who paid. Nothing is written
 without an explicit confirmation tap — a human validation gate between the LLM and the ledger.
 Unsupported message types (photos, stickers, documents) get an explicit reply rather than
 silence.
@@ -124,6 +124,11 @@ its context, rejected alternatives and cost. The ones that shaped the system mos
   own switch, and a banner is pinned in your chat while it is on. The card shows the trip, with
   a button to mark a single entry as not part of it. Trips and their members, grouped in families, come from the
   same gitignored seed file.
+- Who paid: each entry records a payer, read from the message ("Bob paid", "paid by Carol") by
+  tested Python against the household, or the trip's members while a trip is on, never by the
+  model. An account with an owner decides the payer; an entry paid by someone outside the household
+  goes on a shared "Paid by someone else" account and is left out of the totals. The card shows
+  "Paid by", with a warning line when the message names a payer it can't match.
 - CI on every pull request: clean dependency install, lint, an import smoke check across `app/`,
   and a pytest suite over the money and date invariants — required to pass before a merge to
   `main`, enforced by a repository ruleset rather than merely reported on.
