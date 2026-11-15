@@ -267,7 +267,8 @@ async def test_register_commands_is_best_effort(fails):
 @pytest.mark.parametrize("payment_method, confirm", [(None, "✅ Confirm"), ("Old Card", "⚠️ Save anyway")])
 async def test_active_trip_is_on_pending_entry_and_card(monkeypatch, directory, payment_method, confirm):
     monkeypatch.setattr(bot_core, "_load_active_trip", lambda participant_id: BEACH)
-    context, card, _ = await _show_card(monkeypatch, directory, ALICE, payment_method=payment_method)
+    context, card, _ = await _show_card(
+        monkeypatch, directory, ALICE, message="refund 12 old card", payment_method=payment_method)
     pending = context.user_data["pending_cards"][500]
     assert pending["trip_id"] == 7
     assert pending["trip_offer"] == {"id": 7, "name": "Beach Trip"}

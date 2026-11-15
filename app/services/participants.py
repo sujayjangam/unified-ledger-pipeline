@@ -16,6 +16,7 @@ The bot loads a fresh Directory for every incoming message (no cache, decided in
 inserted in the Neon SQL editor is picked up on the very next message.
 """
 
+import re
 from dataclasses import dataclass
 from datetime import date
 
@@ -195,6 +196,20 @@ def whose_card_paid(account: Account, sender: Participant | None, directory: Dir
     return sender
 
 
+def _names_account(message: str, name: str) -> bool:
+    """True when the message contains the account's whole name as words, case ignored. Whole
+    words, so "cash" is not found inside "DBS Cashback"."""
+    pattern = r"(?<!\w)" + r"\s+".join(re.escape(word) for word in name.split()) + r"(?!\w)"
+    return re.search(pattern, message, re.IGNORECASE) is not None
+
+
+def _open_account_in(message: str, directory: Directory) -> Account | None:
+    """The open account the message names, or None. If several match, the longest name wins: it
+    is the more specific one (a message naming "Card A Plus" also contains "Card A")."""
+    named = [a for a in directory.accounts if a.is_open and _names_account(message, a.name)]
+    return max(named, key=lambda a: len(a.name), default=None)
+
+
 def resolve_payment(transaction: dict, directory: Directory, sender: Participant) -> dict:
     """Decides which account paid for an extracted transaction, and fills in what follows from it.
     Mutates and returns the dict, like the apply_payment_defaults() it replaces.
@@ -205,7 +220,8 @@ def resolve_payment(transaction: dict, directory: Directory, sender: Participant
       1. A YouTrip top-up is paid from the wallet's funding card, whoever sent it, and is a
          Transfer. No open wallet or no funding card -> WalletNotSetUp: never guess.
       2. A named card is matched, closed cards included (closed_account is then True and the card
-         asks the user to confirm).
+         asks the user to confirm). A closed card counts only if the raw message (description)
+         contains its whole name; otherwise an open card the message names is used, or step 3.
       3. No card, or a name that matches nothing (the model invented one): a foreign-currency
          payment goes on the wallet, anything else on the sender's default card. The card shows
          which account was chosen, so the user sees it before confirming.
@@ -219,6 +235,13 @@ def resolve_payment(transaction: dict, directory: Directory, sender: Participant
         transaction["transaction_type"] = "Transfer"
     else:
         account = directory.account_named(transaction.get("payment_method"))
+        message = transaction.get("description") or ""
+        if account is not None and not account.is_open and not _names_account(message, account.name):
+            # The model picked a closed card the message never names in full: "Zebra test exp $25
+            # cash" once went on a closed "Zebra Test Card". A closed card is kept only when the
+            # sender clearly named it (a late refund); otherwise an open card the message does
+            # name wins, and failing that the usual defaults below apply.
+            account = _open_account_in(message, directory)
         if account is None and transaction.get("currency", "SGD") != "SGD":
             account = directory.open_account_named(WALLET_NAME)
         if account is None:

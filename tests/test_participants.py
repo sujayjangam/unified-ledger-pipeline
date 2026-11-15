@@ -73,8 +73,31 @@ def test_unknown_card_falls_back_to_the_default_rule(directory):
     assert (t["account_id"], t["payment_method"], t["closed_account"]) == (10, "Card A", False)
 
 def test_closed_card_is_kept_and_flagged(directory):
-    t = resolve_payment({"payment_method": "old card", "currency": "SGD"}, directory, directory.participant(2))
+    t = resolve_payment({"payment_method": "old card", "currency": "SGD",
+                         "description": "refund 20 on my OLD card"}, directory, directory.participant(2))
     assert (t["account_id"], t["account_owner"], t["closed_account"]) == (14, "Alice", True)
+
+@pytest.mark.parametrize("message,expected", [
+    ("old test exp 25 cash", 12),     # an open card named in the text wins over the guess
+    ("old stuff 25", 11),             # nothing named: the sender's default, like any unknown card
+    ("cashback old 25", 11),          # whole words only: "cash" is not inside "cashback"
+])
+def test_a_closed_card_the_message_does_not_name_is_not_used(directory, message, expected):
+    """The model once put "Zebra test exp $25 cash" on a closed "Zebra Test Card"."""
+    t = resolve_payment({"payment_method": "Old Card", "currency": "SGD", "description": message},
+                        directory, directory.participant(2))
+    assert (t["account_id"], t["closed_account"]) == (expected, False)
+
+def test_closed_card_named_across_extra_spaces_still_counts(directory):
+    t = resolve_payment({"payment_method": "Old Card", "currency": "SGD", "description": "old   card 5"},
+                        directory, directory.participant(2))
+    assert (t["account_id"], t["closed_account"]) == (14, True)
+
+def test_longest_open_name_wins(directory):
+    d = replace(directory, accounts=directory.accounts + (Account(15, "Card A Plus", 1, None, None),))
+    t = resolve_payment({"payment_method": "Old Card", "currency": "SGD", "description": "taxi 5 card a plus"},
+                        d, d.participant(2))
+    assert t["account_id"] == 15
 
 @pytest.mark.parametrize("wallet_change", ["closed", "no_funder", "missing"])
 def test_topup_is_refused_when_the_wallet_is_not_set_up(directory, wallet_change):
