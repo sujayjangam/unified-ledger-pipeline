@@ -296,6 +296,24 @@ only shared costs they pay get logged. Travel minimum, in build order:
      64-byte limit. Shares are in whole cents and must add up to the amount (see the whole-cents
      item under Phase 3). Decide the leftover-cent rule for a payer who isn't in the split, and how
      refunds split.
+     - Weighted shares, needed for the trip's accommodation: a 5-night booking where some members
+       stay only 4 nights. Ticking people gives only an even split, so the split also needs a
+       weight per person (nights, or any count). Each share is amount × weight ÷ total weight,
+       handed out in whole cents like every other split; one card charge stays one entry, which
+       keeps reconciliation against the statement simple. Logging it as two entries (4 nights
+       across everyone, 1 night across the rest) was considered and rejected for that reason.
+     - The person logging never does the maths. They say it in plain words; the model reads only
+       who and how many (people, families, nights, a fixed amount), never a share, and Python
+       works out the cents, the same way dates work
+       ([ADR-0030](docs/decisions/0030-llm-reads-dates-python-resolves.md)). The card shows each
+       share before Confirm, and the split menu can still change it. Messages it should handle
+       (fictional names):
+       - "Airbnb 2300 on my Visa, 5 nights, everyone except Carol's family who only stayed 4"
+       - "Airbnb 2300, split by nights: Alice's and Bob's families 5, Carol and Dave 4"
+       - "Dinner 480 cash, split evenly between all"
+       - "Petrol 90, split between Alice's and Bob's families"
+       - "Groceries 150, Carol's share is 50, rest split evenly"
+       Add each to `scripts/check_extraction` when this is built.
   4. `/balances`: per person and per family, in separate currencies (no FX conversion), with a
      breakdown that can be forwarded to the group ("why do I owe 340?"). The suggested payments are
      simplified: the fewest payments that settle everyone. Matching the largest debtor to the
