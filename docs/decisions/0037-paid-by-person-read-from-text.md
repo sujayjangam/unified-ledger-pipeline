@@ -29,7 +29,9 @@ the same problem with dates and moved the deciding step into tested Python.
 - **Python reads the payer from the message** (`read_payer`), never the model. It matches
   "paid by X", "paid for by X", "X paid" and "X pays" against known names: the sender's trip
   members when trip mode is on, otherwise the household. "I paid" and "paid by me" are the
-  sender. Two different names, or a payer-shaped phrase with no known name, show
+  sender. A name is the whole display name, or one word of it that no other candidate's name
+  shares ("Lee paid" for Ann Lee, unless there is another Lee). Two different names, or a
+  payer-shaped phrase with no known name, show
   "⚠️ Couldn't tell who paid" on the card.
 - **The payer and the account must agree**, in this order:
   1. A YouTrip top-up is unchanged: the funding card pays, and its owner is the payer.

@@ -93,7 +93,8 @@ Env vars (`.env.example` shows the format):
   it too (`OutsideAccountNotSetUp`).
 - The payer is read from the message by `read_payer` in Python, never by the model, so "split
   with Carol" can't become "Carol paid". Candidates are the sender's trip members while a trip is
-  on, otherwise the household. An owned account always decides the payer; "Paid by someone else"
+  on, otherwise the household; one word of a name is enough when no other candidate shares it.
+  An owned account always decides the payer; "Paid by someone else"
   is reached only by the outside-payer rule, never named in the prompt's account list
   ([ADR-0037](docs/decisions/0037-paid-by-person-read-from-text.md)). Payer warnings are card
   lines only: never stored, never block a save. Every bot user is household (a database check).
