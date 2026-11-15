@@ -75,7 +75,9 @@ Env vars (`.env.example` shows the format):
 - The model may choose only from `directory.account_names()` (closed accounts included, so a refund
   on a cancelled card can still be named). Never add a second source for that
   list: a separate, never-set `ALLOWED_ACCOUNTS` var once ran the prompt on a hardcoded fallback and
-  attributed entries to the wrong owner.
+  attributed entries to the wrong owner. When the model picks a closed card whose
+  whole name isn't in the raw message, `resolve_payment` uses an open card the message does name;
+  with none named, the closed card stays, with its warning.
 - `description` is the raw input, never an LLM summary
   ([ADR-0008](docs/decisions/0008-raw-transcript-as-description.md)). Whisper's `language="en"` is
   pinned ([ADR-0009](docs/decisions/0009-pin-whisper-language-en.md)). One expense per message is a

@@ -47,9 +47,9 @@ def _directory_down():
     raise DirectoryError("Participant 1 (Alice) uses the bot but has no default account")
 
 
-async def _show_card(monkeypatch, directory, sender_id, **extracted):
-    """Runs process_expense_text for one extracted SGD expense sent by `sender_id`.
-    Returns (context, the card message mock, the faked model call)."""
+async def _show_card(monkeypatch, directory, sender_id, message="the message", **extracted):
+    """Runs process_expense_text for one extracted SGD expense sent by `sender_id`, as if they
+    had typed `message`. Returns (context, the card message mock, the faked model call)."""
     transaction = {
         "amount": 12.0, "currency": "SGD", "category": "Food", "date_reference": {"kind": "unstated"},
         "transaction_type": "Expense", "payment_method": None,
@@ -60,7 +60,7 @@ async def _show_card(monkeypatch, directory, sender_id, **extracted):
     monkeypatch.setattr(bot_core, "find_recent_duplicate", MagicMock(return_value=None))
 
     context, status_msg = _context(), _status_msg()
-    await bot_core.process_expense_text(_update(sender_id), context, "the message", status_msg, directory)
+    await bot_core.process_expense_text(_update(sender_id), context, message, status_msg, directory)
     return context, status_msg, extract
 
 
@@ -114,7 +114,9 @@ async def test_pending_entry_carries_the_ids(monkeypatch, directory):
 
 
 async def test_closed_card_gets_the_warning_and_save_anyway_buttons(monkeypatch, directory):
-    context, status_msg, _ = await _show_card(monkeypatch, directory, ALICE, payment_method="old card")
+    # A closed card is used only when the message names it (participants.resolve_payment).
+    context, status_msg, _ = await _show_card(
+        monkeypatch, directory, ALICE, message="refund 12 old card", payment_method="old card")
 
     call = status_msg.edit_text.await_args
     assert CLOSED_CARD_WARNING in call.args[0]

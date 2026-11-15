@@ -32,38 +32,31 @@ columns) and [#91](https://github.com/sujayjangam/unified-ledger-pipeline/pull/9
 production 2026-11-14 after a Neon-branch rehearsal and a backup). Before 0005, the 5 rows with
 no `account_id` were given a card by hand in SQL, one guarded `UPDATE` per `transaction_id`.
 
-**Next action:** group-trip splitting, below. Step 1 (trips) is built on branch `feat/trips`
-(2026-11-14, [ADR-0035](docs/decisions/0035-trips-tagged-at-log-time.md),
+**Next action:** group-trip splitting, below. **Done 2026-11-15:** step 1, trips, merged as PR
+[#95](https://github.com/sujayjangam/unified-ledger-pipeline/pull/95) and deployed
+([ADR-0035](docs/decisions/0035-trips-tagged-at-log-time.md),
 [ADR-0036](docs/decisions/0036-trip-switch-per-person.md)): migration 0006, dated trips in the seed
 file, a trip-mode switch per person picked from `/trip`'s buttons (three per page, newest first),
-a pinned banner while it is on, and a trip line and toggle on the card. The first version (one
-shared switch, `/trip on <name>`) was committed and tested, then reworked. Codex reviewed the
-whole branch; its two findings are fixed (a trip toggle racing Confirm under the webhook, and the
-banner id used against the wrong chat). Gate passes. Tested on the polling bot on 2026-11-14
-against the Neon test branch: paging, switch on from page 2, an entry tagged and saved, switching trip to trip (old
-banner removed), turning off (banner removed, next entry untagged). Two bugs found and fixed
-there: the pin's service message got a "not authorized" reply, and a trip across New Year showed
-only the end year. An old banner is deleted on switch-off or a change of trip (or, past
-Telegram's 48-hour delete limit, unpinned and edited to say the trip ended; unit-tested only),
-and the "pinned a message" notice is deleted as it arrives. Picking it up:
-1. PR [#95](https://github.com/sujayjangam/unified-ledger-pipeline/pull/95) is open (don't merge
-   yet: a merge to `main` auto-deploys). The final test-bot run passed on 2026-11-15: switching on
-   and off, an entry saved, and the "trip ended" fallback seen live with a simulated failed
-   delete. From that feedback, a tapped `/trip` menu now becomes a plain status line with no
-   buttons once a switch is made (or an old menu is tapped for the trip already on), and the tap is
-   answered before the banner swap; a failed answer never skips the redraw or banner. Gate passed
-   after these changes (326 tests). Timing lines
-   on `/trip` and each tap log where the time goes. Production was backed up the same day.
-2. Done 2026-11-15, before merging: 0006 applied to production by hand (`alembic current` showed
-   `0006_add_trips`), and the real trip seeded with its dates and members (a dry run first, then
-   `--write`). Non-household trip members are participants with no Telegram ID.
-3. Menu speed, measured from the laptop against the Neon test branch (us-east-2): one round trip
-   is about 295ms. Each database block costs three extra round trips besides its queries (the
-   pool's ping, BEGIN and ROLLBACK), so `/trip` makes about 10 round trips for 4 queries, about 3s.
-   Autocommit for read-only blocks cuts a query from 2 round trips to 1 and the release to 0.
-   Candidate fix, not started: autocommit for read-only reads, and fewer separate blocks per
-   message. Production (Cloud Run in asia-southeast1, Neon in us-east-2) is unmeasured until the
-   timing lines deploy. Moving the two into one region is the structural fix, but a bigger job.
+a pinned banner while it is on, and a trip line and toggle on the card. A tapped `/trip` menu
+becomes a plain status line once a switch is made. Before the merge, 0006 was applied to
+production by hand and the real trip seeded (non-household members are participants with no
+Telegram ID); the test-bot run covered switching, saving and the "trip ended" banner fallback.
+An entry logged on production right after the deploy was tagged to the trip.
+
+**In progress:** a closed-card fix (branch `fix/closed-card-guess`), before paid-by. On production,
+"Zebra test exp $25 cash" was put on a closed "Zebra Test Card" instead of Cash: the model may
+pick a closed card, and nothing checked the message named it. Now, when the model picks a closed card
+whose whole name isn't in the raw message and the message names an open card, the open card wins.
+With no open card named, the closed card stays, with its warning, so a loosely said late refund
+isn't moved onto the default card unseen. The bad entry was deleted by hand (one guarded `DELETE`).
+
+Menu speed, measured from the laptop against the Neon test branch (us-east-2): one round trip is
+about 295ms. Each database block costs three extra round trips besides its queries (the pool's
+ping, BEGIN and ROLLBACK), so `/trip` makes about 10 round trips for 4 queries, about 3s.
+Autocommit for read-only blocks cuts a query from 2 round trips to 1 and the release to 0.
+Candidate fix, not started: autocommit for read-only reads, and fewer separate blocks per message.
+Production (Cloud Run in asia-southeast1, Neon in us-east-2) now logs the same timing lines; read
+them before choosing. Moving the two into one region is the structural fix, but a bigger job.
 
 Candidate follow-up: when a person's switch is off but an entry's date falls inside one of their
 trips, the card offers "Tag to <trip>?" (a suggestion, never an automatic tag; ADR-0036).
@@ -79,8 +72,9 @@ before the deadline, because a merge auto-deploys and a broken bot mid-trip mean
 logged. Test on a Neon branch with a fictional trip-sized directory first.
 
 Follow-up: "test 1 zebra test card" comes back with no amount (the model reads "test 1" as part
-of a name). It is now a case in `scripts/check_extraction.py`, which fails it 10 times out of 10
-(2026-11-14). The prompt fix is still open.
+of a name). It is a case in `scripts/check_extraction.py` on the unpushed branch
+`chore/check-extraction-zebra`, where it fails 10 times out of 10 (2026-11-14). The prompt fix is
+still open.
 
 Adding and closing cards from Telegram is
 [#83](https://github.com/sujayjangam/unified-ledger-pipeline/issues/83). The "Saved to Ledger!"
@@ -278,7 +272,8 @@ below is this one. Done 2026-11-14 (#84, #90, #91).
 - [ ] **Group-trip splitting** (pulled forward from Phase 3 on 2026-11-14 for a real trip, see
 "Current status"). Two people log; the other members are participants without a Telegram ID, and
 only shared costs they pay get logged. Travel minimum, in build order:
-  1. Trips: a trip is a group of participants in families, set up from the gitignored seed file.
+  1. *(Done 2026-11-15, [#95](https://github.com/sujayjangam/unified-ledger-pipeline/pull/95).)*
+     Trips: a trip is a group of participants in families, set up from the gitignored seed file.
      Each person switches trip mode from `/trip`'s buttons; at most one trip on per person, only
      a trip they are a member of (enforced in the database), with a pinned banner while it is on.
      An entry is tagged by when it is logged, not by its date,
