@@ -19,7 +19,7 @@ from scripts.seed_directory import parse_seed
 
 def test_seed_rejects_a_default_that_is_not_a_listed_account():
     with pytest.raises(ValueError, match="Alice"):
-        parse_seed({"participants": [{"display_name": "Alice", "telegram_user_id": "111111", "default_account": "Nope"}], "accounts": []})
+        parse_seed({"participants": [{"display_name": "Alice", "telegram_user_id": "111111", "household": True, "default_account": "Nope"}], "accounts": []})
 
 def test_seed_rejects_an_owner_who_is_not_a_listed_participant():
     with pytest.raises(ValueError, match="Card A"):
@@ -35,7 +35,7 @@ def test_seed_trims_names_so_the_database_matches_them():
     # The SQL compares lower(name) without trimming, so a stray space in the file used to leave a
     # default unset - and the bot then turns everyone away.
     seed = parse_seed({
-        "participants": [{"display_name": " Alice ", "telegram_user_id": "111111", "default_account": "Card A "}],
+        "participants": [{"display_name": " Alice ", "telegram_user_id": "111111", "household": True, "default_account": "Card A "}],
         "accounts": [{"name": " Card A", "owner": "Alice"}],
     })
     assert seed.participants[0]["display_name"] == "Alice"
@@ -44,13 +44,13 @@ def test_seed_trims_names_so_the_database_matches_them():
 
 def test_seed_rejects_a_bot_user_without_a_default():
     with pytest.raises(ValueError, match="Alice"):
-        parse_seed({"participants": [{"display_name": "Alice", "telegram_user_id": "111111"}],
+        parse_seed({"participants": [{"display_name": "Alice", "telegram_user_id": "111111", "household": True}],
                     "accounts": [{"name": "Card A", "owner": "Alice"}]})
 
 def test_seed_rejects_a_default_or_funder_that_is_only_a_closed_account():
     closed = {"name": "Old Card", "owner": "Alice", "closed_on": "2026-03-31"}
     with pytest.raises(ValueError, match="Alice"):
-        parse_seed({"participants": [{"display_name": "Alice", "telegram_user_id": "111111", "default_account": "Old Card"}],
+        parse_seed({"participants": [{"display_name": "Alice", "telegram_user_id": "111111", "household": True, "default_account": "Old Card"}],
                     "accounts": [closed]})
     with pytest.raises(ValueError, match="YouTrip"):
         parse_seed({"participants": [{"display_name": "Alice"}],
@@ -166,3 +166,56 @@ def test_single_day_trip_and_inserted_dates():
     seed_directory._seed(conn, seed)
     call = next(c for c in conn.execute.call_args_list if "INSERT INTO trips" in str(c.args[0]))
     assert call.args[1] == {"name": "Beach Trip", "start_date": date(2026, 12, 1), "end_date": date(2026, 12, 1)}
+
+
+@pytest.mark.parametrize("household", [None, "true", 1, 0, [], {}])
+def test_household_flag_must_be_a_bool(household):
+    with pytest.raises(ValueError, match="Alice.*household must be a bool"):
+        parse_seed({"participants": [{"display_name": "Alice", "household": household}]})
+
+
+@pytest.mark.parametrize("fields", [{}, {"household": False}])
+def test_bot_user_must_explicitly_be_household(fields):
+    with pytest.raises(ValueError, match="Alice.*household: true"):
+        parse_seed({"participants": [{"display_name": "Alice", "telegram_user_id": "111111",
+                                      "default_account": "Card A", **fields}],
+                    "accounts": [{"name": "Card A", "owner": "Alice"}]})
+
+
+def test_household_without_telegram_needs_no_default():
+    seed = parse_seed({"participants": [{"display_name": "Dave", "household": True}]})
+    assert seed.participants[0]["household"] is True
+
+
+@pytest.mark.parametrize("name", ["Paid by someone else", " PAID BY SOMEONE ELSE "])
+def test_outside_account_must_have_no_owner(name):
+    with pytest.raises(ValueError, match="must have no owner"):
+        parse_seed({"participants": [{"display_name": "Alice"}], "accounts": [{"name": name, "owner": "Alice"}]})
+    assert parse_seed({"accounts": [{"name": name, "owner": None}]}).accounts[0]["owner"] is None
+
+
+@pytest.mark.parametrize("updated", [0, 1])
+def test_seed_sets_household_on_insert_and_only_promotes_existing_rows(updated):
+    """A fake connection reports a promotion once, or zero on a repeat; no DB is opened."""
+    seed = parse_seed({"participants": [{"display_name": "Alice", "household": True},
+                                       {"display_name": "Bob", "household": False},
+                                       {"display_name": "Carol"}]})
+    conn = MagicMock()
+    conn.execute.side_effect = lambda sql, params: MagicMock(
+        rowcount=updated if "UPDATE participants" in str(sql) else 0)
+    counts = seed_directory._seed(conn, seed)
+    inserts = [c for c in conn.execute.call_args_list if "INSERT INTO participants" in str(c.args[0])]
+    assert [c.args[1]["household"] for c in inserts] == [True, False, False]
+    assert all("is_household" in str(c.args[0]) for c in inserts)
+    updates = [c for c in conn.execute.call_args_list if "UPDATE participants" in str(c.args[0])]
+    assert len(updates) == 1
+    assert updates[0].args[1] == {"name": "Alice"}
+    assert "SET is_household = true WHERE display_name = :name AND NOT is_household" in str(updates[0].args[0])
+    assert counts["household_flags"] == updated
+
+
+def test_seed_report_includes_household_promotions(monkeypatch, directory, capsys):
+    _fake_run(monkeypatch, lambda conn: directory)
+    monkeypatch.setattr(seed_directory, "_seed", lambda conn, seed: {"participants": 0, "accounts": 0, "household_flags": 2})
+    assert seed_directory.main(["--seed", "directory_seed.example.json", "--write"]) == 0
+    assert "Household flags set:   2" in capsys.readouterr().out

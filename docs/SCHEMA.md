@@ -56,11 +56,19 @@
 
 ## participants and accounts (#53)
 
+Revision `0007_add_paid_by` also adds **transactions.paid_by_participant_id**: BIGINT,
+nullable, FK to `participants.id` (`fk_transactions_paid_by`). NULL means "not recorded"
+(old rows, CLI and REST API); readers fall back to the account owner, or the sender for an
+unowned account. The pure payment resolver supplies this id; bot persistence follows in part 2.
+
 Who may use the bot, and the accounts money is paid from, are rows rather than settings
 ([ADR-0032](decisions/0032-participants-and-accounts-in-postgres.md)). Ids are
 `GENERATED ALWAYS AS IDENTITY`: a new row always gets a new id, and an id is never reused.
 
 **participants**
+- **is_household**: BOOLEAN, NOT NULL, default false (revision `0007_add_paid_by`). Existing
+  Telegram users are marked true before `ck_participants_bot_user_is_household` requires
+  `telegram_user_id IS NULL OR is_household`. A household person need not use Telegram.
 - **id**: BIGINT identity, primary key
 - **display_name**: TEXT, NOT NULL, UNIQUE. What the card and the duplicate warning show.
 - **telegram_user_id**: TEXT, nullable, UNIQUE. Set → this person may use the bot. NULL → a

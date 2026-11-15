@@ -37,9 +37,9 @@ def _no_active_trip(monkeypatch):
 def directory():
     """A fictional Directory shared by the tests (this repo is public: never real names or cards).
 
-    Alice and Bob use the bot; Carol is tracked for splitting only, so she has no Telegram ID and
+    Alice and Bob are household bot users; Carol is outside, tracked for splitting only, with no Telegram ID and
     no default. Cash and YouTrip are shared; YouTrip is topped up from Card A. Old Card is Alice's,
-    closed on 2026-03-31.
+    closed on 2026-03-31. The outside-payer account is shared and hidden from extraction.
     """
     from datetime import date
 
@@ -47,8 +47,8 @@ def directory():
 
     return Directory(
         participants=(
-            Participant(1, "Alice", "111111", 10),
-            Participant(2, "Bob", "222222", 11),
+            Participant(1, "Alice", "111111", 10, True),
+            Participant(2, "Bob", "222222", 11, True),
             Participant(3, "Carol", None, None),
         ),
         accounts=(
@@ -57,5 +57,6 @@ def directory():
             Account(12, "Cash", None, None, None),
             Account(13, "YouTrip", None, 10, None),
             Account(14, "Old Card", 1, None, date(2026, 3, 31)),
+            Account(15, "Paid by someone else", None, None, None),
         ),
     )

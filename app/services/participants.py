@@ -25,6 +25,13 @@ from sqlalchemy import text
 # The multi-currency wallet. A top-up moves money into it, and a foreign-currency payment that
 # names no card is assumed to be on it. Matched by name, like any other account.
 WALLET_NAME = "YouTrip"
+# Only the outside-payer rule may choose this shared account, never the model.
+OUTSIDE_PAYER_ACCOUNT_NAME = "Paid by someone else"
+# Setup failures replace the card; payer warnings are display-only lines on it.
+NO_OUTSIDE_ACCOUNT_MESSAGE = "⚠️ No outside-payer account set up — add Paid by someone else in the accounts table. Nothing was saved."
+PAYER_UNCLEAR_WARNING = "⚠️ Couldn't tell who paid"
+OWNER_WINS_WARNING = "⚠️ The message says {payer} paid, but {account} is {owner}'s card, so {owner} is recorded as paying."
+OUTSIDE_ON_OWNED_WARNING = "⚠️ {payer} paid, so this is on {outside_account}, not {account}."
 
 # Shown on the confirmation card when the chosen card has been closed. Not an error: refunds and
 # late charges really do land on a card after it is cancelled, so the user decides.
@@ -43,6 +50,10 @@ class WalletNotSetUp(Exception):
     """A top-up arrived but no open YouTrip account with a funding card exists."""
 
 
+class OutsideAccountNotSetUp(Exception):
+    """An outside payer was named but their shared account is missing or closed."""
+
+
 def _key(name: str | None) -> str | None:
     """How names are compared everywhere: spaces trimmed, case ignored. Mirrors the open-name
     unique index in migration 0004, which is on lower(name)."""
@@ -56,6 +67,7 @@ class Participant:
     # None means tracked (e.g. for splitting a trip) but not allowed to use the bot.
     telegram_user_id: str | None
     default_account_id: int | None
+    is_household: bool = False
 
 
 @dataclass(frozen=True)
@@ -86,6 +98,10 @@ class Directory:
     def participant(self, id: int | None) -> Participant | None:
         return next((p for p in self.participants if p.id == id), None)
 
+    def household(self) -> tuple[Participant, ...]:
+        """Payer candidates when no trip supplies a wider list."""
+        return tuple(p for p in self.participants if p.is_household)
+
     def participant_by_telegram_id(self, tg_id: str) -> Participant | None:
         # The allowlist: only a participant with this Telegram ID may use the bot.
         return next((p for p in self.participants if p.telegram_user_id == tg_id), None)
@@ -112,11 +128,13 @@ class Directory:
         return max(closed, key=lambda a: a.closed_on, default=None)
 
     def account_names(self) -> list[str]:
-        """Every account name, for the extraction prompt's list of valid payment methods. Open
+        """Every ordinary account name, for the extraction prompt's valid payment methods. Open
         accounts first (id order), then closed ones; a name already listed isn't repeated, so a
         replacement card and its predecessor appear once."""
         names, seen = [], set()
         for a in sorted(self.accounts, key=lambda a: (not a.is_open, a.id)):
+            if _key(a.name) == _key(OUTSIDE_PAYER_ACCOUNT_NAME):
+                continue  # Python alone chooses this account after reading an outside payer.
             if _key(a.name) not in seen:
                 seen.add(_key(a.name))
                 names.append(a.name)
@@ -172,7 +190,7 @@ def load_directory(conn) -> Directory:
     against the wrong person or card without anyone noticing.
     """
     participants = conn.execute(text(
-        "SELECT id, display_name, telegram_user_id, default_account_id FROM participants ORDER BY id"
+        "SELECT id, display_name, telegram_user_id, default_account_id, is_household FROM participants ORDER BY id"
     )).all()
     accounts = conn.execute(text(
         "SELECT id, name, owner_participant_id, funded_by_account_id, closed_on FROM accounts ORDER BY id"
@@ -206,35 +224,96 @@ def _names_account(message: str, name: str) -> bool:
 def _open_account_in(message: str, directory: Directory) -> Account | None:
     """The open account the message names, or None. If several match, the longest name wins: it
     is the more specific one (a message naming "Card A Plus" also contains "Card A")."""
-    named = [a for a in directory.accounts if a.is_open and _names_account(message, a.name)]
+    named = [a for a in directory.accounts if a.is_open
+             and _key(a.name) != _key(OUTSIDE_PAYER_ACCOUNT_NAME) and _names_account(message, a.name)]
     return max(named, key=lambda a: len(a.name), default=None)
 
 
-def resolve_payment(transaction: dict, directory: Directory, sender: Participant) -> dict:
+@dataclass(frozen=True)
+class PayerReading:
+    """A unique text payer, or a signal that the card should ask the user to check."""
+
+    payer: Participant | None
+    unclear: bool
+
+
+# These words describe payment or grammar, rather than an unknown person's name.
+_PAYER_EXCLUSIONS = frozenset("""
+    i me we us you he she they it who that which just already also all fully partly
+    was were been be is are has have had not never being and then bill prepaid
+    card cash credit debit paynow paylah nets grab visa mastercard amex bank transfer
+    cheque check apple google someone somebody
+""".split())
+
+
+def read_payer(message: str, candidates, sender: Participant, account_names=()) -> PayerReading:
+    """Read 'paid by <name>', 'paid for by <name>', '<name> paid' and '<name> pays'.
+
+    'I paid', 'I pay' and 'paid by me' always mean the sender.
+
+    Python reads the raw text, never the model: 'split with Carol' must never become
+    'Carol paid'. The caller supplies trip members or household people and directory
+    account names, whose words suppress warnings for payment methods such as Card A.
+    """
+    # One alternation consumes the longest name first, so a shorter prefix cannot also
+    # match the same payer mention. Separate mentions still count as separate people.
+    people = sorted(candidates, key=lambda p: len(p.display_name), reverse=True)
+    names = [r"\s+".join(re.escape(w) for w in p.display_name.split()) for p in people]
+    found = {}
+    if names:
+        choices = "|".join(f"(?P<p{i}>{name})" for i, name in enumerate(names))
+        for pattern in (rf"(?<!\w)paid\s+(?:for\s+)?by\s+(?:{choices})(?!\w)",
+                        rf"(?<!\w)(?:{choices})\s+(?:paid|pays)(?!\w)"):
+            for match in re.finditer(pattern, message, re.IGNORECASE):
+                person = people[int(match.lastgroup[1:])]
+                found[person.id] = person
+    if re.search(r"(?<!\w)(?:I\s+(?:paid|pay)|paid\s+by\s+me)(?!\w)", message, re.IGNORECASE):
+        found[sender.id] = sender
+    if found:
+        return PayerReading(next(iter(found.values())) if len(found) == 1 else None, len(found) > 1)
+
+    excluded = _PAYER_EXCLUSIONS | {w.casefold() for name in account_names for w in re.findall(r"\w+", name)}
+    # Check both directions separately so an incidental 'Lunch paid' cannot consume
+    # 'paid by Carroll' and hide the unknown name after it.
+    # Amounts are not names: the '40 paid' in 'Lunch 40 paid by cash' must not warn.
+    word = r"[^\W\d_]+"
+    words = re.findall(rf"(?<!\w)paid\s+(?:for\s+)?by\s+({word})(?!\w)", message, re.IGNORECASE)
+    # In "Dinner paid by cash" the word before "paid" is the thing bought, not a person: when
+    # "paid by" follows, the payer (if any) is the word after it, checked just above.
+    words += re.findall(rf"(?<!\w)({word})\s+(?:paid|pays)(?!\w)(?!\s+(?:for\s+)?by(?!\w))",
+                        message, re.IGNORECASE)
+    return PayerReading(None, any(word.casefold() not in excluded for word in words))
+
+
+def resolve_payment(transaction: dict, directory: Directory, sender: Participant,
+                    text_payer: Participant | None = None) -> dict:
     """Decides which account paid for an extracted transaction, and fills in what follows from it.
     Mutates and returns the dict, like the apply_payment_defaults() it replaces.
 
-    Sets account_id, payment_method (the account's real name), account_owner (a display name, for
-    the card) and closed_account. payment_method and account_owner are display only: the pending
-    entry keeps them for the card text, while saving records only account_id. In order:
+    Sets account_id, paid_by_participant_id, payment_method, paid_by, account_owner,
+    closed_account and payer_warning. Names and warnings are display only. In order:
       1. A YouTrip top-up is paid from the wallet's funding card, whoever sent it, and is a
          Transfer. No open wallet or no funding card -> WalletNotSetUp: never guess.
-      2. A named card is matched, closed cards included (closed_account is then True and the card
-         asks the user to confirm). If the raw message (description) doesn't contain a closed
-         card's whole name but does name an open card, the open card is used instead.
-      3. No card, or a name that matches nothing (the model invented one): a foreign-currency
-         payment goes on the wallet, anything else on the sender's default card. The card shows
-         which account was chosen, so the user sees it before confirming.
+      2. An outside text payer uses the open outside-payer account, whatever the model picked.
+         Missing setup raises OutsideAccountNotSetUp. An owned model pick produces a warning.
+      3. Otherwise keep today's named-card and closed-card correction rules. With no match,
+         foreign currency uses the wallet first, then the household payer's default or the
+         sender's default. An owned account decides the payer (warning on disagreement);
+         an unowned account takes the text payer or sender. Warnings never block saving.
     """
+    warning = None
     if transaction.get("category") == "YouTrip top-up":
         wallet = directory.open_account_named(WALLET_NAME)
         funder = directory.account(wallet.funded_by_account_id) if wallet else None
         if funder is None or not funder.is_open:
             raise WalletNotSetUp()
         account = funder
+        payer = whose_card_paid(account, sender, directory)
         transaction["transaction_type"] = "Transfer"
     else:
         account = directory.account_named(transaction.get("payment_method"))
+        if account and _key(account.name) == _key(OUTSIDE_PAYER_ACCOUNT_NAME):
+            account = None
         message = transaction.get("description") or ""
         if account is not None and not account.is_open and not _names_account(message, account.name):
             # The model picked a closed card the message never names in full, while the message
@@ -243,14 +322,30 @@ def resolve_payment(transaction: dict, directory: Directory, sender: Participant
             # stays, with its warning and "Save anyway": a late refund said loosely ("my old
             # visa", often from a voice transcript) must not slip onto the default card unseen.
             account = _open_account_in(message, directory) or account
-        if account is None and transaction.get("currency", "SGD") != "SGD":
-            account = directory.open_account_named(WALLET_NAME)
-        if account is None:
-            account = directory.account(sender.default_account_id)
+        if text_payer is not None and not text_payer.is_household:
+            outside = directory.open_account_named(OUTSIDE_PAYER_ACCOUNT_NAME)
+            if outside is None:
+                raise OutsideAccountNotSetUp()
+            if account and account.owner_participant_id is not None:
+                warning = OUTSIDE_ON_OWNED_WARNING.format(
+                    payer=text_payer.display_name, outside_account=outside.name, account=account.name)
+            account, payer = outside, text_payer
+        else:
+            if account is None and transaction.get("currency", "SGD") != "SGD":
+                account = directory.open_account_named(WALLET_NAME)
+            if account is None:
+                account = directory.account(text_payer.default_account_id) if text_payer else None
+                account = account or directory.account(sender.default_account_id)
+            payer = whose_card_paid(account, text_payer or sender, directory)
+            if text_payer and payer.id != text_payer.id:
+                warning = OWNER_WINS_WARNING.format(
+                    payer=text_payer.display_name, account=account.name, owner=payer.display_name)
 
-    owner = whose_card_paid(account, sender, directory)
     transaction["account_id"] = account.id
     transaction["payment_method"] = account.name
-    transaction["account_owner"] = owner.display_name if owner else "Not recorded"
+    transaction["account_owner"] = payer.display_name
+    transaction["paid_by_participant_id"] = payer.id
+    transaction["paid_by"] = payer.display_name
+    transaction["payer_warning"] = warning
     transaction["closed_account"] = not account.is_open
     return transaction
