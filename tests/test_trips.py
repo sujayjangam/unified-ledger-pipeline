@@ -182,6 +182,12 @@ async def test_trip_callback_paths_answer_once(command_db, action, active, selec
         query.edit_message_text.assert_awaited_once()
         operation = "switch_trip_on" if action.startswith("trip:on") else "switch_trip_off"
         assert operations[operation].call_args.args[:2] == (conn, 2)
+        # A made switch (or an off that was already off) replaces the menu with a plain line;
+        # only a refused pick keeps the buttons, so the person can choose again.
+        keyboard = query.edit_message_text.await_args.kwargs["reply_markup"]
+        assert (keyboard is not None) == (toast == "You're not on that trip.")
+        if toast == "Trip mode is on.":
+            assert query.edit_message_text.await_args.args[0].startswith("✅ ")
     if changed:
         # The old banner is deleted outright, which also unpins it.
         context.bot.delete_message.assert_awaited_once_with(chat_id=BOB, message_id=99)
@@ -398,8 +404,12 @@ async def test_menu_and_banner_escape_names_but_not_labels(command_db):
     await bot_core.handle_trip_button(update, context)
     reply = query.edit_message_text.await_args
     assert r"**Beach\_2026**" in reply.args[0]
-    assert "Beach_2026" in reply.kwargs["reply_markup"].inline_keyboard[0][0].text
     assert r"**Beach\_2026**" in context.bot.send_message.await_args.kwargs["text"]
+    # After a switch the menu has no buttons, so check the button label on the /trip menu.
+    command_update = _update(ALICE)
+    await bot_core.trip_command(command_update, _context())
+    menu = command_update.message.reply_text.await_args.kwargs["reply_markup"]
+    assert "Beach_2026" in menu.inline_keyboard[0][0].text
 
 
 async def test_failed_menu_redraw_still_updates_banner_and_answers_once(command_db):
@@ -506,3 +516,15 @@ async def test_banner_goes_to_the_senders_private_chat_even_from_a_group(command
     await bot_core.handle_trip_button(update, context)
     assert context.bot.send_message.await_args.kwargs["chat_id"] == ALICE
     context.bot.delete_message.assert_awaited_once_with(chat_id=ALICE, message_id=99)
+
+
+async def test_tap_is_answered_before_the_banner_swap(command_db):
+    """The button spins until answer(), so it must not wait on the banner's Telegram calls."""
+    update, context, query = _trip_tap("trip:on:7")
+    order = []
+    query.answer.side_effect = lambda *a, **k: order.append("answer")
+    context.bot.delete_message.side_effect = lambda *a, **k: order.append("delete")
+    context.bot.send_message.side_effect = lambda *a, **k: order.append("send") or MagicMock(message_id=123)
+    await bot_core.handle_trip_button(update, context)
+    assert order == ["answer", "delete", "send"]
+    query.answer.assert_awaited_once_with("Trip mode is on.")

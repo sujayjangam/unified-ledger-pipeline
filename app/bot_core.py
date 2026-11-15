@@ -6,6 +6,7 @@ from telegram import BotCommand, Update, InlineKeyboardButton, InlineKeyboardMar
 from telegram.helpers import escape_markdown
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 import tempfile
+import time
 from app.add_expense import add_expense, dollars_to_cents, format_cents
 from app.services.utils import get_sgt_now, get_week_start, get_month_start
 from app.services.ledger_queries import get_recent_entries, get_period_summary, get_category_summary, find_recent_duplicate
@@ -320,11 +321,18 @@ def _trip_menu(active, choices, more, today):
     return status, _trip_keyboard(choices, active, 0, more, today)
 
 
+def _ms(start, end) -> str:
+    """Elapsed time between two time.perf_counter() readings, for the timing log lines."""
+    return f"{(end - start) * 1000:.0f}ms"
+
+
 async def trip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Always show this sender's buttons, including when old-style arguments were supplied."""
+    started = time.perf_counter()
     directory = await authorize(update)
     if directory is None:
         return
+    authed = time.perf_counter()
     sender = directory.participant_by_telegram_id(str(update.effective_user.id))
     try:
         with get_connection() as conn:
@@ -335,7 +343,10 @@ async def trip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Could not load trip menu: {e}")
         await update.effective_message.reply_text(TRIP_CHANGE_ERROR)
         return
+    db_done = time.perf_counter()
     await update.effective_message.reply_text(status, parse_mode="Markdown", reply_markup=keyboard)
+    print(f"/trip menu: auth {_ms(started, authed)}, db {_ms(authed, db_done)}, "
+          f"send {_ms(db_done, time.perf_counter())}")
 
 
 async def _remove_old_banner(bot, chat_id, message_id, previous) -> bool:
@@ -412,10 +423,12 @@ async def _update_trip_banner(bot, chat_id, participant_id, active, previous, to
 async def handle_trip_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Acknowledge once, after deciding the outcome; expense-card toggles use another handler."""
     query = update.callback_query
+    started = time.perf_counter()
     directory = await authorize(update)
     if directory is None:
         await query.answer()
         return
+    authed = time.perf_counter()
     sender = directory.participant_by_telegram_id(str(update.effective_user.id))
     today = get_sgt_now().date()
     changed = False
@@ -455,10 +468,24 @@ async def handle_trip_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.answer(TRIP_CHANGE_ERROR)
         return
 
+    db_done = time.perf_counter()
+
     if toast == "Already on.":
         await query.answer(toast)
         return
+    # Answer as soon as the outcome is known: the button keeps spinning until answer() runs,
+    # and the banner swap below is several Telegram round trips. A banner failure is shown in
+    # the message text instead, since a query can only be answered once.
+    await query.answer(toast)
+    answered = time.perf_counter()
+
     status, keyboard = _trip_menu(active, choices, more, today)
+    if action != "page" and toast != "You're not on that trip.":
+        # A switch was made (or off was already off): the menu has done its job, so it becomes a
+        # plain status line with no buttons, saving screen space. This is an edit, not a delete,
+        # so Telegram's 48-hour limit on deleting messages doesn't apply.
+        status = ("✅ " + status) if active else status
+        keyboard = None
     try:
         if action == "page":
             await query.edit_message_reply_markup(
@@ -468,6 +495,7 @@ async def handle_trip_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except Exception as e:
         # Telegram redraws cannot undo a committed switch or prevent its banner update.
         print(f"Could not redraw trip menu: {e}")
+    redrawn = time.perf_counter()
     if changed:
         if not await _update_trip_banner(context.bot, int(sender.telegram_user_id), sender.id, active, previous, today):
             try:
@@ -475,7 +503,10 @@ async def handle_trip_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     status + "\n\n" + TRIP_BANNER_WARNING, parse_mode="Markdown", reply_markup=keyboard)
             except Exception as e:
                 print(f"Could not show trip banner warning: {e}")
-    await query.answer(toast)
+    # Where the time goes, so slowness is measured rather than guessed (Cloud Run logs this too).
+    print(f"Trip tap {action}: auth {_ms(started, authed)}, db {_ms(authed, db_done)}, "
+          f"answer {_ms(db_done, answered)}, redraw {_ms(answered, redrawn)}, "
+          f"banner {_ms(redrawn, time.perf_counter())}")
 
 
 # Both caches below live in context.user_data (per Telegram user, pure process memory - the
