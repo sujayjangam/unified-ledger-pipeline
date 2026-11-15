@@ -249,23 +249,35 @@ _PAYER_EXCLUSIONS = frozenset("""
 def read_payer(message: str, candidates, sender: Participant, account_names=()) -> PayerReading:
     """Read 'paid by <name>', 'paid for by <name>', '<name> paid' and '<name> pays'.
 
-    'I paid', 'I pay' and 'paid by me' always mean the sender.
+    <name> is a candidate's whole display name, or one word of it that no other candidate's
+    name shares. 'I paid', 'I pay' and 'paid by me' always mean the sender.
 
     Python reads the raw text, never the model: 'split with Carol' must never become
     'Carol paid'. The caller supplies trip members or household people and directory
     account names, whose words suppress warnings for payment methods such as Card A.
     """
-    # One alternation consumes the longest name first, so a shorter prefix cannot also
-    # match the same payer mention. Separate mentions still count as separate people.
-    people = sorted(candidates, key=lambda p: len(p.display_name), reverse=True)
-    names = [r"\s+".join(re.escape(w) for w in p.display_name.split()) for p in people]
+    # What counts as saying a person: their whole display name, or any one word of it that no
+    # other candidate's name contains. Nobody says "Ann Lee paid" every time; "Lee paid" is
+    # enough while she is the only Lee. A word two candidates share ("Ann" in "Ann Lee" and "Ann
+    # Kim") is left out, so it can't pick either of them - it falls through to the unclear warning.
+    word_counts = {}
+    for p in candidates:
+        for w in {w.casefold() for w in p.display_name.split()}:
+            word_counts[w] = word_counts.get(w, 0) + 1
+    spoken = [(p.display_name.split(), p) for p in candidates]
+    spoken += [([w], p) for p in candidates if len(p.display_name.split()) > 1
+               for w in p.display_name.split() if word_counts[w.casefold()] == 1]
+    # One alternation consumes the longest form first, so a shorter one cannot also match the
+    # same payer mention. Separate mentions still count as separate people.
+    spoken.sort(key=lambda entry: len(" ".join(entry[0])), reverse=True)
+    names = [r"\s+".join(re.escape(w) for w in words) for words, _ in spoken]
     found = {}
     if names:
         choices = "|".join(f"(?P<p{i}>{name})" for i, name in enumerate(names))
         for pattern in (rf"(?<!\w)paid\s+(?:for\s+)?by\s+(?:{choices})(?!\w)",
                         rf"(?<!\w)(?:{choices})\s+(?:paid|pays)(?!\w)"):
             for match in re.finditer(pattern, message, re.IGNORECASE):
-                person = people[int(match.lastgroup[1:])]
+                person = spoken[int(match.lastgroup[1:])][1]
                 found[person.id] = person
     if re.search(r"(?<!\w)(?:I\s+(?:paid|pay)|paid\s+by\s+me)(?!\w)", message, re.IGNORECASE):
         found[sender.id] = sender

@@ -205,6 +205,22 @@ def test_read_payer_phrasings(directory, message, payer, unclear):
     assert reading.unclear == unclear
 
 
+@pytest.mark.parametrize("message,payer,unclear", [
+    ("Ann Lee paid 40", 20, False),   # the whole name
+    ("Lee paid 40", 20, False),       # one word only she has
+    ("paid by kim", 21, False),
+    ("Ann paid 40", None, True),      # two candidates share "Ann": never pick one
+    ("Ann Kim paid 40", 21, False),   # the whole name settles it
+    ("Lee paid and Kim paid", None, True),
+])
+def test_one_word_of_a_name_counts_when_no_one_else_has_it(message, payer, unclear):
+    # Fictional names. Nobody says a two-word name in full every time.
+    ann_lee, ann_kim = Participant(20, "Ann Lee", None, None), Participant(21, "Ann Kim", None, None)
+    sender = Participant(1, "Alice", "111111", 10, True)
+    reading = read_payer(message, (sender, ann_lee, ann_kim), sender)
+    assert (reading.payer.id if reading.payer else None, reading.unclear) == (payer, unclear)
+
+
 @pytest.mark.parametrize("message", ["paid by Alice Bob", "ALICE   BOB pays", "Alice Bob paid"])
 def test_longest_multiword_name_wins(directory, message):
     # Both names are fictional; the shorter prefix must not make this ambiguous.
