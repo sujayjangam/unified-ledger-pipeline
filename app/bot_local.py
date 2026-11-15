@@ -11,7 +11,7 @@ of each secret on disk.
 
 Import order matters: `bot_core` reads `TELEGRAM_BOT_TOKEN` at module import time
 (a top-level `os.getenv` near the top of `bot_core.py`), so the override has to happen before that import - which is why
-`from app.bot_core import get_application` sits below this module's setup code instead of
+`from app.bot_core import get_application, register_commands` sits below this module's setup code instead of
 at the top of the file.
 
 Why a separate token at all: `run_polling()` clears whatever webhook is registered against
@@ -58,11 +58,12 @@ if not local_cfg.get("DATABASE_URL"):
         )
     print("⚠️  ALLOW_PROD_DB=1 - test entries WILL be written to the production ledger.")
 
-from app.bot_core import get_application  # noqa: E402 - must follow the override above
+from app.bot_core import get_application, register_commands  # noqa: E402 - must follow the override above
 
 
 async def announce(app):
     """Name the bot we actually connected as, so a token mix-up is obvious immediately."""
+    await register_commands(app.bot)
     me = await app.bot.get_me()
     print(f"✅ Polling as @{me.username}. The production webhook is untouched.")
 

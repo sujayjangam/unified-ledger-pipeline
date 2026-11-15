@@ -1,11 +1,14 @@
 from datetime import datetime
 from unittest.mock import MagicMock
 
+import pytest
+
 from telegram import CallbackQuery, Chat, Message, MessageEntity, Update, User, Voice
 
 from app.bot_core import (
     get_application,
     handle_button_click,
+    handle_trip_button,
     handle_text,
     handle_unsupported,
     handle_voice,
@@ -58,7 +61,12 @@ def test_captioned_photo_routes_to_handle_unsupported():
     assert _first_matching_handler(app, update) is handle_unsupported
 
 
-def test_button_press_routes_to_handle_button_click():
+@pytest.mark.parametrize("data,expected", [
+    ("confirm_save", handle_button_click), ("trip_toggle", handle_button_click),
+    ("trip:on:7", handle_trip_button), ("trip:off", handle_trip_button),
+    ("trip:page:3", handle_trip_button),
+])
+def test_button_press_routes_to_correct_handler(data, expected):
     # The CallbackQueryHandler is registered last and has no pattern=, so it must not be
     # shadowed by any of the MessageHandlers above it.
     app = get_application()
@@ -69,8 +77,19 @@ def test_button_press_routes_to_handle_button_click():
         id="1",
         from_user=User(id=1, first_name="Test", is_bot=False),
         chat_instance="1",
-        data="confirm_save",
+        data=data,
         message=card,
     )
     update = Update(update_id=1, callback_query=query)
-    assert _first_matching_handler(app, update) is handle_button_click
+    assert _first_matching_handler(app, update) is expected
+
+
+def test_pinned_message_notice_routes_to_delete_pin_notice():
+    # Pinning the trip banner makes Telegram send a service update from the bot itself. It must
+    # reach delete_pin_notice, never handle_unsupported (which would answer "not authorized").
+    from app.bot_core import delete_pin_notice
+    app = get_application()
+    chat = Chat(id=1, type="private")
+    pinned = Message(message_id=2, date=datetime.now(), chat=chat, text="banner")
+    update = _make_update(pinned_message=pinned)
+    assert _first_matching_handler(app, update) is delete_pin_notice

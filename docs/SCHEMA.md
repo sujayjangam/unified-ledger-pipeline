@@ -46,6 +46,10 @@
   when shown. NULL means "sender not recorded": rows from before the sender was recorded, and
   every row from the CLI or REST API. Not to be confused with the account's owner, which is
   whose card paid and is often not the sender.
+- **trip_id**: BIGINT, nullable, FK → `trips.id` (revision `0006_add_trips`). The sender's trip
+  when the bot logged the entry ([ADR-0036](decisions/0036-trip-switch-per-person.md)), unless "Not trip" was tapped on the card
+  ([ADR-0035](decisions/0035-trips-tagged-at-log-time.md)). Tagged by when the entry was logged,
+  not by its `date`. NULL for everyday entries, and always for the CLI and REST API.
 - **Dropped** by `0005_drop_text_account_columns` (#53): `account_desc` (the card's name as
   text), `account_owner` (the card owner's display name, inferred by first match) and
   `entered_by` (the sender's Telegram user ID as text). The ids above replace them.
@@ -63,6 +67,14 @@ Who may use the bot, and the accounts money is paid from, are rows rather than s
   person who only appears in the ledger.
 - **default_account_id**: BIGINT, nullable, FK → `accounts.id`. Used when a message names no
   card. Anyone with a `telegram_user_id` must have one, and it must be open.
+- **active_trip_id**: BIGINT, nullable (revision `0006_add_trips`). This person's trip mode: the
+  trip their new bot entries are tagged with, NULL when off. A composite FK
+  (`fk_participants_active_trip_member`: `(active_trip_id, id)` → `trip_members (trip_id,
+  participant_id)`) allows only a trip they are a member of. Switched from `/trip`'s buttons,
+  never by the seed script ([ADR-0036](decisions/0036-trip-switch-per-person.md)).
+- **trip_banner_message_id**: BIGINT, nullable (revision `0006_add_trips`). The Telegram message
+  pinned in this person's private chat while their trip mode is on, so the old banner can be
+  removed on a switch (deleted, or unpinned and edited to say the trip ended if it is too old).
 - **created_at**: TIMESTAMPTZ, NOT NULL, `DEFAULT now()`
 
 **accounts**
@@ -82,6 +94,27 @@ Who may use the bot, and the accounts money is paid from, are rows rather than s
 Two open accounts can't share a name, ignoring case (`uq_accounts_open_name_ci`, a partial
 unique index on `lower(name)` where `closed_on IS NULL`). A closed card and its open replacement
 can.
+
+## trips and trip_members (revision `0006_add_trips`)
+
+A trip is a named group of participants in families
+([ADR-0035](decisions/0035-trips-tagged-at-log-time.md)). Rows come from the gitignored seed file
+via `scripts/seed_directory.py`.
+
+**trips**
+- **id**: BIGINT identity, primary key
+- **name**: TEXT, NOT NULL. Unique ignoring case (`uq_trips_name_ci`), so two trips can't look
+  the same on `/trip`'s buttons.
+- **start_date**, **end_date**: DATE, NOT NULL, with `end_date >= start_date` (`ck_trips_dates`).
+  They sort `/trip`'s list and label its buttons; they never tag an entry
+  ([ADR-0036](decisions/0036-trip-switch-per-person.md)).
+- **created_at**: TIMESTAMPTZ, NOT NULL, `DEFAULT now()`
+
+**trip_members**
+- **trip_id**: BIGINT, FK → `trips.id`; with `participant_id`, the primary key
+- **participant_id**: BIGINT, FK → `participants.id`
+- **family**: TEXT, NOT NULL. A label shared by everyone on the trip who settles together. Stored
+  per trip, so a person can be grouped differently on another trip.
 
 ## Business date vs. write time
 

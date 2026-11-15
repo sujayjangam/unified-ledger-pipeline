@@ -23,6 +23,16 @@ def _no_real_database(monkeypatch):
     monkeypatch.setattr(app.database, "get_engine", _refuse)
 
 
+@pytest.fixture(autouse=True)
+def _no_active_trip(monkeypatch):
+    """Every card the tests build reads the active trip, which is a database query. Default it to
+    "no trip on", so tests that aren't about trips see the card they always did; a trip test
+    patches bot_core._load_active_trip again to return a Trip, or to raise."""
+    import app.bot_core
+
+    monkeypatch.setattr(app.bot_core, "_load_active_trip", lambda participant_id: None)
+
+
 @pytest.fixture
 def directory():
     """A fictional Directory shared by the tests (this repo is public: never real names or cards).

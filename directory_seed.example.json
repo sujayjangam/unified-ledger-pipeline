@@ -1,7 +1,9 @@
 {
   "participants": [
     {"display_name": "Alice", "telegram_user_id": "111111", "default_account": "Card A"},
-    {"display_name": "Bob", "telegram_user_id": "222222", "default_account": "Card B"}
+    {"display_name": "Bob", "telegram_user_id": "222222", "default_account": "Card B"},
+    {"display_name": "Carol"},
+    {"display_name": "Dave"}
   ],
   "accounts": [
     {"name": "Card A", "owner": "Alice", "expires": "09/29"},
@@ -9,6 +11,9 @@
     {"name": "Cash", "owner": null},
     {"name": "YouTrip", "owner": "Alice", "funded_by": "Card A", "expires": "03/29"},
     {"name": "Old Card", "owner": "Alice", "closed_on": "2026-03-31"}
+  ],
+  "trips": [
+    {"name": "Beach Trip", "start": "2026-12-01", "end": "2026-12-07", "families": {"Alice and Bob": ["Alice", "Bob"], "Carol and Dave": ["Carol", "Dave"]}}
   ],
   "transaction_overrides": {}
 }

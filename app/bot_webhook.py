@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from telegram import Update
-from app.bot_core import get_application
+from app.bot_core import get_application, register_commands
 
 # Fetch our bot engine
 ptb_app = get_application()
@@ -72,6 +72,7 @@ async def lifespan(app: FastAPI):
 
     await ptb_app.initialize()
     await ptb_app.start()
+    await register_commands(ptb_app.bot)
 
     if WEBHOOK_URL:
         # Registered on every startup, so the token Telegram sends is always the one this process

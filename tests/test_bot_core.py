@@ -26,6 +26,7 @@ def _update(user_id, text=None):
     update.message.text = text
     # Awaited on every rejection path, so it has to be an AsyncMock, not a plain MagicMock.
     update.message.reply_text = AsyncMock()
+    update.effective_message = update.message
     return update
 
 

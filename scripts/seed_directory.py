@@ -1,4 +1,4 @@
-"""Seeds the participants and accounts tables (#53).
+"""Seeds the participants, accounts and trips tables (#53, group-trip splitting).
 
 Migration 0004 created the tables empty on purpose: this repo is public, and the rows are real
 names and card labels. They live in a gitignored file instead - directory_seed.local.json, in the
@@ -18,6 +18,10 @@ It used to link old transactions to these tables too, by matching their account_
 entered_by text. Migration 0005 dropped those columns, so that part was removed; the
 transaction_overrides in the seed file are still checked but no longer applied - they stay as the
 record of which card each unlabelled row was given.
+
+Trips (migration 0006) come from the same file: each trip names its families and the
+participants in each, with start and end dates. The script never changes a person's trip
+switch and leaves an existing member's family alone on a rerun, like every other existing row.
 """
 
 import argparse
@@ -47,6 +51,8 @@ class SeedData:
     participants: list[dict]
     accounts: list[dict]
     transaction_overrides: dict[str, str]
+    # Each trip has name, start_date, end_date and members [(display_name, family), ...].
+    trips: list[dict]
 
 
 def parse_expiry(printed: str) -> date:
@@ -116,14 +122,65 @@ def parse_seed(raw: dict) -> SeedData:
         if _key(name) not in account_names:
             raise ValueError(f"Override for {transaction_id}: {name!r} is not a listed account")
 
-    return SeedData(participants, accounts, overrides)
+    trips = _parse_trips(raw.get("trips", []), people)
+    return SeedData(participants, accounts, overrides, trips)
+
+
+def _parse_trips(raw_trips: list, people: set) -> list[dict]:
+    """Checks the trips section and flattens each trip's families into (person, family) pairs.
+
+    In the file a trip reads {"name": "Beach Trip", "families": {"Alice's family": ["Alice"]}},
+    because that is how a trip is planned. Every member must be a participant listed in the same
+    file, and appear only once per trip: a person in two families would make it ambiguous who
+    settles their share. Raises ValueError naming the trip."""
+    trips, seen_names = [], set()
+    for t in raw_trips:
+        name = (t.get("name") or "").strip()
+        if not name:
+            raise ValueError("A trip has no name")
+        if _key(name) in seen_names:
+            # The database would reject this too (uq_trips_name_ci); say so earlier.
+            raise ValueError(f"Trip {name}: two trips share this name")
+        seen_names.add(_key(name))
+
+        # fromisoformat also accepts compact dates; require the seed's explicit YYYY-MM-DD
+        # spelling first so malformed or absent dates fail here, before any database access.
+        dates = {}
+        for field in ("start", "end"):
+            value = t.get(field)
+            if not isinstance(value, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
+                raise ValueError(f"Trip {name}: {field} must be YYYY-MM-DD")
+            try:
+                dates[field] = date.fromisoformat(value)
+            except ValueError:
+                raise ValueError(f"Trip {name}: {field} must be a valid YYYY-MM-DD date") from None
+        if dates["end"] < dates["start"]:
+            raise ValueError(f"Trip {name}: end must be on or after start")
+
+        members, placed = [], set()
+        for family, people_in_family in (t.get("families") or {}).items():
+            family = family.strip()
+            if not family:
+                raise ValueError(f"Trip {name}: a family has no name")
+            for person in people_in_family:
+                person = person.strip()
+                if person not in people:
+                    raise ValueError(f"Trip {name}: {person!r} is not a listed participant")
+                if person in placed:
+                    raise ValueError(f"Trip {name}: {person} is in more than one family")
+                placed.add(person)
+                members.append((person, family))
+        if not members:
+            raise ValueError(f"Trip {name}: no members")
+        trips.append({"name": name, "start_date": dates["start"], "end_date": dates["end"], "members": members})
+    return trips
 
 
 
 def _seed(conn, seed: SeedData) -> dict:
     """Inserts the participants and accounts that don't exist yet, then wires up defaults and
     funding cards by name. Returns counts for the report."""
-    counts = {"participants": 0, "accounts": 0}
+    counts = {"participants": 0, "accounts": 0, "trips": 0, "trip_members": 0}
 
     for p in seed.participants:
         inserted = conn.execute(text("""
@@ -168,12 +225,29 @@ def _seed(conn, seed: SeedData) -> dict:
                 WHERE lower(name) = lower(:name) AND closed_on IS NOT DISTINCT FROM CAST(:closed_on AS date)
                   AND funded_by_account_id IS NULL
             """), {"funder": id_for(a["funded_by"]), "name": a["name"], "closed_on": a.get("closed_on")})
+
+    # Trips last: members point at participants, which now all exist. Only the bot changes
+    # participants' switches; seeding a trip must not start tagging anyone's entries.
+    for t in seed.trips:
+        counts["trips"] += conn.execute(text("""
+            INSERT INTO trips (name, start_date, end_date)
+            SELECT :name, :start_date, :end_date
+            WHERE NOT EXISTS (SELECT 1 FROM trips WHERE lower(name) = lower(:name))
+        """), {"name": t["name"], "start_date": t["start_date"], "end_date": t["end_date"]}).rowcount
+        for person, family in t["members"]:
+            counts["trip_members"] += conn.execute(text("""
+                INSERT INTO trip_members (trip_id, participant_id, family)
+                SELECT t.id, p.id, :family
+                FROM trips t, participants p
+                WHERE lower(t.name) = lower(:trip) AND p.display_name = :person
+                ON CONFLICT (trip_id, participant_id) DO NOTHING
+            """), {"trip": t["name"], "person": person, "family": family}).rowcount
     return counts
 
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="Seed the participants and accounts tables (#53)")
+    parser = argparse.ArgumentParser(description="Seed the participants, accounts and trips tables")
     parser.add_argument("--seed", default=DEFAULT_SEED, help=f"seed file (default {DEFAULT_SEED})")
     parser.add_argument("--write", action="store_true", help="commit; without it everything is rolled back")
     args = parser.parse_args(argv)
@@ -206,6 +280,9 @@ def main(argv=None) -> int:
 
     print(f"\nParticipants inserted: {counts['participants']}")
     print(f"Accounts inserted:     {counts['accounts']}")
+    # .get: a stubbed _seed in the tests returns only the first two counts.
+    print(f"Trips inserted:        {counts.get('trips', 0)}")
+    print(f"Trip members inserted: {counts.get('trip_members', 0)}")
     return 0
 
 

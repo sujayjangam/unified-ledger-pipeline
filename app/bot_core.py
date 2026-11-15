@@ -2,9 +2,11 @@ import truststore
 import os
 import uuid
 from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import BotCommand, Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.helpers import escape_markdown
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 import tempfile
+import time
 from app.add_expense import add_expense, dollars_to_cents, format_cents
 from app.services.utils import get_sgt_now, get_week_start, get_month_start
 from app.services.ledger_queries import get_recent_entries, get_period_summary, get_category_summary, find_recent_duplicate
@@ -12,6 +14,10 @@ from app.services.dates import apply_date_resolution
 from app.database import get_connection
 from app.services.participants import (
     CLOSED_CARD_WARNING, NO_WALLET_MESSAGE, Directory, WalletNotSetUp, load_directory, resolve_payment,
+)
+from app.services.trips import (
+    Trip, load_active_trip, switch_trip_off, switch_trip_on, member_trips,
+    banner_message_id, set_banner_message_id, format_trip_dates,
 )
 
 # use the local windows persmissions
@@ -41,6 +47,19 @@ def _load_directory() -> Directory:
         return load_directory(conn)
 
 
+def _load_active_trip(participant_id: int) -> Trip | None:
+    """Reads which trip, if any, is on. Read fresh for every entry, like the directory, so a
+    /trip switch by this person applies to the very next message. Its own function so tests can
+    swap it out without a database."""
+    with get_connection() as conn:
+        return load_active_trip(conn, participant_id)
+
+
+# Shown on the card when the trip couldn't be read. Not a refusal: missing a trip tag can be put
+# right in SQL afterwards, but a bot that refuses entries mid-trip means nothing gets logged.
+TRIP_UNKNOWN_WARNING = "⚠️ Couldn't check the active trip, so this entry isn't tagged to one."
+
+
 # The Gatekeeper (Authorization Check)
 async def authorize(update: Update) -> Directory | None:
     """Lets a message through only if its sender is a participant with this Telegram ID.
@@ -55,13 +74,13 @@ async def authorize(update: Update) -> Directory | None:
     except Exception as e:
         # Logged in full for the Cloud Run logs; the user just gets "try again".
         print(f"❌ Could not load participants/accounts: {e}")
-        await update.message.reply_text(DIRECTORY_DOWN_MESSAGE)
+        await update.effective_message.reply_text(DIRECTORY_DOWN_MESSAGE)
         return None
 
     user_id = str(update.effective_user.id)
     if directory.participant_by_telegram_id(user_id) is None:
         print(f"🚫 Unauthorized access attempt by ID: {user_id}")
-        await update.message.reply_text("You are not authorized to use this ledger. 🛑")
+        await update.effective_message.reply_text("You are not authorized to use this ledger. 🛑")
         return None
     return directory
 
@@ -232,6 +251,274 @@ async def cat_month_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- Confirmation-card state -------------------------------------------------------------
 #
+def _md(name: str) -> str:
+    """A name escaped for Telegram's Markdown, so a trip called "Beach_2026" shows as typed. An
+    unescaped _ or * starts a format that never closes, and Telegram then rejects the whole
+    message - on a card, that would stop every entry while the trip is on. Only for text sent with
+    parse_mode="Markdown"; button labels and toasts are plain text and need none."""
+    return escape_markdown(name, version=1)
+
+
+BOT_COMMANDS = [
+    BotCommand("start", "Start using the ledger"),
+    BotCommand("recent", "Recent entries"),
+    BotCommand("today", "Today's summary"),
+    BotCommand("week", "This week's summary"),
+    BotCommand("month", "This month's summary"),
+    BotCommand("cat_today", "Today's categories"),
+    BotCommand("cat_week", "This week's categories"),
+    BotCommand("cat_month", "This month's categories"),
+    BotCommand("trip", "Change your trip mode"),
+]
+
+
+async def register_commands(bot):
+    """A command-menu failure must not prevent either transport from starting."""
+    try:
+        await bot.set_my_commands(BOT_COMMANDS)
+    except Exception as e:
+        print(f"Could not register bot commands: {e}")
+
+
+TRIP_PAGE_SIZE = 3
+TRIP_CHANGE_ERROR = "❌ Couldn't change trip mode, try again."
+TRIP_BANNER_WARNING = "⚠️ Couldn't update the pinned banner."
+
+
+def _trip_status(trip, today):
+    """Use the same escaped status in the menu and the pinned reminder."""
+    if trip:
+        return f"🧳 Trip mode is on: **{_md(trip.name)}** ({format_trip_dates(trip, today)})"
+    return "🏠 Trip mode is off."
+
+
+def _trip_keyboard(choices, active, offset, more, today):
+    """One shared layout for commands and taps; callback payloads contain only ids."""
+    if not choices and offset == 0:
+        return None
+    rows = [[InlineKeyboardButton(
+        ("✅ " if active and trip.id == active.id else "")
+        + f"{trip.name} · {format_trip_dates(trip, today)}",
+        callback_data=f"trip:on:{trip.id}",
+    )] for trip in choices[:TRIP_PAGE_SIZE]]
+    paging = []
+    if offset > 0:
+        paging.append(InlineKeyboardButton("◂ Newer", callback_data=f"trip:page:{max(0, offset - TRIP_PAGE_SIZE)}"))
+    if more:
+        paging.append(InlineKeyboardButton("Older ▸", callback_data=f"trip:page:{offset + TRIP_PAGE_SIZE}"))
+    if paging:
+        rows.append(paging)
+    if active:
+        rows.append([InlineKeyboardButton("🏠 Turn off trip mode", callback_data="trip:off")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _trip_menu(active, choices, more, today):
+    """Page zero is also the reset destination after changing a switch."""
+    status = _trip_status(active, today)
+    if not choices:
+        status += "\n\nYou're not on any trips yet."
+    return status, _trip_keyboard(choices, active, 0, more, today)
+
+
+def _ms(start, end) -> str:
+    """Elapsed time between two time.perf_counter() readings, for the timing log lines."""
+    return f"{(end - start) * 1000:.0f}ms"
+
+
+async def trip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Always show this sender's buttons, including when old-style arguments were supplied."""
+    started = time.perf_counter()
+    directory = await authorize(update)
+    if directory is None:
+        return
+    authed = time.perf_counter()
+    sender = directory.participant_by_telegram_id(str(update.effective_user.id))
+    try:
+        with get_connection() as conn:
+            active = load_active_trip(conn, sender.id)
+            choices, more = member_trips(conn, sender.id, 0, TRIP_PAGE_SIZE)
+        status, keyboard = _trip_menu(active, choices, more, get_sgt_now().date())
+    except Exception as e:
+        print(f"Could not load trip menu: {e}")
+        await update.effective_message.reply_text(TRIP_CHANGE_ERROR)
+        return
+    db_done = time.perf_counter()
+    await update.effective_message.reply_text(status, parse_mode="Markdown", reply_markup=keyboard)
+    print(f"/trip menu: auth {_ms(started, authed)}, db {_ms(authed, db_done)}, "
+          f"send {_ms(db_done, time.perf_counter())}")
+
+
+async def _remove_old_banner(bot, chat_id, message_id, previous) -> bool:
+    """Gets rid of the banner from the trip that was on before this switch. Returns False only
+    when the banner couldn't be removed or retired at all.
+
+    Deleting it is the first choice: once trip mode is off, a message saying it is on is only
+    clutter, and deleting a pinned message also unpins it. But Telegram lets a bot delete a
+    message only within 48 hours of sending it, and a trip usually runs longer. Then the banner
+    is unpinned and edited to say the trip ended, so the chat history doesn't still claim trip
+    mode is on.
+    """
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+        return True
+    except Exception as e:
+        # Expected for a banner older than 48 hours; fall through to retiring it instead.
+        print(f"Could not delete old trip banner, retiring it: {e}")
+    name = f" for **{_md(previous.name)}**" if previous else ""
+    try:
+        await bot.unpin_chat_message(chat_id=chat_id, message_id=message_id)
+        await bot.edit_message_text(
+            chat_id=chat_id, message_id=message_id, text=f"🏠 Trip mode{name} ended.", parse_mode="Markdown")
+        return True
+    except Exception as e:
+        print(f"Could not retire old trip banner: {e}")
+        return False
+
+
+async def _update_trip_banner(bot, chat_id, participant_id, active, previous, today) -> bool:
+    """Swaps the pinned banner after a committed switch: removes the old trip's banner, then pins
+    a new one if a trip is now on. Returns False when any step failed, so the menu can warn.
+
+    'chat_id' is always the participant's private chat with the bot (their Telegram user id),
+    never the chat the tap came from: Telegram message ids only mean something inside one chat,
+    so a stored banner id used against another chat could delete an unrelated message there.
+
+    'previous' is the trip that was on before the switch (None if none), used to word a banner
+    that can no longer be deleted. Each Telegram step is tried on its own, so a missing old
+    message can't stop the new banner being sent. A sent message's id is stored even if pinning
+    it fails, so the next switch can still clean it up.
+    """
+    ok = True
+    try:
+        with get_connection() as conn:
+            old_id = banner_message_id(conn, participant_id)
+    except Exception as e:
+        print(f"Could not read trip banner id: {e}")
+        old_id, ok = None, False
+    if old_id is not None and not await _remove_old_banner(bot, chat_id, old_id, previous):
+        ok = False
+    new_id = None
+    if active:
+        try:
+            message = await bot.send_message(
+                chat_id=chat_id,
+                text=_trip_status(active, today) + ". New entries are tagged to it. Send /trip to change.",
+                parse_mode="Markdown",
+            )
+            new_id = message.message_id
+            await bot.pin_chat_message(chat_id=chat_id, message_id=new_id, disable_notification=True)
+        except Exception as e:
+            print(f"Could not send/pin trip banner: {e}")
+            ok = False
+    try:
+        with get_connection() as conn:
+            set_banner_message_id(conn, participant_id, new_id)
+    except Exception as e:
+        print(f"Could not store trip banner id: {e}")
+        ok = False
+    return ok
+
+
+async def handle_trip_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Acknowledge once, after deciding the outcome; expense-card toggles use another handler."""
+    query = update.callback_query
+    started = time.perf_counter()
+    directory = await authorize(update)
+    if directory is None:
+        await query.answer()
+        return
+    authed = time.perf_counter()
+    sender = directory.participant_by_telegram_id(str(update.effective_user.id))
+    today = get_sgt_now().date()
+    changed = False
+    toast = None
+    try:
+        parts = query.data.split(":")
+        action = parts[1]
+        value = int(parts[2]) if len(parts) == 3 else None
+        if not (action == "off" and len(parts) == 2 or
+                action in ("on", "page") and value is not None and 0 <= value <= 2**63 - 1):
+            raise ValueError("Invalid trip callback")
+        offset = value if action == "page" else 0
+        with get_connection() as conn:
+            active = load_active_trip(conn, sender.id)
+            # The trip on before this tap, for wording an old banner that can't be deleted.
+            previous = active
+            if action == "on" and active and active.id == value:
+                toast = "Already on."
+                choices, more = [], False
+            else:
+                # Read the menu before committing: a failed read must not leave a changed
+                # switch behind a 'couldn't change' toast. No trip queries follow the commit.
+                choices, more = member_trips(conn, sender.id, offset, TRIP_PAGE_SIZE)
+                if action == "on":
+                    selected = switch_trip_on(conn, sender.id, value)
+                    if selected is None:
+                        toast = "You're not on that trip."
+                    else:
+                        active, changed, toast = selected, True, "Trip mode is on."
+                elif action == "off":
+                    previous = switch_trip_off(conn, sender.id)
+                    active = None
+                    changed = previous is not None
+                    toast = "Trip mode is off." if changed else "Trip mode was already off."
+    except Exception as e:
+        print(f"Could not change trip mode: {e}")
+        await query.answer(TRIP_CHANGE_ERROR)
+        return
+
+    db_done = time.perf_counter()
+
+    # Answer as soon as the outcome is known: the button keeps spinning until answer() runs,
+    # and the banner swap below is several Telegram round trips. A banner failure is shown in
+    # the message text instead, since a query can only be answered once. A failed answer (a tap
+    # Telegram already considers stale) must not skip the redraw or banner of a committed switch.
+    try:
+        await query.answer(toast)
+    except Exception as e:
+        print(f"Could not answer trip tap: {e}")
+    answered = time.perf_counter()
+
+    status, keyboard = _trip_menu(active, choices, more, today)
+    if toast == "Already on.":
+        # An older menu tapped for the trip that is already on: collapse it like any other.
+        try:
+            # _trip_status, not the menu's status: no trip list was read for this tap.
+            await query.edit_message_text(
+                "✅ " + _trip_status(active, today), parse_mode="Markdown", reply_markup=None)
+        except Exception as e:
+            print(f"Could not redraw trip menu: {e}")
+        return
+    if action != "page" and toast != "You're not on that trip.":
+        # A switch was made (or off was already off): the menu has done its job, so it becomes a
+        # plain status line with no buttons, saving screen space. This is an edit, not a delete,
+        # so Telegram's 48-hour limit on deleting messages doesn't apply.
+        status = ("✅ " + status) if active else status
+        keyboard = None
+    try:
+        if action == "page":
+            await query.edit_message_reply_markup(
+                reply_markup=_trip_keyboard(choices, active, offset, more, today))
+        else:
+            await query.edit_message_text(status, parse_mode="Markdown", reply_markup=keyboard)
+    except Exception as e:
+        # Telegram redraws cannot undo a committed switch or prevent its banner update.
+        print(f"Could not redraw trip menu: {e}")
+    redrawn = time.perf_counter()
+    if changed:
+        if not await _update_trip_banner(context.bot, int(sender.telegram_user_id), sender.id, active, previous, today):
+            try:
+                await query.edit_message_text(
+                    status + "\n\n" + TRIP_BANNER_WARNING, parse_mode="Markdown", reply_markup=keyboard)
+            except Exception as e:
+                print(f"Could not show trip banner warning: {e}")
+    # Where the time goes, so slowness is measured rather than guessed (Cloud Run logs this too).
+    print(f"Trip tap {action}: auth {_ms(started, authed)}, db {_ms(authed, db_done)}, "
+          f"answer {_ms(db_done, answered)}, redraw {_ms(answered, redrawn)}, "
+          f"banner {_ms(redrawn, time.perf_counter())}")
+
+
 # Both caches below live in context.user_data (per Telegram user, pure process memory - the
 # bot configures no PTB persistence) and are keyed by the message_id of the card the buttons
 # are attached to. Keying by card rather than keeping a single "current" transaction is what
@@ -263,9 +550,10 @@ def _take_pending_card(context: ContextTypes.DEFAULT_TYPE, message_id: int):
 
     Removing on read is what stops the same card being saved twice: whichever call gets here
     first takes the transaction, and any later one sees None. It is a safety net rather than
-    the primary guard - PTB processes updates one at a time here (concurrent_updates is never
-    enabled, and add_expense is synchronous), and the real duplicate-write protection is the
-    idempotency_key, per ADR-0011.
+    the primary guard: the real duplicate-write protection is the idempotency_key, per
+    ADR-0011. Polling runs updates one at a time, but the webhook calls process_update once per
+    request, so two taps can overlap in production - which is why the trip toggle re-checks
+    that its entry is still pending before changing it.
     """
     return context.user_data.get('pending_cards', {}).pop(message_id, None)
 
@@ -423,8 +711,47 @@ def _is_flagged(transaction: dict) -> bool:
 
 
 def _keyboard_for(transaction: dict) -> InlineKeyboardMarkup:
-    """The buttons a pending card carries: the warning pair if it was flagged, else Confirm/Cancel."""
-    return _duplicate_keyboard() if _is_flagged(transaction) else _confirm_keyboard()
+    """The buttons a pending card carries: the warning pair if it was flagged, else Confirm/Cancel,
+    and under them the trip toggle when a trip was on as the entry was logged."""
+    main = _duplicate_keyboard() if _is_flagged(transaction) else _confirm_keyboard()
+    offer = transaction.get('trip_offer')
+    if not offer:
+        return main
+    # One button that flips between the two states, so a mis-tap on "Not trip" can be undone.
+    # The callback_data is fixed and short: Telegram allows only 64 bytes, and the tap finds the
+    # entry by the card's message_id anyway.
+    label = "🏠 Not trip" if transaction.get('trip_id') else f"🧳 Tag to {offer['name']}"
+    return InlineKeyboardMarkup(
+        [*main.inline_keyboard, [InlineKeyboardButton(label, callback_data="trip_toggle")]]
+    )
+
+
+def _trip_lines(transaction: dict) -> str:
+    """The card's Trip line. Nothing when no trip was on, so everyday cards look as they always
+    have. .get() because a card stashed before trips shipped has none of these keys."""
+    if transaction.get('trip_warning'):
+        return f"{transaction['trip_warning']}\n"
+    offer = transaction.get('trip_offer')
+    if not offer:
+        return ""
+    if transaction.get('trip_id'):
+        return f"🧳 **Trip:** {_md(offer['name'])}\n"
+    return "🧳 **Trip:** not a trip entry\n"
+
+
+def _pending_card_text(transaction: dict) -> str:
+    """The text of a card waiting for Confirm. Built from the pending entry alone, so the trip
+    toggle can redraw the card without the directory or the model: the banner (duplicate and
+    closed-card warnings) is worked out once, when the entry is logged, and kept on the entry."""
+    return transaction.get('card_banner', "") + (
+        f"Please confirm your **{transaction.get('transaction_type', 'Expense')}**:\n\n"
+        f"💰 **Amount:** {_display_amount(transaction)}\n"
+        f"🏷️ **Category:** {transaction.get('category')}\n"
+        f"{_account_lines(transaction)}"
+        f"{_trip_lines(transaction)}"
+        f"📝 **Notes:** {transaction.get('description', 'None')}\n"
+        f"{_date_lines(transaction)}"
+    )
 
 
 # shared pipeline: raw text (transcript or typed) -> extraction -> pending confirmation card
@@ -508,6 +835,20 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
     # handle_button_click later tells a flagged card from a normal one on Cancel or a failed save.
     single_transaction['suspected_duplicate'] = _find_duplicate_of(single_transaction)
 
+    # Which trip, if any, this entry is tagged to: the one on right now, whatever the entry's date,
+    # so a booking paid before the trip still counts. Copied onto the entry here, so a /trip
+    # switch while this card waits doesn't change it, and the "Not trip" tap never reads the
+    # database. trip_offer remembers the trip even after "Not trip", so the tap can be undone.
+    try:
+        active_trip = _load_active_trip(sender.id)
+    except Exception as e:
+        print(f"❌ Could not read the active trip: {e}")
+        active_trip = None
+        single_transaction['trip_warning'] = TRIP_UNKNOWN_WARNING
+    if active_trip:
+        single_transaction['trip_offer'] = {'id': active_trip.id, 'name': active_trip.name}
+    single_transaction['trip_id'] = active_trip.id if active_trip else None
+
     amount_text = _display_amount(single_transaction)
     banner = ""
     if single_transaction['suspected_duplicate']:
@@ -515,19 +856,14 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
     if single_transaction.get('closed_account'):
         # Under the duplicate banner when both apply - one card, every reason to look twice.
         banner += f"{CLOSED_CARD_WARNING}\n\n"
+    # Kept on the entry so the trip toggle can redraw the card exactly as it was (see
+    # _pending_card_text). The duplicate banner names people, which needs the directory.
+    single_transaction['card_banner'] = banner
 
-    # Reference 'single_transaction', in future this will read 'transactions' when support for multiple txn is added
-    summary_message = banner + (
-        f"Please confirm your **{single_transaction.get('transaction_type', 'Expense')}**:\n\n"
-        f"💰 **Amount:** {amount_text}\n"
-        f"🏷️ **Category:** {single_transaction.get('category')}\n"
-        f"{_account_lines(single_transaction)}"
-        f"📝 **Notes:** {single_transaction.get('description', 'None')}\n"
-        f"{_date_lines(single_transaction)}"
-    )
-
-    # Send the clean summary with its buttons attached - Confirm/Cancel, or Save anyway/Cancel if flagged
-    await status_msg.edit_text(summary_message, reply_markup=_keyboard_for(single_transaction), parse_mode="Markdown")
+    # Send the clean summary with its buttons attached - Confirm/Cancel, or Save anyway/Cancel if
+    # flagged, plus the trip toggle when a trip is on
+    await status_msg.edit_text(_pending_card_text(single_transaction), reply_markup=_keyboard_for(single_transaction),
+                               parse_mode="Markdown")
 
     # Stash the transaction against *this card's* message_id, only once the card exists - the
     # button press that comes back carries the message_id and nothing else, so that is the
@@ -592,6 +928,23 @@ async def handle_unsupported(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "⚠️ I can only read voice notes and text messages right now.\n"
         "Receipt photos are planned but not supported yet."
     )
+
+async def delete_pin_notice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Deletes the "Bot pinned a message" notice Telegram adds when the trip banner is pinned.
+
+    The banner itself is the reminder; the notice under it only repeats it. Only notices for the
+    bot's own pins are touched - a pin the user made is theirs to keep. Done the moment the notice
+    arrives, well inside Telegram's 48-hour limit on deleting. No authorize(): the bot is only
+    tidying up its own action, and nothing is read or written. A failure just leaves the notice.
+    """
+    message = update.effective_message
+    if message is None or message.from_user is None or message.from_user.id != context.bot.id:
+        return
+    try:
+        await message.delete()
+    except Exception as e:
+        print(f"Could not delete pin notice: {e}")
+
 
 # buttons!
 async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -658,6 +1011,8 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
             # the user confirmed is what gets saved.
             account_id=transaction_to_save.get('account_id'),
             entered_by_participant_id=transaction_to_save.get('entered_by_participant_id'),
+            # The trip as the card showed it, after any "Not trip" tap. None for an everyday entry.
+            trip_id=transaction_to_save.get('trip_id'),
         )
 
         if save_success:
@@ -669,6 +1024,7 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
                 f"🏷️ **Category:** {transaction_to_save.get('category')}\n"
                 # The account stays on record in the chat after the buttons go (#92)
                 f"{_account_lines(transaction_to_save)}"
+                f"{_trip_lines(transaction_to_save)}"
                 f"📝 **Notes:** {transaction_to_save.get('description', 'None')}\n"
                 f"📅 **Date:** {transaction_to_save.get('date')}\n"
             )
@@ -690,6 +1046,7 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
                 f"🏷️ **Category:** {transaction_to_save.get('category')}\n"
                 # The card is live again, so it shows the account a retry would save against
                 f"{_account_lines(transaction_to_save)}"
+                f"{_trip_lines(transaction_to_save)}"
                 f"📝 **Notes:** {transaction_to_save.get('description', 'None')}\n"
                 # Same date lines as the first card, ⚠️ included: this card is live again,
                 # so it should still say what was odd about the date being retried.
@@ -721,6 +1078,48 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
             cancel_text = "❌ **Cancelled.** Nothing was saved to the Ledger."
         await query.edit_message_text(cancel_text, parse_mode="Markdown")
 
+    elif query.data == "trip_toggle":
+        # Flips the pending entry between "tagged to the trip" and "not a trip entry", then redraws
+        # the card. Only the in-memory entry changes: nothing is saved, and the database isn't read.
+        outcome = _card_outcome(context, message_id)
+        if outcome == "saved":
+            await query.answer("✅ Already saved to the ledger.")
+            return
+        if outcome == "cancelled":
+            await query.answer("❌ This entry was cancelled.")
+            return
+
+        # Looked up, not taken: the entry stays pending for Confirm. Missing while a save is in
+        # flight (Confirm takes it out), after a restart, or on a card from before trips.
+        pending = context.user_data.get('pending_cards', {}).get(message_id)
+        if pending is None or not pending.get('trip_offer'):
+            await query.answer("⚠️ This entry can't be changed now.")
+            return
+
+        offer = pending['trip_offer']
+        new_trip_id = None if pending.get('trip_id') else offer['id']
+        # Redraw from a copy first, and change the pending entry only once the card shows the new
+        # state. If the redraw fails, the card still shows the old trip line, so the entry must
+        # keep it too: Confirm saves exactly what the card showed.
+        toggled = {**pending, 'trip_id': new_trip_id}
+        try:
+            await query.edit_message_text(_pending_card_text(toggled), reply_markup=_keyboard_for(toggled),
+                                          parse_mode="Markdown")
+        except Exception as e:
+            print(f"❌ Trip toggle redraw failed: {e}")
+            await query.answer("⚠️ Couldn't change the trip, try again.")
+            return
+        # The webhook runs updates concurrently, so a Confirm or Cancel tap can have taken this
+        # entry while the redraw above was waiting. Then the entry is no longer this card's to
+        # change: leave it alone (Confirm saves, and redraws the card with, what it took).
+        if context.user_data.get('pending_cards', {}).get(message_id) is not pending:
+            await query.answer("⏳ This entry is already being saved or was cancelled.")
+            return
+        pending['trip_id'] = new_trip_id
+        # Answered last, so the single answer() can say what actually happened. Plain text, so
+        # the name needs no escaping here.
+        await query.answer("🏠 Not a trip entry." if new_trip_id is None else f"🧳 Tagged to {offer['name']}.")
+
     else:
         # An unrecognised callback_data - a card from an older deployment whose buttons this
         # version no longer knows about. Answer anyway: an unanswered query leaves the button
@@ -746,6 +1145,7 @@ def get_application():
     app.add_handler(CommandHandler("cat_today", cat_today_command))
     app.add_handler(CommandHandler("cat_week", cat_week_command))
     app.add_handler(CommandHandler("cat_month", cat_month_command))
+    app.add_handler(CommandHandler("trip", trip_command))
 
     # voice handler
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
@@ -755,9 +1155,16 @@ def get_application():
 
     # everything else (photo, video, sticker, document, location) - these matched no handler
     # at all before, so PTB dropped them silently and the user got no reply whatsoever
-    app.add_handler(MessageHandler(~filters.VOICE & ~filters.TEXT, handle_unsupported))
+    # Service messages (StatusUpdate) are left out: pinning the trip banner makes Telegram send a
+    # "pinned a message" update whose sender is the bot itself, and authorize() would answer it
+    # with "You are not authorized" in the user's chat.
+    app.add_handler(MessageHandler(~filters.VOICE & ~filters.TEXT & ~filters.StatusUpdate.ALL, handle_unsupported))
+
+    # the "Bot pinned a message" notice under the trip banner - deleted, see delete_pin_notice
+    app.add_handler(MessageHandler(filters.StatusUpdate.PINNED_MESSAGE, delete_pin_notice))
 
     # handler for buttons
+    app.add_handler(CallbackQueryHandler(handle_trip_button, pattern=r"^trip:"))
     app.add_handler(CallbackQueryHandler(handle_button_click))
 
     return app

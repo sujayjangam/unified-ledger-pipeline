@@ -25,6 +25,7 @@ def fake_bot_app(monkeypatch):
     for name in ("process_update", "initialize", "start", "stop", "shutdown"):
         setattr(fake, name, AsyncMock())
     fake.bot.set_webhook = AsyncMock()
+    fake.bot.set_my_commands = AsyncMock()
     monkeypatch.setattr(bot_webhook, "ptb_app", fake)
     monkeypatch.setattr(bot_webhook, "WEBHOOK_SECRET_TOKEN", TOKEN)
     monkeypatch.setattr(bot_webhook, "_seen_update_ids", set())
@@ -118,4 +119,5 @@ async def test_startup_registers_the_token_with_telegram(fake_bot_app, monkeypat
         pass
 
     fake_bot_app.bot.set_webhook.assert_awaited_once()
+    fake_bot_app.bot.set_my_commands.assert_awaited_once()
     assert fake_bot_app.bot.set_webhook.await_args.kwargs["secret_token"] == TOKEN

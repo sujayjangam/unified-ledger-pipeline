@@ -42,6 +42,8 @@ supersedes the old one rather than editing history.
 | [0032](0032-participants-and-accounts-in-postgres.md) | Keep participants and accounts in Postgres tables, read on every message, and fail closed | Accepted | 2026-11-11 |
 | [0033](0033-entered-by-participant-id.md) | Record the sender as a participant id, not a Telegram user ID | Accepted | 2026-11-11 |
 | [0034](0034-drop-line-by-line-ownership-gate.md) | Drop the line-by-line ownership gate before commit | Accepted | 2026-11-14 |
+| [0035](0035-trips-tagged-at-log-time.md) | Trips: one active trip in the database, entries tagged when logged, families per trip | Partly superseded by [0036](0036-trip-switch-per-person.md) | 2026-11-14 |
+| [0036](0036-trip-switch-per-person.md) | Trip mode is a switch per person, picked from buttons, shown by a pinned banner | Accepted | 2026-11-14 |
 
 ## Writing a new one
 

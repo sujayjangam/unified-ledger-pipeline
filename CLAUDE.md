@@ -91,6 +91,14 @@ Env vars (`.env.example` shows the format):
 - The duplicate check runs before the card is shown, never inside the insert, and a failed check
   gives a normal card — it must never block a save
   ([ADR-0027](docs/decisions/0027-duplicate-warning-before-the-card.md)).
+- The sender's own trip is read fresh for every entry and copied onto the pending entry, so the "Not
+  trip" toggle never reads the database. Unlike the directory, a failed trip read never blocks:
+  the card shows untagged, with a ⚠️ line. Trip mode is per person (`participants.active_trip_id`),
+  only for a trip they are a member of, enforced by the database. `/trip` is buttons only
+  ([ADR-0036](docs/decisions/0036-trip-switch-per-person.md)); a failed banner pin never undoes
+  a switch.
+  An entry is tagged by when it is logged, never by its date
+  ([ADR-0035](docs/decisions/0035-trips-tagged-at-log-time.md)).
 - A pending entry lives in `context.user_data`, keyed by the card's `message_id`, and is written
   only on Confirm ([ADR-0023](docs/decisions/0023-in-memory-confirm-card-state.md)).
 - In `handle_button_click`:

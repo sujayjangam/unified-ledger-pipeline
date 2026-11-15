@@ -32,7 +32,44 @@ columns) and [#91](https://github.com/sujayjangam/unified-ledger-pipeline/pull/9
 production 2026-11-14 after a Neon-branch rehearsal and a backup). Before 0005, the 5 rows with
 no `account_id` were given a card by hand in SQL, one guarded `UPDATE` per `transaction_id`.
 
-**Next action:** group-trip splitting, below.
+**Next action:** group-trip splitting, below. Step 1 (trips) is built on branch `feat/trips`
+(2026-11-14, [ADR-0035](docs/decisions/0035-trips-tagged-at-log-time.md),
+[ADR-0036](docs/decisions/0036-trip-switch-per-person.md)): migration 0006, dated trips in the seed
+file, a trip-mode switch per person picked from `/trip`'s buttons (three per page, newest first),
+a pinned banner while it is on, and a trip line and toggle on the card. The first version (one
+shared switch, `/trip on <name>`) was committed and tested, then reworked. Codex reviewed the
+whole branch; its two findings are fixed (a trip toggle racing Confirm under the webhook, and the
+banner id used against the wrong chat). Gate passes. Tested on the polling bot on 2026-11-14
+against the Neon test branch: paging, switch on from page 2, an entry tagged and saved, switching trip to trip (old
+banner removed), turning off (banner removed, next entry untagged). Two bugs found and fixed
+there: the pin's service message got a "not authorized" reply, and a trip across New Year showed
+only the end year. An old banner is deleted on switch-off or a change of trip (or, past
+Telegram's 48-hour delete limit, unpinned and edited to say the trip ended; unit-tested only),
+and the "pinned a message" notice is deleted as it arrives. Picking it up:
+1. PR [#95](https://github.com/sujayjangam/unified-ledger-pipeline/pull/95) is open (don't merge
+   yet: a merge to `main` auto-deploys). The final test-bot run passed on 2026-11-15: switching on
+   and off, an entry saved, and the "trip ended" fallback seen live with a simulated failed
+   delete. From that feedback, a tapped `/trip` menu now becomes a plain status line with no
+   buttons once a switch is made (or an old menu is tapped for the trip already on), and the tap is
+   answered before the banner swap; a failed answer never skips the redraw or banner. Gate passed
+   after these changes (326 tests). Timing lines
+   on `/trip` and each tap log where the time goes. Production was backed up the same day.
+2. Done 2026-11-15, before merging: 0006 applied to production by hand (`alembic current` showed
+   `0006_add_trips`), and the real trip seeded with its dates and members (a dry run first, then
+   `--write`). Non-household trip members are participants with no Telegram ID.
+3. Menu speed, measured from the laptop against the Neon test branch (us-east-2): one round trip
+   is about 295ms. Each database block costs three extra round trips besides its queries (the
+   pool's ping, BEGIN and ROLLBACK), so `/trip` makes about 10 round trips for 4 queries, about 3s.
+   Autocommit for read-only blocks cuts a query from 2 round trips to 1 and the release to 0.
+   Candidate fix, not started: autocommit for read-only reads, and fewer separate blocks per
+   message. Production (Cloud Run in asia-southeast1, Neon in us-east-2) is unmeasured until the
+   timing lines deploy. Moving the two into one region is the structural fix, but a bigger job.
+
+Candidate follow-up: when a person's switch is off but an entry's date falls inside one of their
+trips, the card offers "Tag to <trip>?" (a suggestion, never an automatic tag; ADR-0036).
+
+Step 2, paid-by, comes next. Also unpushed: branch `chore/check-extraction-zebra` (the misread
+message below, as a `check_extraction` case).
 
 **Group-trip splitting** (decided 2026-11-14). There's a real group trip with a fixed
 deadline, kept out of this public repo. It pulls trips, splitting and settling up forward from
@@ -41,8 +78,9 @@ below. Deploy freeze: nothing merges to `main` for the last two days
 before the deadline, because a merge auto-deploys and a broken bot mid-trip means nothing gets
 logged. Test on a Neon branch with a fictional trip-sized directory first.
 
-Follow-up: "test 1 zebra test card" came back with no amount (the model read "test 1" as part of a
-name). Add it to the list in `scripts/check_extraction.py`.
+Follow-up: "test 1 zebra test card" comes back with no amount (the model reads "test 1" as part
+of a name). It is now a case in `scripts/check_extraction.py`, which fails it 10 times out of 10
+(2026-11-14). The prompt fix is still open.
 
 Adding and closing cards from Telegram is
 [#83](https://github.com/sujayjangam/unified-ledger-pipeline/issues/83). The "Saved to Ledger!"
@@ -187,9 +225,10 @@ sequenced in the phase checklists and aren't repeated here):
   not `main` — but it's a live landmine for whenever the API is deployed.
 - No index on `date`. Irrelevant at current row counts; matters once Phase 1's statement staging
   table lands and date-window matching starts scanning.
-- Chat commands have no discoverability — `/month` and `/cat_month` were forgotten by their own
-  author despite existing. This is an interface problem, not a memory lapse, and it belongs with
-  the capture-friction work: a ledger nobody can navigate is a ledger nobody keeps feeding.
+- Chat commands had no discoverability — `/month` and `/cat_month` were forgotten by their own
+  author despite existing. Since the trips work, every command is registered in Telegram's "/"
+  menu at startup (`register_commands`). What's left belongs with the capture-friction work: a
+  ledger nobody can navigate is a ledger nobody keeps feeding.
   Candidate fix worth prototyping alongside text ingestion: a bot command that pre-fills the
   message box with a field template (date already filled in, remaining fields blank) so an entry
   is edit-and-send rather than type-from-scratch. Telegram exposes two mechanisms for this —
@@ -240,10 +279,11 @@ below is this one. Done 2026-11-14 (#84, #90, #91).
 "Current status"). Two people log; the other members are participants without a Telegram ID, and
 only shared costs they pay get logged. Travel minimum, in build order:
   1. Trips: a trip is a group of participants in families, set up from the gitignored seed file.
-     `/trip on <name>` and `/trip off`, with at most one active trip (enforced in the database) and
-     one setting shared by both senders. An entry is tagged by when it is logged, not by its date,
+     Each person switches trip mode from `/trip`'s buttons; at most one trip on per person, only
+     a trip they are a member of (enforced in the database), with a pinned banner while it is on.
+     An entry is tagged by when it is logged, not by its date,
      so pre-trip bookings count. The card shows the trip, with a "Not trip" button. The bot reads
-     the active trip on every message, like the directory.
+     the sender's trip on every message, like the directory.
   2. Paid-by: who paid, separate from who logged it and which card. The payment method stays
      required. Each non-household payer gets a stand-in account. `accounts.owner_participant_id`
      may give the payer for free; shared accounts (Cash) have no owner, so an explicit paid-by is
@@ -257,6 +297,24 @@ only shared costs they pay get logged. Travel minimum, in build order:
      64-byte limit. Shares are in whole cents and must add up to the amount (see the whole-cents
      item under Phase 3). Decide the leftover-cent rule for a payer who isn't in the split, and how
      refunds split.
+     - Weighted shares, needed for the trip's accommodation: a 5-night booking where some members
+       stay only 4 nights. Ticking people gives only an even split, so the split also needs a
+       weight per person (nights, or any count). Each share is amount × weight ÷ total weight,
+       handed out in whole cents like every other split; one card charge stays one entry, which
+       keeps reconciliation against the statement simple. Logging it as two entries (4 nights
+       across everyone, 1 night across the rest) was considered and rejected for that reason.
+     - The person logging never does the maths. They say it in plain words; the model reads only
+       who and how many (people, families, nights, a fixed amount), never a share, and Python
+       works out the cents, the same way dates work
+       ([ADR-0030](docs/decisions/0030-llm-reads-dates-python-resolves.md)). The card shows each
+       share before Confirm, and the split menu can still change it. Messages it should handle
+       (fictional names):
+       - "Airbnb 2300 on my Visa, 5 nights, everyone except Carol's family who only stayed 4"
+       - "Airbnb 2300, split by nights: Alice's and Bob's families 5, Carol and Dave 4"
+       - "Dinner 480 cash, split evenly between all"
+       - "Petrol 90, split between Alice's and Bob's families"
+       - "Groceries 150, Carol's share is 50, rest split evenly"
+       Add each to `scripts/check_extraction` when this is built.
   4. `/balances`: per person and per family, in separate currencies (no FX conversion), with a
      breakdown that can be forwarded to the group ("why do I owe 340?"). The suggested payments are
      simplified: the fewest payments that settle everyone. Matching the largest debtor to the
@@ -367,9 +425,13 @@ the `participants` table from [#53](https://github.com/sujayjangam/unified-ledge
 `participants` table. Deliberately after Phase 2 (decided 2026-09-12).
 - [ ] Trips and groups (design note from #53, 2026-11-11). *Trips moved to Phase 1 on
 2026-11-14; the household as a group stays here.* A trip is
-a group of participants with optional start and end dates. Expenses tagged to it are split and
+a group of participants with start and end dates. Expenses tagged to it are split and
 settled within it, and one dated outside the trip gets a non-blocking ⚠️ line on the card, since
-post-trip expenses are real. The household becomes a group with no end date, so splitting is
+post-trip expenses are real. (Migration 0006 gives trips dates, but they only sort and label `/trip`'s buttons: an entry is
+tagged by when it is logged, not by its date,
+[ADR-0035](docs/decisions/0035-trips-tagged-at-log-time.md),
+[ADR-0036](docs/decisions/0036-trip-switch-per-person.md). That warning would be a later
+addition.) The household becomes a group with no end date, so splitting is
 written once for both. #53 adds participants without a Telegram ID for exactly this: people who
 are split with but never use the bot.
 - [ ] Fewer false duplicate warnings. Today any two entries with the same amount and currency
