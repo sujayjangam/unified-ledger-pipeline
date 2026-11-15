@@ -50,7 +50,9 @@ and the "pinned a message" notice is deleted as it arrives. Picking it up:
    yet: a merge to `main` auto-deploys). The final test-bot run passed on 2026-11-15: switching on
    and off, an entry saved, and the "trip ended" fallback seen live with a simulated failed
    delete. From that feedback, a tapped `/trip` menu now becomes a plain status line with no
-   buttons once a switch is made, and the tap is answered before the banner swap. Timing lines
+   buttons once a switch is made (or an old menu is tapped for the trip already on), and the tap is
+   answered before the banner swap; a failed answer never skips the redraw or banner. Gate passed
+   after these changes (326 tests). Timing lines
    on `/trip` and each tap log where the time goes. Production was backed up the same day.
 2. Before merging: apply 0006 to production by hand, and seed the real trip with its dates. The
    bot code reads the new tables and columns, so 0006 must be on production first.
