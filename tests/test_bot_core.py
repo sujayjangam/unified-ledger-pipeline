@@ -273,3 +273,14 @@ def test_paid_by_name_is_escaped_and_old_cards_fall_back():
     assert r"Paid by:** A\_name" in bot_core._account_lines({"paid_by": "A_name"})
     assert "Paid by:** Alice" in bot_core._account_lines({"account_owner": "Alice"})
     assert "Paid by:** Unspecified" in bot_core._account_lines({})
+
+
+def test_summaries_format_postgres_decimal_sums_through_format_cents():
+    # Postgres returns SUM over a BIGINT column as a Decimal; dividing it by a float used to
+    # crash /today, /week, /month and the category views whenever there was an entry.
+    from decimal import Decimal
+
+    period = bot_core.format_period_summary("Today", [("SGD", 2, Decimal("8000"))], [("SGD", 1, Decimal("1005"))])
+    assert "SGD: **80.00**" in period and "SGD: **10.05** (1 tx)" in period
+    category = bot_core.format_category_summary("Today", [("Food", "SGD", 2, Decimal("8000"))])
+    assert "SGD: **80.00**" in category

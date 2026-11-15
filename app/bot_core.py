@@ -110,7 +110,9 @@ def format_period_summary(title: str, expenses: list, transfers: list) -> str:
     
     if expenses:
         for curr, count, total_cents in expenses:
-            lines.append(f"  • {curr}: **{total_cents / 100.0:.2f}**")
+            # SUM over a BIGINT column comes back from Postgres as a Decimal, and money is
+            # only ever formatted through format_cents (ADR-0004), never via a float.
+            lines.append(f"  • {curr}: **{format_cents(int(total_cents))}**")
     else:
         lines.append("  • No expenses.")
         
@@ -118,7 +120,7 @@ def format_period_summary(title: str, expenses: list, transfers: list) -> str:
     lines.append("\n🔄 **Transfers:**")
     if transfers:
         for curr, count, total_cents in transfers:
-            lines.append(f"  • {curr}: **{total_cents / 100.0:.2f}** ({count} tx)")
+            lines.append(f"  • {curr}: **{format_cents(int(total_cents))}** ({count} tx)")
     else:
         lines.append("  • No transfers.")
         
@@ -147,7 +149,7 @@ def format_category_summary(title: str, category_data: list) -> str:
 
         # List each currency total underneath the category header
         for curr, count, total_cents in currencies:
-            lines.append(f"  • {curr}: **{total_cents / 100.0:.2f}**")
+            lines.append(f"  • {curr}: **{format_cents(int(total_cents))}**")
             
         lines.append("") # Blank line for readability
 
