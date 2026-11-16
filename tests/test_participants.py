@@ -16,11 +16,32 @@ from app.services.participants import (
     Participant,
     WalletNotSetUp,
     load_directory,
+    match_person,
+    second_reader_payer,
     read_payer,
     resolve_payment,
     validate_directory,
     whose_card_paid,
 )
+
+
+@pytest.mark.parametrize("name,expected", [
+    ("  ALICE   Lee  ", 1), ("Lee", 1), ("Alice", None), ("Alice Lee's family", 1),
+    ("Alice Lee’s families", 1), ("Carol's", 3), ("Unknown", None), ("", None),
+])
+def test_match_person(name, expected):
+    """Only a whole name or a word unique to one candidate can identify a person."""
+    candidates = (Participant(1, "Alice Lee", None, None), Participant(2, "Alice Kim", None, None),
+                  Participant(3, "Carol", None, None))
+    result = match_person(name, candidates)
+    assert (result.id if result else None) == expected
+
+
+@pytest.mark.parametrize("name,expected", [(None, None), ("Alice", None), ("Erin", None), ("Carol", 3)])
+def test_second_reader_payer(directory, name, expected):
+    """The model can supply a known other payer, never a guess or the sender."""
+    result = second_reader_payer(name, directory.participants, directory.participant(1), "Carol covered dinner 90")
+    assert (result.id if result else None) == expected
 
 
 def test_open_account_named_ignores_case_and_spaces(directory):
@@ -299,3 +320,16 @@ def test_load_directory_reads_household_flag():
     assert d.participant(1).is_household
     assert not d.participant(3).is_household
     assert "default_account_id, is_household FROM participants" in str(conn.execute.call_args_list[0].args[0])
+
+
+@pytest.mark.parametrize("message,expected", [
+    ("Carol covered dinner 90", 3),
+    ("lunch 45, Carol's treat", 3),
+    ("Carol's birthday cake 55", None),
+    ("dinner with Carol 70", None),
+    ("bought Carol a coffee 6", None),
+])
+def test_second_reader_needs_a_paying_word(directory, message, expected):
+    """The model's payer is believed only when the message has a word about paying."""
+    result = second_reader_payer("Carol", directory.participants, directory.participant(1), message)
+    assert (result.id if result else None) == expected

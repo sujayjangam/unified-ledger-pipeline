@@ -56,6 +56,38 @@ class DateReference(BaseModel):
     year: Optional[int] = Field(default=None, description="""Only for kind 'calendar': the year, ONLY if the
         user said one. Never fill it in yourself.""")
 
+class SplitPerson(BaseModel):
+    """One person or family named as sharing, before Python matches the directory."""
+
+    name: str = Field(description="The name as said, without possessive or family wording: Carol's family -> Carol.")
+    is_family: bool = Field(description="True for '<name>'s family', 'the <name>s', or '<name> family'; false for one person.")
+
+
+class SplitReference(BaseModel):
+    """The model reads who shares; Python matches people and works out cents (ADR-0039).
+
+    Like DateReference, this records words rather than a calculated answer. A share must
+    never come from the model: Python makes the total exact and the result testable.
+    """
+
+    kind: Literal['none', 'everyone', 'named'] = Field(description="""
+        'none' unless the message itself asks to split or share the cost: split, shared, share,
+        between, divide, go halves/dutch. Buying something for someone, eating with someone,
+        or saying who paid is NOT a split. 'everyone' for 'split between all', 'everyone',
+        'all of us', 'the whole group'. 'named' when sharing people or families are named.""")
+    include_sender: bool = Field(description="""True when the sender shares: 'split with Carol',
+        'me and Carol', 'between me, Carol and Dave', 'shared with...'. False for 'split between
+        Carol and Dave', where the sender is not named. True for everyone; false for none.""")
+    people: List[SplitPerson] = Field(description="""Each person or family named as sharing, name
+        copied as said without possessive/family wording. Never include the sender ('me', 'I'):
+        use include_sender instead. Empty for none and everyone.""")
+    # The same shape as people, so "everyone except Carol's family" can leave out a whole family.
+    except_people: List[SplitPerson] = Field(description="""People or families named after 'except',
+        'but not' or 'excluding': 'everyone except Dave' -> Dave. Usually with everyone. Empty otherwise.""")
+    uneven: bool = Field(description="""True only for shares that are NOT equal: by nights, by a
+        count, a percentage, or a fixed amount for someone ('Carol's share is 50'). False otherwise.""")
+
+
 # 2. Define the Upgraded Data Blueprint
 class TransactionSchema(BaseModel):
     # Optional[] means the LLM is allowed to return 'null' if the user forgot to state the price
@@ -95,6 +127,20 @@ class TransactionSchema(BaseModel):
     # app/services/dates.py (see DateReference above).
     date_reference: DateReference = Field(description="What the user said about when this happened.")
     
+    # These two sit after the older fields on purpose: the model fills fields in this order,
+    # and the amount and date readings were tuned with nothing in front of them.
+    split_reference: SplitReference = Field(description="Who the message asks to share the cost; never calculate shares.")
+    # A second reading only: Python's payer patterns still win (ADR-0040).
+    payer_name: Optional[str] = Field(default=None, description="""The person the message says paid, copied as said:
+        'Carol covered dinner' -> Carol, 'Dave's treat' -> Dave, 'paid by Erin' -> Erin.
+        Null if no payer is stated or the sender paid ('I paid'). Someone the cost is split or
+        shared with is NOT the payer: 'dinner 80 split with Carol' -> null.
+        Someone a thing was bought FOR is NOT the payer either: 'bought Carol a coffee 6' -> null,
+        'gift for Dave 40' -> null. A name alone is never enough: there must be words saying that
+        person paid. A card or payment method is not a person.""")
+    # "bought Carol a coffee 6" came back with Carol as the payer in 2 of 10 runs before the
+    # "bought FOR" sentence was added (2026-11-16). Re-check with scripts/check_extraction.py.
+
     # A flag for your future UI to know if it needs to ask the user for clarification
     needs_review: bool = Field(description="Set to true ONLY if amount is null or the transcript is highly confusing.")
 
@@ -140,6 +186,10 @@ async def extract_transactions(transcript_text: str, today: date, allowed_accoun
                                                 For the date, record only what the user said in
                                                 date_reference - never calculate a date yourself.
                                                 Typed shorthand: 'yday' and 'ytd' both mean yesterday.
+                                                Record who shares only in split_reference, only when the message asks
+                                                to split or share the cost; never work out a share yourself.
+                                                Record who paid in payer_name, null unless the message says someone
+                                                other than the sender paid; sharing with someone does not mean they paid.
                                                 Numeric dates are day first: 3/7 is 3 July."""},
                 {"role": "user", "content": transcript_text}
             ],

@@ -130,6 +130,18 @@ via `scripts/seed_directory.py`.
 - **family**: TEXT, NOT NULL. A label shared by everyone on the trip who settles together. Stored
   per trip, so a person can be grouped differently on another trip.
 
+## transaction_splits (revision `0008_add_transaction_splits`)
+
+One whole-cent share per person on an entry. No rows means "not split": the entry is the
+payer's alone. Shares add up to the entry's amount, checked in Python before the shares are
+inserted and written in the same database transaction as the entry, only when it was inserted.
+
+- **transaction_id**: TEXT, NOT NULL, FK → `transactions.transaction_id`, ON DELETE CASCADE
+- **participant_id**: BIGINT, NOT NULL, FK → `participants.id`
+- **share_cents**: BIGINT, NOT NULL, with `share_cents >= 0`
+  (`ck_transaction_splits_share_not_negative`)
+- Primary key: (`transaction_id`, `participant_id`)
+
 ## Business date vs. write time
 
 `date` and `created_at` answer different questions and must not be substituted for each other:

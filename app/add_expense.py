@@ -8,6 +8,10 @@ from app.database import get_connection
 
 _ONE_CENT = Decimal("0.01")
 
+
+class SplitTotalMismatch(Exception):
+    """Shares must equal the entry amount before either can be committed."""
+
 def dollars_to_cents(amount_dollars) -> int:
     """Converts a dollar amount to integer cents. Raises ValueError unless the result is a
     positive, finite number of cents.
@@ -46,7 +50,7 @@ def format_cents(amount_cents: int) -> str:
     return f"{sign}{dollars}.{cents:02d}"
 
 def add_expense(date_str, description, amount_dollars, category, currency="SGD", transaction_type="Expense", source="Manual CLI", idempotency_key=None,
-                account_id=None, entered_by_participant_id=None, trip_id=None, paid_by_participant_id=None):
+                account_id=None, entered_by_participant_id=None, trip_id=None, paid_by_participant_id=None, splits=None):
     try:
         # 1. Validation: Convert to Integer Cents (Mathematical Precision)
         # We call function dollars_to_cents to convert to cents for us
@@ -116,6 +120,17 @@ def add_expense(date_str, description, amount_dollars, category, currency="SGD",
             })
 
             was_duplicate = result.rowcount == 0
+            if result.rowcount == 1:
+                shares = tuple(splits or ())
+                if shares:
+                    if sum(cents for _, cents in shares) != amount_cents:
+                        raise SplitTotalMismatch("Split shares do not add up to the entry amount")
+                    # The entry and its shares commit together, or the connection rolls both back.
+                    conn.execute(text('''
+                        INSERT INTO transaction_splits (transaction_id, participant_id, share_cents)
+                        VALUES (:transaction_id, :participant_id, :share_cents)
+                    '''), [{"transaction_id": transaction_id, "participant_id": pid, "share_cents": cents}
+                           for pid, cents in shares])
             conn.commit()
 
         if was_duplicate:
@@ -126,6 +141,9 @@ def add_expense(date_str, description, amount_dollars, category, currency="SGD",
             print(f"✅ Successfully added: {description} ({currency} {format_cents(amount_cents)}) on {date_str}")
         return True
 
+    except SplitTotalMismatch as e:
+        print(f"❌ Split error: {e}. Nothing was saved.")
+        return False
     except ValueError:
         print("❌ Error: Invalid input. Use YYYY-MM-DD for date and a number for amount (e.g., 15.50).")
         return False

@@ -32,6 +32,8 @@ load_dotenv()
 
 from app.services.dates import apply_date_resolution  # noqa: E402 - load_dotenv() first
 from app.services.extraction import extract_transactions  # noqa: E402 - load_dotenv() first
+from app.services.participants import mentions_paying  # noqa: E402 - load_dotenv() first
+from app.services.splits import asks_for_split, sender_shares  # noqa: E402 - load_dotenv() first
 
 # The payment methods offered to the model. Fictional, and fixed here rather than loaded from the
 # database: this script must never touch the database (#53), and the messages below test amounts
@@ -74,41 +76,113 @@ CASES = [
 ]
 
 
+SPLIT_CASES = [
+    {"message": "Dinner 480 cash, split evenly between all", "kind": "everyone", "include_sender": True, "uneven": False, "payer_name": None},
+    {"message": "Petrol 90, split between Alice's and Bob's families", "kind": "named", "include_sender": False, "people": {("alice", True), ("bob", True)}},
+    {"message": "Airbnb 2300, split by nights: Alice's and Bob's families 5, Carol and Dave 4", "kind": "named", "uneven": True},
+    {"message": "Groceries 150, Carol's share is 50, rest split evenly", "uneven": True},
+    {"message": "dinner 80 split with Carol", "kind": "named", "include_sender": True, "people": {("carol", False)}, "payer_name": None},
+    {"message": "lunch 60 split between Carol and Dave", "kind": "named", "include_sender": False, "payer_name": None},
+    {"message": "taxi 30 shared with Dave and Erin", "kind": "named", "include_sender": True},
+    {"message": "drinks 120 split between everyone except Dave", "kind": "everyone", "except_people": {"dave"}},
+    {"message": "Airbnb 900 split between everyone except Carol's family", "kind": "everyone", "except_people": {"carol"}, "uneven": False},
+    {"message": "Carol covered dinner 90", "kind": "none", "payer_name": "carol"},
+    {"message": "lunch 45, Dave's treat", "kind": "none", "payer_name": "dave"},
+    {"message": "dinner 200 paid by Erin, split with Carol and Dave", "kind": "named", "include_sender": True, "payer_name": "erin"},
+    {"message": "bought Carol a coffee 6", "kind": "none", "payer_name": None},
+    {"message": "gift for Dave 40", "kind": "none", "payer_name": None},
+    {"message": "Carol's birthday cake 55", "kind": "none", "payer_name": None},
+    {"message": "dinner with Carol 70", "kind": "none", "payer_name": None},
+    {"message": "lunch 20 I paid", "kind": "none", "payer_name": None},
+    {"message": "groceries 55 Card A", "kind": "none", "payer_name": None},
+]
+
+
+def _name(value):
+    """Ignore case and a trailing possessive when comparing the model's copied names."""
+    if not value:
+        return None
+    # "Carol's family" and "Carol's" both compare as "carol", as match_person reads them.
+    value = value.strip().lower().removesuffix(" families").removesuffix(" family")
+    return value.removesuffix("'s").removesuffix("’s")
+
+
+def _split_reading(transaction):
+    """The split reading the bot would act on, in a shape the cases can be compared with.
+
+    Like the date, it is checked after Python's own reading of the message text: a split with
+    no split word in the message is dropped (asks_for_split), and "with"/"between" decide
+    whether the sender shares (sender_shares). run_once put the message in "description".
+    """
+    reference = dict(transaction.get("split_reference") or {})
+    message = transaction.get("description") or ""
+    if not asks_for_split(message):
+        reference["kind"] = "none"
+    from_words = sender_shares(message)
+    if from_words is not None and reference.get("kind") == "named":
+        reference["include_sender"] = from_words
+    return {
+        **reference,
+        "people": {(_name(p["name"]), p["is_family"]) for p in reference.get("people", [])},
+        "except_people": {_name(p["name"]) for p in reference.get("except_people", [])},
+        # The bot ignores the model's payer unless the message has a paying word.
+        "payer_name": _name(transaction.get("payer_name")) if mentions_paying(message) else None,
+    }
+
+
 async def run_once(message: str, semaphore: asyncio.Semaphore):
-    """One extraction. Returns (amount, resolved date) - (None, None) if nothing came back."""
+    """Return the extracted entry with its resolved date, or an empty dict on failure."""
     # The semaphore caps how many requests are in flight at once, so a big --runs doesn't
     # fire dozens of simultaneous calls at the API.
     async with semaphore:
         result = await extract_transactions(message, TODAY, FICTIONAL_ACCOUNTS)
     if not result or not result.get("transactions"):
-        return None, None
+        return {}
     txn = result["transactions"][0]
     # The same two steps process_expense_text takes: the raw message becomes the description,
     # then the date is resolved from the reference plus that text.
     txn["description"] = message
     apply_date_resolution(txn, TODAY)
-    return txn.get("amount"), date.fromisoformat(txn["date"])
+    return txn
 
 
 async def main(runs: int) -> int:
+    """Check old amount/date cases and split readings with the same all-runs exit rule."""
     semaphore = asyncio.Semaphore(10)
     # Every run of every message, all started together and awaited as one batch.
     jobs = [run_once(message, semaphore) for message, _, _ in CASES for _ in range(runs)]
+    jobs += [run_once(case["message"], semaphore) for case in SPLIT_CASES for _ in range(runs)]
     results = await asyncio.gather(*jobs)
 
     all_right = True
     for i, (message, want_amount, want_date) in enumerate(CASES):
         wrong = []
-        for got_amount, got_date in results[i * runs:(i + 1) * runs]:
+        for transaction in results[i * runs:(i + 1) * runs]:
+            got_amount = transaction.get("amount")
+            got_date = date.fromisoformat(transaction["date"]) if transaction.get("date") else None
             amount_ok = got_amount == want_amount
             date_ok = want_date is None or got_date == want_date
-            if not (amount_ok and date_ok):
-                wrong.append(f"amount={got_amount} date={got_date}")
+            reading = _split_reading(transaction)
+            if not (amount_ok and date_ok and reading.get("kind") == "none" and reading["payer_name"] is None):
+                wrong.append(f"amount={got_amount} date={got_date} kind={reading.get('kind')} payer={reading['payer_name']}")
         right = runs - len(wrong)
         all_right = all_right and not wrong
         mark = "ok  " if not wrong else "FAIL"
         print(f"{mark} {right}/{runs}  {message!r}  (want amount={want_amount} date={want_date})")
         # Show each distinct wrong answer once, with how often it came up.
+        for answer in sorted(set(wrong)):
+            print(f"           got {answer}  x{wrong.count(answer)}")
+    for i, case in enumerate(SPLIT_CASES, start=len(CASES)):
+        expected = {key: value for key, value in case.items() if key != "message"}
+        wrong = []
+        for transaction in results[i * runs:(i + 1) * runs]:
+            reading = _split_reading(transaction)
+            actual = {key: reading.get(key) for key in expected}
+            if not transaction or actual != expected:
+                wrong.append(str(actual))
+        all_right = all_right and not wrong
+        mark = "ok  " if not wrong else "FAIL"
+        print(f"{mark} {runs - len(wrong)}/{runs}  {case['message']!r}  (want {expected})")
         for answer in sorted(set(wrong)):
             print(f"           got {answer}  x{wrong.count(answer)}")
     return 0 if all_right else 1

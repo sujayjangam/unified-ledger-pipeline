@@ -125,14 +125,23 @@ its context, rejected alternatives and cost. The ones that shaped the system mos
   a button to mark a single entry as not part of it. Trips and their members, grouped in families, come from the
   same gitignored seed file.
 - Who paid: each entry records a payer, read from the message ("Bob paid", "paid by Carol") by
-  tested Python against the household, or the trip's members while a trip is on, never by the
-  model. An account with an owner decides the payer; an entry paid by someone outside the household
+  tested Python against the household, or the trip's members while a trip is on. When Python's
+  patterns find nobody and the message has a paying word, the model's reading is used ("Carol
+  covered dinner") and the card says
+  "Read as: Carol paid. Check." An account with an owner decides the payer; an entry paid by someone outside the household
   goes on a shared "Paid by someone else" account and is left out of the totals. The card shows
   "Paid by", with a warning line when the message names a payer it can't match, and a "Change
   who paid" button that lists the people to tap. The entry stays on Cash, the wallet or the
   tapped person's own card if the message named one; otherwise it moves to their default account,
   and an outside payer goes on "Paid by someone else". If no account fits, nothing changes. A
   YouTrip top-up has no button.
+- Splits: say who shares an entry in plain words ("split with Carol", "split between Alice's and
+  Bob's families", "split between everyone except Dave"). The model reads only who; tested Python
+  matches the names, expands a family to its trip members, and hands out whole cents that add up
+  to the amount. "With" includes you, "between" doesn't. The card shows every share before
+  Confirm, grouped by family while a trip is on, and the shares are saved with the entry. A name
+  that can't be matched is a warning line, never a guess. Even shares only for now: a message
+  asking for uneven ones gets a warning and no split.
 - CI on every pull request: clean dependency install, lint, an import smoke check across `app/`,
   and a pytest suite over the money and date invariants — required to pass before a merge to
   `main`, enforced by a repository ruleset rather than merely reported on.
@@ -162,7 +171,7 @@ packages).
 ```bash
 pip install -r requirements.txt
 
-# Initialize the DB (Alembic creates the `transactions`, `participants`, `accounts`, `trips` and `trip_members` tables). This targets DATABASE_URL
+# Initialize the DB (Alembic creates the `transactions`, `participants`, `accounts`, `trips`, `trip_members` and `transaction_splits` tables). This targets DATABASE_URL
 # from .env; to migrate a test branch instead, see docs/LOCAL_TESTING.md.
 alembic upgrade head
 

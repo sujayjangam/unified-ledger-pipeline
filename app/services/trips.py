@@ -17,15 +17,16 @@ class Trip:
     start_date: date
     end_date: date
     member_ids: tuple[int, ...] = ()
+    families: tuple[tuple[int, str], ...] = ()
 
 
-def trip_member_ids(conn, trip_id: int) -> tuple[int, ...]:
-    """Read payer candidates with the trip, without another connection checkout."""
+def trip_families(conn, trip_id: int) -> tuple[tuple[int, str], ...]:
+    """Read members and family labels together for payer and split matching."""
     rows = conn.execute(text("""
-        SELECT participant_id FROM trip_members WHERE trip_id = :trip_id
+        SELECT participant_id, family FROM trip_members WHERE trip_id = :trip_id
         ORDER BY participant_id
     """), {"trip_id": trip_id}).all()
-    return tuple(row[0] for row in rows)
+    return tuple((row[0], row[1]) for row in rows)
 
 
 def load_active_trip(conn, participant_id: int) -> Trip | None:
