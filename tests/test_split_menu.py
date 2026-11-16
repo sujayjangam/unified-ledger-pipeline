@@ -19,6 +19,75 @@ from test_paid_by_button import _data, _labels, _press as _payer_press
 from test_splits_card import TRIP, WITH_CAROL, _card, _confirm
 
 
+async def test_count_failure_warning_survives_menu_and_confirm(monkeypatch, directory):
+    from app.services.splits import COUNT_EVEN_SPLIT_WARNING, COUNT_UNREAD_WARNING
+    context, pending, _ = await _card(monkeypatch, directory,
+        {'kind': 'named', 'include_sender': True, 'people': [{'name': 'Carol', 'count': 2}]},
+        message='Hotel 600 split with Carol 2 nights', amount=600)
+    assert not pending['split'] and pending['split_warnings'] == (COUNT_UNREAD_WARNING,)
+    before = deepcopy(pending)
+    changed = open_split(pending)
+    assert pending == before
+    assert changed['split_warnings'] == (COUNT_EVEN_SPLIT_WARNING,)
+    assert all('count' not in row for row in changed['split'])
+    removed = remove_split(changed)
+    assert removed['split_warnings'] == (COUNT_UNREAD_WARNING,)
+    changed = toggle_split_person(removed, 3)
+    assert changed['split_warnings'] == (COUNT_EVEN_SPLIT_WARNING,)
+    pending.update(changed)
+    await _press(context, 'split:done')
+    assert pending['split_warnings'] == (COUNT_EVEN_SPLIT_WARNING,)
+    _, failed = await _confirm(monkeypatch, context, success=False)
+    assert 'Shown as an even split' in failed
+    _, saved = await _confirm(monkeypatch, context)
+    assert "Couldn't read a count" not in saved
+
+
+@pytest.mark.parametrize('default,unit,expected', [(3, 'nights', 5), (None, None, 5)])
+async def test_count_menu_retains_read_counts_and_warns_for_additions(monkeypatch, directory, default, unit, expected):
+    """Only newly guessed counts warn; warnings last through Done and disappear on receipt."""
+    reference = {'kind': 'named', 'include_sender': True, 'default_count': default,
+                 'count_unit': unit, 'people': [{'name': 'me', 'count': 4}, {'name': 'Carol', 'count': 5}]}
+    context, pending, _ = await _card(monkeypatch, directory, reference,
+        message='Hotel 600 split by nights, me 4 Carol 5, default 3', amount=600)
+    original = deepcopy(pending)
+    unticked = toggle_split_person(pending, 3)
+    assert pending == original  # Nested count maps must not be mutated by a redraw attempt.
+    restored = toggle_split_person(unticked, 3)
+    assert restored['split'] == pending['split'] and not restored['split_warnings']
+    changed = toggle_split_family(restored, 0)
+    assert changed['split_menu']['counts'] == {1: 4, 3: 5, 2: expected}
+    suffix = ' nights' if unit else ''
+    warning = f'⚠️ Bob added at {expected}{suffix}. Check.'
+    assert changed['split_warnings'] == (warning,)
+    assert toggle_split_person(changed, 3)['split_warnings'] == (warning,)
+    removed = remove_split(changed)
+    assert removed['split_menu']['counts'] == changed['split_menu']['counts']
+    assert not removed['split_warnings'] and not open_split(removed)['split']
+    assert toggle_split_person(removed, 2)['split_warnings'] == (warning,)
+    pending.update(changed)
+    await _press(context, 'split:done')
+    assert pending['split_warnings'] == (warning,)
+    _, failed = await _confirm(monkeypatch, context, success=False)
+    assert 'Bob added at' in failed
+    save, saved = await _confirm(monkeypatch, context)
+    assert 'added at' not in saved
+    assert sum(cents for _, cents in save.call_args.kwargs['splits']) == 60000
+
+
+def test_count_fallback_uses_mode_of_read_counts(directory):
+    """The modal count beats the largest count, and guessed counts never vote."""
+    people = (*directory.participants, Participant(4, 'Dave', None, None))
+    pending = {'split_menu': {'amount_cents': 101, 'everyone': people, 'groups': (),
+                             'families': {}, 'counts': {1: 2, 2: 2, 3: 5}},
+               'split': (), 'split_warnings': ("⚠️ Couldn't match 'Zed'",)}
+    before = deepcopy(pending)
+    changed = toggle_split_person(pending, 4)
+    assert pending == before
+    assert changed['split'][0]['count'] == 2
+    assert changed['split_warnings'] == ('⚠️ Dave added at 2. Check.',)
+
+
 async def _press(context, data, error=None):
     """Tap through the real handler and check its answer-once contract on every path."""
     update, query = _tap(data)

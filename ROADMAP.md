@@ -33,7 +33,8 @@ production 2026-11-14 after a Neon-branch rehearsal and a backup). Before 0005, 
 no `account_id` were given a card by hand in SQL, one guarded `UPDATE` per `transaction_id`.
 
 **Next action:** group-trip splitting, below: step 3, splits
-(`docs/superpowers/plans/2026-11-16-splits.md`). PR 3 (uneven shares), then PR 2b (an
+(`docs/superpowers/plans/2026-11-16-splits.md`). PR 3 (uneven shares by count, ADR-0042) is
+passes the model check and the test bot (2026-11-17), PR open; then PR 2b (an
 immediate-family group), then aliases per sender (below; moves to after the trip if time runs
 short). Reordered 2026-11-16: the trip's accommodation needs uneven shares, and
 nothing for the trip depends on PR 2b.
@@ -357,8 +358,17 @@ only shared costs they pay get logged. Travel minimum, in build order:
      PR 1 (read, store and show an even split) done 2026-11-16,
      [#101](https://github.com/sujayjangam/unified-ledger-pipeline/pull/101); PR 2, the split menu,
      done 2026-11-16, [#103](https://github.com/sujayjangam/unified-ledger-pipeline/pull/103).
-     The one-person split wording fix has a PR open (2026-11-16). Remaining, in this order: PR 3 (uneven
-     shares), PR 2b (an immediate-family group), then aliases per sender if time allows.
+     The one-person split wording fix merged 2026-11-16 (#105). PR 3, uneven shares by count
+     (nights), written 2026-11-16 (ADR-0042), tested on the test bot 2026-11-17, PR open.
+     Remaining, in this order: PR 2b (an immediate-family group), then aliases per sender if
+     time allows. After those: fixed amounts and percentages ("Carol's share is 50, rest split
+     evenly"), which PR 3 leaves as a warning with no split; and a count editor in the split
+     menu, so a newly ticked person's count can be changed without resending.
+     - Candidate, after the trip: a trip read from the message text. Pre-trip costs are logged
+       with trip mode off ("travel insurance for Sydney trip"), and nobody switches trip mode
+       on for one entry. The bot would tag the entry to the upcoming trip whose destination the
+       message names, with a button to pick another trip. Trip mode stays for while travelling
+       and for splitting across everyone on the trip. Raised 2026-11-17; not designed yet.
      - Weighted shares, needed for the trip's accommodation: a 5-night booking where some members
        stay only 4 nights. Ticking people gives only an even split, so the split also needs a
        weight per person (nights, or any count). Each share is amount × weight ÷ total weight,
@@ -484,8 +494,8 @@ weren't pulled forward.
 
 - [x] Schema: `transaction_splits` child table. *Moved to Phase 1, Group-trip splitting; shipped
 2026-11-16 in migration 0008 (#101), storing whole-cent shares only. The `split_type` enum was not
-built: the kind of split is worked out in Python and not stored. It waits until uneven shares
-(PR 3) show whether it is needed.*
+built: the kind of split is worked out in Python and not stored. Uneven shares (PR 3,
+ADR-0042) store cents only too, so it is not needed for now.*
 - [ ] Application logic: who-owes-who calculation. *Moved to Phase 1, Group-trip splitting, with
 uneven splits from the start.*
 - [ ] Extend as real usage surfaces the need for more flexible splitting
