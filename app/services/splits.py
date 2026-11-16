@@ -18,6 +18,7 @@ from app.services.participants import Participant, match_person
 
 # Card lines. Display only: never stored, and they never block a save.
 UNEVEN_NOT_BUILT_WARNING = "⚠️ This asks for uneven shares, which the bot can't do yet. No split recorded."
+UNEVEN_EVEN_SPLIT_WARNING = "⚠️ This asked for uneven shares, which the bot can't do yet. Shown as an even split."
 EVERYONE_NEEDS_TRIP_WARNING = '⚠️ "Everyone" needs a trip switched on. No split recorded.'
 NOBODY_SHARES_WARNING = "⚠️ Couldn't tell who shares this. No split recorded."
 NO_MATCH_WARNING = "⚠️ Couldn't match '{name}'"
@@ -192,3 +193,138 @@ def split_shares(amount_cents: int, people) -> tuple[dict, ...]:
     shares = share_out(amount_cents, {pid: 1 for pid in people})
     return tuple({"participant_id": pid, "name": people[pid].display_name, "share_cents": cents}
                  for pid, cents in shares.items())
+
+
+# --- The split menu (PR 2, ADR-0041) --------------------------------------------------------
+#
+# The card's split menu changes the pending entry one tap at a time. Each function below takes
+# the pending entry and returns a changed copy (it never changes its argument), so the handler in
+# bot_core can redraw the card from the copy first and keep the change only once that worked.
+#
+# process_expense_text stores `split_menu` on the pending entry when the entry can be split:
+#   amount_cents  the amount as whole cents, so a tap never converts it again
+#   groups        the trip's members as (family label or None, members), in card order
+#   families      participant id -> family label on the trip (empty with no trip on)
+#   everyone      every participant, household first, then A-Z (menu_people)
+#   opened        set once the menu has been opened or the split removed; stops the
+#                 "tick everyone" on first open from happening a second time
+# "Ticked" always means "has a row in pending['split']": there is no second list to drift.
+
+
+def menu_people(directory) -> tuple[Participant, ...]:
+    """Every participant, household first (directory order), then everyone else A-Z.
+
+    Both people menus use this order when the card isn't tagged to a trip, so the people the
+    sender picks most often are at the top and the rest are easy to find."""
+    return directory.household() + tuple(sorted(
+        (p for p in directory.participants if not p.is_household),
+        key=lambda p: p.display_name.casefold(),
+    ))
+
+
+def split_groups(people, families: dict) -> tuple:
+    """The trip's members grouped by family label, in the order the card lists them.
+
+    Families are ordered by their lowest member id and people within a family by id; people
+    with no family label form one group at the end. The order must not change while the card
+    is open, because a family button sends its index in this tuple, not its label."""
+    groups = {}
+    for person in sorted(people, key=lambda p: p.id):
+        groups.setdefault(families.get(person.id) or None, []).append(person)
+    labels = [label for label in groups if label is not None]
+    if None in groups:
+        labels.append(None)
+    return tuple((label, tuple(groups[label])) for label in labels)
+
+
+def split_people(pending: dict) -> tuple[Participant, ...]:
+    """The people the split menu shows now: the trip's members while the card is tagged to the
+    trip, otherwise everyone. Decided from the card as it is now, so a "Not trip" tap changes
+    the list. A tap on a person is checked against this, so a stale button is refused."""
+    menu = pending['split_menu']
+    people = (tuple(p for _, members in menu['groups'] for p in members)
+              if pending.get('trip_id') else menu['everyone'])
+    by_id = {p.id: p for p in people}
+    # A ticked person must stay in the menu so they can be unticked, even when they aren't on
+    # the list shown now (ticked from the everyone list, then the card was tagged back to the
+    # trip). Every participant is in 'everyone', so their real record is normally there; the
+    # stand-in built from the row is only a safety net, so a tick can never get stuck.
+    everyone = {p.id: p for p in menu['everyone']}
+    for row in pending.get('split') or ():
+        pid = row['participant_id']
+        if pid not in by_id:
+            by_id[pid] = everyone.get(pid) or Participant(pid, row['name'], None, None)
+    return tuple(by_id.values())
+
+
+def split_rows(pending: dict, participant_ids) -> tuple[dict, ...]:
+    """The split rows for the ticked people: {participant_id, name, share_cents, family}.
+
+    Used for the split read from the message and for every tap, so both give identical rows,
+    the rows the card draws and Confirm saves. Nobody ticked is a personal entry, `()`, and
+    share_out is never called then (it refuses an empty set of sharers)."""
+    ids = set(participant_ids)
+    if not ids:
+        return ()  # share_out deliberately refuses an empty set of sharers.
+    menu = pending['split_menu']
+    people = {p.id: p for p in menu['everyone']}
+    people.update((p.id, p) for p in split_people(pending))
+    return tuple({**row, 'family': menu['families'].get(row['participant_id'])}
+                 for row in split_shares(menu['amount_cents'], (people[pid] for pid in ids)))
+
+
+def _set_split(pending: dict, participant_ids) -> dict:
+    """A copy of the entry with exactly these people ticked, and the warnings brought up to date.
+
+    Once the ticks really change, the reading warnings ("Couldn't match 'Zed'") go: the menu is
+    now the answer. The uneven-shares warning stays until Confirm, because an even split is still
+    not what the message asked for; its wording says "shown as an even split" once anyone is
+    ticked, so the card never says "No split recorded" above a split."""
+    ids = set(participant_ids)
+    changed = {**pending, 'split': split_rows(pending, ids)}
+    if ids != {row['participant_id'] for row in pending.get('split') or ()}:
+        uneven = any(w in (UNEVEN_NOT_BUILT_WARNING, UNEVEN_EVEN_SPLIT_WARNING)
+                     for w in pending.get('split_warnings') or ())
+        warning = UNEVEN_EVEN_SPLIT_WARNING if ids else UNEVEN_NOT_BUILT_WARNING
+        changed['split_warnings'] = (warning,) if uneven else ()
+    return changed
+
+
+def open_split(pending: dict) -> dict:
+    """Opening the menu. On a card tagged to a trip with no split yet, the first opening ticks
+    every trip member and applies that split at once, so the ticks and the card agree. It
+    happens once only: after "Remove split", reopening ticks nobody."""
+    menu = pending['split_menu']
+    changed = dict(pending)
+    if pending.get('trip_id') and not pending.get('split') and not menu.get('opened'):
+        changed = _set_split(pending, (p.id for _, members in menu['groups'] for p in members))
+    changed['split_menu'] = {**menu, 'opened': True}
+    return changed
+
+
+def toggle_split_person(pending: dict, participant_id: int) -> dict:
+    """Tick or untick one person. Raises ValueError for someone the menu doesn't show now."""
+    if participant_id not in {p.id for p in split_people(pending)}:
+        raise ValueError('Person is not offered')
+    ids = {row['participant_id'] for row in pending.get('split') or ()}
+    return _set_split(pending, ids ^ {participant_id})
+
+
+def toggle_split_family(pending: dict, index: int) -> dict:
+    """Tick a whole family, or untick it when every member is already ticked. Raises ValueError
+    for an index the menu doesn't show now: the card isn't tagged to the trip, the index is out
+    of range, or the group has no label (the unlabelled group has no toggle)."""
+    groups = pending['split_menu']['groups']
+    if not pending.get('trip_id') or not 0 <= index < len(groups) or not groups[index][0]:
+        raise ValueError('Family is not offered')
+    members = {p.id for p in groups[index][1]}
+    ids = {row['participant_id'] for row in pending.get('split') or ()}
+    return _set_split(pending, ids - members if members <= ids else ids | members)
+
+
+def remove_split(pending: dict) -> dict:
+    """"Remove split": untick everyone. Also marks the menu as opened, so a later opening
+    doesn't tick everyone again and undo the choice."""
+    changed = _set_split(pending, ())
+    changed['split_menu'] = {**pending['split_menu'], 'opened': True}
+    return changed

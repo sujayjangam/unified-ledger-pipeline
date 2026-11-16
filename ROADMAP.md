@@ -33,7 +33,16 @@ production 2026-11-14 after a Neon-branch rehearsal and a backup). Before 0005, 
 no `account_id` were given a card by hand in SQL, one guarded `UPDATE` per `transaction_id`.
 
 **Next action:** group-trip splitting, below: step 3, splits
-(`docs/superpowers/plans/2026-11-16-splits.md`). PR 2 (the split menu), then PR 3 (uneven shares).
+(`docs/superpowers/plans/2026-11-16-splits.md`). PR 2 (the split menu, with the payer menu
+widened to every participant), then PR 3 (uneven shares); PR 2b (an immediate-family group) after
+PR 2. PR 2's decisions were settled 2026-11-16 (plan, ADR-0041). PR 2 is written on branch
+`feat/splits-menu` (gate green, Codex review clean) and is in review as a PR. No migration. The
+test-bot run on the Neon branch gave the right card for a split read from text (with an unmatched
+name), the family toggles, "only" one person, both people menus after "Not trip" (household
+first, then A-Z), the uneven warning, "Remove split", the first-opening tick-all happening once,
+no split button on a YouTrip top-up, trip mode off, a voice message, and the shares saved in
+`transaction_splits`. Every test participant was a trip member, so someone outside the trip
+appearing in the menus is covered by unit tests only.
 
 **Done 2026-11-16:** step 3, splits, PR 1 (read, store and show an even split), merged as PR
 [#101](https://github.com/sujayjangam/unified-ledger-pipeline/pull/101) and deployed
@@ -53,8 +62,9 @@ button and its menu, the rule for a tapped payer, and a lock per card so a Confi
 the middle of a redraw. No migration. The test-bot run on the Neon branch gave the right card for
 the menu, an outside payer and a household payer.
 
-Candidate follow-up: with trip mode off, the payer is read and offered from the household only.
-Widen it to every participant, as the split menu will be (decided 2026-11-16, not in PR 2).
+With trip mode off, the payer is read from the household only. Splits PR 2 widens the "Change
+who paid" menu to every participant (decided 2026-11-16); the text reading stays as it is
+(ADR-0041).
 
 **Done 2026-11-15:** step 2, paid-by, PR 1, merged as PR
 [#97](https://github.com/sujayjangam/unified-ledger-pipeline/pull/97) and deployed
