@@ -203,7 +203,8 @@ Env vars (`.env.example` shows the format):
   `participants` when shown. Migration 0005 dropped the old text columns (`account_desc`,
   `account_owner`, `entered_by`); never bring a stored name back.
 - `transaction_splits` holds one row per person sharing an entry, in whole cents. No rows means
-  "not split": the entry is the payer's alone. The shares must add up to the entry's amount;
+  "not split": the entry is the payer's alone, so a split whose only person is the payer is
+  never shown or saved (`_owed_split`). The shares must add up to the entry's amount;
   `add_expense` checks that and writes them in the same database transaction as the entry, only
   when the entry row was really inserted. Leftover cents go to the largest remainder, ties to the
   lowest participant id, never to "whoever paid".

@@ -68,17 +68,17 @@ def test_family_grouping_and_escaping():
     text = bot_core._split_lines({'split': tuple(reversed(rows))})
     assert text == ("👥 **Split between 4:**\nBob's family\n • Bob: 1.00\n • Dave\\_name: 1.00\n"
                     "Carol\\_family\n • Carol: 1.00\n • Alice: 1.00\n")
-    assert bot_core._split_lines({'split': [rows[0]]}) == "👥 **Split:** only Alice: 1.00\n"
     assert bot_core._split_lines({'split': [{**row, 'family': None} for row in rows]}).count('family') == 0
 
 
 def test_one_person_split_says_who_owes_whom():
-    """One sharer who didn't pay owes the payer everything; one sharer who did pay owes nothing."""
+    """One sharer who didn't pay owes the payer everything; a split of only the payer is no split."""
     carol = {"participant_id": 3, "name": "Carol_x", "family": None, "share_cents": 555}
     by_alice = {'split': [carol], 'paid_by_participant_id': 1, 'paid_by': "Alice"}
-    assert bot_core._split_lines(by_alice) == "👥 **Split:** Carol\\_x owes Alice all of it: 5.55\n"
+    assert bot_core._split_lines(by_alice) == "👥 **Split:** Carol\\_x owes Alice 5.55\n"
     by_carol = {'split': [carol], 'paid_by_participant_id': 3, 'paid_by': "Carol_x"}
-    assert bot_core._split_lines(by_carol) == "👥 **Split:** only Carol\\_x, who paid: nobody owes anything\n"
+    assert bot_core._split_lines(by_carol) == ""
+    assert bot_core._owed_split(by_carol) == ()
 
 
 async def test_warning_only_on_live_cards(monkeypatch, directory):

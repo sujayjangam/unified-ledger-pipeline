@@ -40,8 +40,9 @@ nothing for the trip depends on PR 2b.
 
 **PR open 2026-11-16, not merged:** the one-person split wording. A split with one person who
 didn't pay read "Split: only Carol", which looked like Carol splitting with herself; the card now
-says "Carol owes Alice all of it", and "nobody owes anything" when the one person is the payer.
-An entry with no payer recorded keeps "only Carol". Card text only.
+says "Carol owes Alice 5.55". A split whose only person is the payer is no split: the card shows
+no split line and no split rows are saved (the tick stays on the pending entry, so changing who
+paid brings the debt back).
 
 **Done 2026-11-16:** step 3, splits, PR 2 (the split menu, and people menus offering everyone
 off-trip), merged as PR [#103](https://github.com/sujayjangam/unified-ledger-pipeline/pull/103)
