@@ -679,14 +679,31 @@ def _account_lines(transaction: dict) -> str:
     )
 
 
+def _owed_split(transaction: dict) -> tuple[dict, ...]:
+    """The split rows that mean something: what the card shows and Confirm saves.
+
+    A split whose only sharer is the payer is no split at all - they paid for themselves - so
+    it is dropped, and the entry is the payer's alone ("no rows means not split"). The pending
+    entry keeps the tick, so a later "Change who paid" tap brings the split back as a debt.
+    """
+    rows = tuple(sorted(transaction.get('split') or (), key=lambda row: row['participant_id']))
+    if len(rows) == 1 and rows[0]['participant_id'] == transaction.get('paid_by_participant_id'):
+        return ()
+    return rows
+
+
 def _split_lines(transaction: dict) -> str:
     """Show every share, grouping family labels in lowest-member-id order."""
-    rows = sorted(transaction.get('split') or (), key=lambda row: row['participant_id'])
+    rows = _owed_split(transaction)
     if not rows:
         return ""
     if len(rows) == 1:
+        # "Split: only Carol" read as Carol splitting with herself. One sharer who isn't the
+        # payer owes the payer the whole amount, so say exactly that. A bot entry always has
+        # a payer (resolve_payment sets one), so the name is always there.
         row = rows[0]
-        return f"👥 **Split:** only {_md(row['name'])}: {format_cents(row['share_cents'])}\n"
+        payer = transaction.get('paid_by') or transaction.get('account_owner')
+        return f"👥 **Split:** {_md(row['name'])} owes {_md(payer)} {format_cents(row['share_cents'])}\n"
     lines = [f"👥 **Split between {len(rows)}:**"]
     groups = {}
     for row in rows:
@@ -1390,7 +1407,8 @@ async def _card_tap(query, context: ContextTypes.DEFAULT_TYPE, message_id: int):
             # The trip as the card showed it, after any "Not trip" tap. None for an everyday entry.
             trip_id=transaction_to_save.get('trip_id'),
             paid_by_participant_id=transaction_to_save.get('paid_by_participant_id'),
-            splits=[(row['participant_id'], row['share_cents']) for row in transaction_to_save.get('split') or ()],
+            # The same rows the card showed: a split of only the payer is dropped (_owed_split).
+            splits=[(row['participant_id'], row['share_cents']) for row in _owed_split(transaction_to_save)],
         )
 
         if save_success:

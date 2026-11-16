@@ -72,6 +72,36 @@ async def test_first_trip_open_and_remove_reopen(monkeypatch, directory):
     assert _data(query.edit_message_text.await_args.kwargs['reply_markup']) == _data(bot_core._keyboard_for(pending))
 
 
+async def test_one_person_split_follows_a_payer_change(monkeypatch, directory):
+    """The one-person line names whoever pays now, on the live card and on the saved receipt."""
+    context, pending, _ = await _card(monkeypatch, directory, amount=5.55)
+    await _press(context, 'split:menu')
+    await _press(context, 'split:p:1')
+    await _press(context, 'split:p:2')
+    assert _ids(pending) == [3]
+    # Carol paid for herself: no split line, and nothing would be saved as a split.
+    query = await _payer_press(context, 'payer:set:3')
+    assert 'Split' not in query.edit_message_text.await_args.args[0]
+    # The tick survived, so moving the payer to Bob brings the debt back.
+    query = await _payer_press(context, 'payer:set:2')
+    assert 'Carol owes Bob 5.55' in query.edit_message_text.await_args.args[0]
+    save, saved = await _confirm(monkeypatch, context)
+    assert 'Carol owes Bob 5.55' in saved
+    assert save.call_args.kwargs['splits'] == [(3, 555)]
+
+
+async def test_split_of_only_the_payer_is_not_saved(monkeypatch, directory):
+    """Ticking only the person who paid saves the entry as theirs alone, with no split rows."""
+    context, pending, _ = await _card(monkeypatch, directory, amount=5.55)
+    await _press(context, 'split:menu')
+    await _press(context, 'split:p:2')
+    query = await _press(context, 'split:p:3')
+    assert _ids(pending) == [1] and pending['paid_by_participant_id'] == 1
+    assert 'Split' not in query.edit_message_text.await_args.args[0]
+    save, _ = await _confirm(monkeypatch, context)
+    assert save.call_args.kwargs['splits'] == []
+
+
 async def test_no_trip_open_and_person_shares(monkeypatch, directory):
     """An everyday entry starts personal and hands leftover cents to the lowest id."""
     context, pending, _ = await _card(monkeypatch, directory, trip=False, amount=5.55)
@@ -84,7 +114,7 @@ async def test_no_trip_open_and_person_shares(monkeypatch, directory):
     assert 'Carol: 2.77' in query.edit_message_text.await_args.args[0]
     assert ['👥 Change split'] in _labels(bot_core._keyboard_for(pending))
     await _press(context, 'split:p:1')
-    assert 'only Carol: 5.55' in bot_core._split_lines(pending)
+    assert 'Carol owes Alice 5.55' in bot_core._split_lines(pending)
     await _press(context, 'split:p:3')
     assert bot_core._split_lines(pending) == ''
 
@@ -98,7 +128,7 @@ async def test_partial_family_ticks_all_then_unticks_all(monkeypatch, directory)
     assert [r['share_cents'] for r in pending['split']] == [185, 185, 185]
     query = await _press(context, 'split:f:0')
     assert _ids(pending) == [3] and pending['split'][0]['share_cents'] == 555
-    assert 'only Carol: 5.55' in query.edit_message_text.await_args.args[0]
+    assert 'Carol owes Alice 5.55' in query.edit_message_text.await_args.args[0]
 
 
 async def test_not_trip_order_and_retained_tick(monkeypatch, directory):
