@@ -685,8 +685,19 @@ def _split_lines(transaction: dict) -> str:
     if not rows:
         return ""
     if len(rows) == 1:
+        # "Split: only Carol" read as Carol splitting with herself. One sharer means that person
+        # owes the payer the whole amount, so say that - or, if the one sharer is the payer,
+        # that nobody owes anything.
         row = rows[0]
-        return f"👥 **Split:** only {_md(row['name'])}: {format_cents(row['share_cents'])}\n"
+        share = format_cents(row['share_cents'])
+        payer_id = transaction.get('paid_by_participant_id')
+        payer = transaction.get('paid_by') or transaction.get('account_owner')
+        if payer_id is not None and row['participant_id'] == payer_id:
+            return f"👥 **Split:** only {_md(row['name'])}, who paid: nobody owes anything\n"
+        if payer_id is not None and payer:
+            return f"👥 **Split:** {_md(row['name'])} owes {_md(payer)} all of it: {share}\n"
+        # No payer recorded on the entry: there is nobody to name as owed.
+        return f"👥 **Split:** only {_md(row['name'])}: {share}\n"
     lines = [f"👥 **Split between {len(rows)}:**"]
     groups = {}
     for row in rows:

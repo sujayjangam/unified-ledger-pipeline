@@ -72,6 +72,15 @@ def test_family_grouping_and_escaping():
     assert bot_core._split_lines({'split': [{**row, 'family': None} for row in rows]}).count('family') == 0
 
 
+def test_one_person_split_says_who_owes_whom():
+    """One sharer who didn't pay owes the payer everything; one sharer who did pay owes nothing."""
+    carol = {"participant_id": 3, "name": "Carol_x", "family": None, "share_cents": 555}
+    by_alice = {'split': [carol], 'paid_by_participant_id': 1, 'paid_by': "Alice"}
+    assert bot_core._split_lines(by_alice) == "👥 **Split:** Carol\\_x owes Alice all of it: 5.55\n"
+    by_carol = {'split': [carol], 'paid_by_participant_id': 3, 'paid_by': "Carol_x"}
+    assert bot_core._split_lines(by_carol) == "👥 **Split:** only Carol\\_x, who paid: nobody owes anything\n"
+
+
 async def test_warning_only_on_live_cards(monkeypatch, directory):
     """An unknown name keeps known shares and warns on both pending and retry cards."""
     reference = {**WITH_CAROL, 'people': [{'name': 'Carol'}, {'name': 'Erin_name'}]}

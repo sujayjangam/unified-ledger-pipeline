@@ -84,7 +84,7 @@ async def test_no_trip_open_and_person_shares(monkeypatch, directory):
     assert 'Carol: 2.77' in query.edit_message_text.await_args.args[0]
     assert ['👥 Change split'] in _labels(bot_core._keyboard_for(pending))
     await _press(context, 'split:p:1')
-    assert 'only Carol: 5.55' in bot_core._split_lines(pending)
+    assert 'Carol owes Alice all of it: 5.55' in bot_core._split_lines(pending)
     await _press(context, 'split:p:3')
     assert bot_core._split_lines(pending) == ''
 
@@ -98,7 +98,7 @@ async def test_partial_family_ticks_all_then_unticks_all(monkeypatch, directory)
     assert [r['share_cents'] for r in pending['split']] == [185, 185, 185]
     query = await _press(context, 'split:f:0')
     assert _ids(pending) == [3] and pending['split'][0]['share_cents'] == 555
-    assert 'only Carol: 5.55' in query.edit_message_text.await_args.args[0]
+    assert 'Carol owes Alice all of it: 5.55' in query.edit_message_text.await_args.args[0]
 
 
 async def test_not_trip_order_and_retained_tick(monkeypatch, directory):
