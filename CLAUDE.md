@@ -108,7 +108,11 @@ Env vars (`.env.example` shows the format):
   don't pile up. It reads the directory snapshot kept on the pending entry, never the database.
   No account fits → an alert, and nothing changes. No button on a YouTrip top-up. Build new
   people menus with `_people_keyboard`
-  ([ADR-0038](docs/decisions/0038-paid-by-button-starts-from-the-message.md)).
+  ([ADR-0038](docs/decisions/0038-paid-by-button-starts-from-the-message.md)). The menu offers
+  the trip's members while the card is tagged to a trip, otherwise every participant, decided
+  when it is drawn (`_payer_people`), and a tap is checked against that same list. Only the menu
+  widens: `read_payer` and the second reader keep the trip or the household
+  ([ADR-0041](docs/decisions/0041-split-menu-and-wider-people-menus.md)).
 - A split is read by the model and worked out by Python
   ([ADR-0039](docs/decisions/0039-splits-read-by-the-model-worked-out-by-python.md)). The model
   returns only a `split_reference` (who and how many), never a share. `resolve_split` matches
@@ -118,7 +122,16 @@ Env vars (`.env.example` shows the format):
   (`sender_shares`), both read by Python. Nobody is guessed: an unmatched name, or
   "everyone" with no trip on, is a ⚠️ card line. Split warnings are never stored and never block a
   save. Uneven shares aren't built yet: a message asking for them gets a warning and no split,
-  never a wrong even one. Transfers and YouTrip top-ups are never split.
+  never a wrong even one read from the text. An even split set in the menu keeps the warning,
+  reworded, until Confirm. Transfers and YouTrip top-ups are never split.
+- The split menu (`handle_split_button`, ADR-0041) follows the payer button's rules: card lock,
+  answer once and last, toast only on resolved cards, never load the directory, redraw from a
+  copy and change the pending entry only after the redraw worked. State changes are pure
+  functions in `app/services/splits.py` that return a copy. "Ticked" means "has a row in
+  `split`". The list is chosen when drawn: trip families while tagged, otherwise everyone, and
+  anyone ticked always stays listed. The first opening on a trip card with no split ticks every
+  member; never again after that (`split_menu['opened']`). Callback data is an id or a group
+  index, never a name.
 - The duplicate check runs before the card is shown, never inside the insert, and a failed check
   gives a normal card — it must never block a save
   ([ADR-0027](docs/decisions/0027-duplicate-warning-before-the-card.md)).

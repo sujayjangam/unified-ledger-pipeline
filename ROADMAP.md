@@ -35,8 +35,9 @@ no `account_id` were given a card by hand in SQL, one guarded `UPDATE` per `tran
 **Next action:** group-trip splitting, below: step 3, splits
 (`docs/superpowers/plans/2026-11-16-splits.md`). PR 2 (the split menu, with the payer menu
 widened to every participant), then PR 3 (uneven shares); PR 2b (an immediate-family group) after
-PR 2. PR 2's decisions were settled 2026-11-16 (plan, ADR-0041); coding started 2026-11-16 on
-branch `feat/splits-menu`.
+PR 2. PR 2's decisions were settled 2026-11-16 (plan, ADR-0041). PR 2 is written on branch
+`feat/splits-menu` (gate green, Codex review clean); next is the test-bot run on the Neon branch,
+then the PR. No migration.
 
 **Done 2026-11-16:** step 3, splits, PR 1 (read, store and show an even split), merged as PR
 [#101](https://github.com/sujayjangam/unified-ledger-pipeline/pull/101) and deployed

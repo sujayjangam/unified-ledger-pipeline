@@ -28,9 +28,9 @@ who pays an everyday bill can't be picked, and after "Not trip" the menu still o
   once, so the ticks and the card never disagree. Later openings never tick anyone by themselves.
 - **Which list a menu shows is decided when it is drawn, from the card as it is now.** Tagged to
   a trip: that trip's members, by family. Not tagged (no trip on, or after "Not trip"): every
-  participant, household first, then everyone else A-Z. People already ticked, or the payer shown
-  now, are always in the list. This applies to the split menu and the payer menu alike, and
-  replaces ADR-0038's "otherwise the household" for the payer menu.
+  participant, household first, then everyone else A-Z. This applies to the split menu and the
+  payer menu alike, and replaces ADR-0038's "otherwise the household" for the payer menu. People
+  already ticked are always in the split menu; the payer shown now is always in the payer menu.
 - **Reading the payer from the text does not widen.** `read_payer` and the model's second reading
   (ADR-0040) still look at the trip's members or the household. More candidates would mean more
   one-word name clashes, and one tap in the menu covers the rare outside payer.
