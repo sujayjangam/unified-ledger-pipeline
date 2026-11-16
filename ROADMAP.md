@@ -32,12 +32,16 @@ columns) and [#91](https://github.com/sujayjangam/unified-ledger-pipeline/pull/9
 production 2026-11-14 after a Neon-branch rehearsal and a backup). Before 0005, the 5 rows with
 no `account_id` were given a card by hand in SQL, one guarded `UPDATE` per `transaction_id`.
 
-**Next action:** group-trip splitting, below: step 2, paid-by, PR 2. The "Change who paid" button
-and its menu are built on branch `feat/paid-by-button`
-([ADR-0038](docs/decisions/0038-paid-by-button-starts-from-the-message.md)); no migration. A
-test-bot run on the Neon branch, 2026-11-16, gave the right card for the menu, an outside payer
-and a household payer. Left: merge the PR. Then step 3, splits, whose "Add split" menu reuses
-`_people_keyboard`.
+**Next action:** group-trip splitting, below: step 3, splits. Planned 2026-11-16 in
+`docs/superpowers/plans/2026-11-16-splits.md`, not started. Three PRs: read, store and show an
+even split; the split menu; uneven shares. Start with PR 1.
+
+**Done 2026-11-16:** step 2, paid-by, PR 2, merged as PR
+[#99](https://github.com/sujayjangam/unified-ledger-pipeline/pull/99) and deployed
+([ADR-0038](docs/decisions/0038-paid-by-button-starts-from-the-message.md)): the "Change who paid"
+button and its menu, the rule for a tapped payer, and a lock per card so a Confirm can't land in
+the middle of a redraw. No migration. The test-bot run on the Neon branch gave the right card for
+the menu, an outside payer and a household payer.
 
 Candidate follow-up: with trip mode off, the payer is read and offered from the household only.
 Widen it to every participant, as the split menu will be (decided 2026-11-16, not in PR 2).
@@ -308,7 +312,8 @@ only shared costs they pay get logged. Travel minimum, in build order:
      always deciding the payer, and a shared "Paid by someone else" account for outside payers.
      PR 1 (everything but the button) done 2026-11-15,
      [#97](https://github.com/sujayjangam/unified-ledger-pipeline/pull/97); PR 2, the button, is
-     built and tested on the test bot 2026-11-16, in review.
+     done 2026-11-16,
+     [#99](https://github.com/sujayjangam/unified-ledger-pipeline/pull/99).
   3. Uneven splits from the start, with an even split as the easy case. Per-person shares, rolling
      up to family. A message that says nothing about splitting is personal, and the card gets an
      "Add split" button. While trip mode is on, that opens a menu of the active trip's members
@@ -413,6 +418,10 @@ is the fallback.
 - [ ] Tune the date window against the golden set rather than inheriting a constant — Actual
 Budget's ±7 days is a starting point to measure, not a value to copy (see Constraints)
 - [ ] Expand the pytest suite to cover matcher edge cases surfaced by the golden set
+- [ ] Candidate (2026-11-16, not planned): score a classification-only model against GPT-4o-mini
+for the choices the bot makes from a fixed list (category, account, "is this a split?"), on real
+confirmed messages. It can't replace the extraction of amounts, names or dates, which are values
+in the message, not options from a list.
 - [ ] **Auto-categorisation rules** — derive `token → category` rules from confirmed
 `transactions` history (`description` holds the raw input, `category` holds the human-confirmed
 answer), so common entries resolve without an LLM call at all. Moving categories into their own
@@ -440,8 +449,8 @@ cents in `transaction_splits`, with a check that the shares sum to the entry. Wo
 rounding every share down and handing the leftover cents out one at a time, never by rounding each
 share: SGD 5.55 split two ways would otherwise be 2.78 + 2.78 = 5.56. This replaces the
 `split_ratio` Decimal column, which nothing writes today. Who gets a leftover cent must be a fixed
-rule, not random, so the same entry always splits the same way; decide it here (suggested:
-whoever's card paid).
+rule, not random, so the same entry always splits the same way. Decided 2026-11-16: the largest
+remainders first, ties to the lowest participant id (`docs/superpowers/plans/2026-11-16-splits.md`).
 - [ ] A database view that shows each entry's sender by name: `entered_by_participant_id` joined to
 the `participants` table from [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53), so the base table keeps storing only the id
 ([ADR-0033](docs/decisions/0033-entered-by-participant-id.md)) while anything reading the ledger sees names. Possible now that #84 put names in the
