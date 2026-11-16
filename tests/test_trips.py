@@ -308,7 +308,7 @@ async def test_active_trip_is_on_pending_entry_and_card(monkeypatch, directory, 
     reply = card.edit_text.await_args
     assert "🧳 **Trip:** Beach Trip" in reply.args[0]
     rows = reply.kwargs["reply_markup"].inline_keyboard
-    assert len(rows) == 2
+    assert len(rows) == 3  # Confirm/Cancel, the trip toggle, "Change who paid"
     assert rows[0][0].text == confirm
     assert [b.callback_data for b in rows[0]] == ["confirm_save", "cancel_save"]
     assert [(b.text, b.callback_data) for b in rows[1]] == [("🏠 Not trip", "trip_toggle")]
@@ -325,7 +325,9 @@ async def test_no_trip_or_failed_lookup_has_no_toggle(monkeypatch, directory, fa
     reply = card.edit_text.await_args
     assert "**Trip:**" not in reply.args[0]
     assert (bot_core.TRIP_UNKNOWN_WARNING in reply.args[0]) is fails
-    assert len(reply.kwargs["reply_markup"].inline_keyboard) == 1
+    rows = reply.kwargs["reply_markup"].inline_keyboard
+    assert len(rows) == 2  # Confirm/Cancel and "Change who paid": no trip toggle
+    assert "trip_toggle" not in [b.callback_data for row in rows for b in row]
     loader.assert_called_once_with(1)
 
 

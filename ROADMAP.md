@@ -32,9 +32,15 @@ columns) and [#91](https://github.com/sujayjangam/unified-ledger-pipeline/pull/9
 production 2026-11-14 after a Neon-branch rehearsal and a backup). Before 0005, the 5 rows with
 no `account_id` were given a card by hand in SQL, one guarded `UPDATE` per `transaction_id`.
 
-**Next action:** group-trip splitting, below: step 2, paid-by, PR 2: the "Paid by" button and its
-menu (plan step 6 in `docs/superpowers/plans/2026-11-15-paid-by.md`), built so step 3's "Add
-split" menu can reuse it. Then step 3, splits.
+**Next action:** group-trip splitting, below: step 2, paid-by, PR 2. The "Change who paid" button
+and its menu are built on branch `feat/paid-by-button`
+([ADR-0038](docs/decisions/0038-paid-by-button-starts-from-the-message.md)); no migration. A
+test-bot run on the Neon branch, 2026-11-16, gave the right card for the menu, an outside payer
+and a household payer. Left: merge the PR. Then step 3, splits, whose "Add split" menu reuses
+`_people_keyboard`.
+
+Candidate follow-up: with trip mode off, the payer is read and offered from the household only.
+Widen it to every participant, as the split menu will be (decided 2026-11-16, not in PR 2).
 
 **Done 2026-11-15:** step 2, paid-by, PR 1, merged as PR
 [#97](https://github.com/sujayjangam/unified-ledger-pipeline/pull/97) and deployed
@@ -45,8 +51,8 @@ from the message (a whole name, or one word of it no other candidate shares), th
 The test-bot run on the Neon branch, with fictional trip guests, gave the right card for every
 payer case. It also found `/today`, `/week`, `/month` and the category views crashing on Postgres
 Decimal sums (older than the branch, fixed in it). Before the merge, production got a fresh
-backup, migration 0007 by hand, and the "Paid by someone else" account seeded. Not yet done: an
-"X paid" entry logged on production after the deploy.
+backup, migration 0007 by hand, and the "Paid by someone else" account seeded. An "X paid" entry
+logged on production with trip mode on, 2026-11-16, gave the right card.
 
 **Done 2026-11-15:** step 1, trips, merged as PR
 [#95](https://github.com/sujayjangam/unified-ledger-pipeline/pull/95) and deployed
@@ -301,10 +307,13 @@ only shared costs they pay get logged. Travel minimum, in build order:
      column read by Python from the message, a "Paid by" button to fix it, an owned account
      always deciding the payer, and a shared "Paid by someone else" account for outside payers.
      PR 1 (everything but the button) done 2026-11-15,
-     [#97](https://github.com/sujayjangam/unified-ledger-pipeline/pull/97); PR 2 is the button.
+     [#97](https://github.com/sujayjangam/unified-ledger-pipeline/pull/97); PR 2, the button, is
+     built and tested on the test bot 2026-11-16, in review.
   3. Uneven splits from the start, with an even split as the easy case. Per-person shares, rolling
      up to family. A message that says nothing about splitting is personal, and the card gets an
-     "Add split" button. That opens a menu of the active trip's members only, one row per family,
+     "Add split" button. While trip mode is on, that opens a menu of the active trip's members
+     only. While it is off, the menu offers every participant, so friends who were added for a
+     trip can share an everyday bill too (decided 2026-11-16). One row per family,
      with an "all of this family" toggle and a tap to toggle individuals. Trip members are copied
      into the pending entry (a tap never loads the directory). Button data stays inside Telegram's
      64-byte limit. Shares are in whole cents and must add up to the amount (see the whole-cents

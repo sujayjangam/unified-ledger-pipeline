@@ -128,7 +128,11 @@ its context, rejected alternatives and cost. The ones that shaped the system mos
   tested Python against the household, or the trip's members while a trip is on, never by the
   model. An account with an owner decides the payer; an entry paid by someone outside the household
   goes on a shared "Paid by someone else" account and is left out of the totals. The card shows
-  "Paid by", with a warning line when the message names a payer it can't match.
+  "Paid by", with a warning line when the message names a payer it can't match, and a "Change
+  who paid" button that lists the people to tap. The entry stays on Cash, the wallet or the
+  tapped person's own card if the message named one; otherwise it moves to their default account,
+  and an outside payer goes on "Paid by someone else". If no account fits, nothing changes. A
+  YouTrip top-up has no button.
 - CI on every pull request: clean dependency install, lint, an import smoke check across `app/`,
   and a pytest suite over the money and date invariants — required to pass before a merge to
   `main`, enforced by a repository ruleset rather than merely reported on.

@@ -30,6 +30,9 @@ OUTSIDE_PAYER_ACCOUNT_NAME = "Paid by someone else"
 # Setup failures replace the card; payer warnings are display-only lines on it.
 NO_OUTSIDE_ACCOUNT_MESSAGE = "⚠️ No outside-payer account set up — add Paid by someone else in the accounts table. Nothing was saved."
 PAYER_UNCLEAR_WARNING = "⚠️ Couldn't tell who paid"
+# Toasts for a "Paid by" tap that can't be applied. The card and the entry stay as they were.
+NO_PAYER_ACCOUNT_TOAST = "⚠️ {payer} has no default account to put this on. Nothing changed."
+NO_OUTSIDE_ACCOUNT_TOAST = "⚠️ No 'Paid by someone else' account is set up. Nothing changed."
 OWNER_WINS_WARNING = "⚠️ The message says {payer} paid, but {account} is {owner}'s card, so {owner} is recorded as paying."
 OUTSIDE_ON_OWNED_WARNING = "⚠️ {payer} paid, so this is on {outside_account}, not {account}."
 
@@ -52,6 +55,10 @@ class WalletNotSetUp(Exception):
 
 class OutsideAccountNotSetUp(Exception):
     """An outside payer was named but their shared account is missing or closed."""
+
+
+class PayerHasNoAccount(Exception):
+    """A household payer was tapped, but no account of theirs can take the entry."""
 
 
 def _key(name: str | None) -> str | None:
@@ -303,7 +310,8 @@ def resolve_payment(transaction: dict, directory: Directory, sender: Participant
     Mutates and returns the dict, like the apply_payment_defaults() it replaces.
 
     Sets account_id, paid_by_participant_id, payment_method, paid_by, account_owner,
-    closed_account and payer_warning. Names and warnings are display only. In order:
+    closed_account, payer_warning and base_account_id. Names and warnings are display only;
+    base_account_id is only for a later "Paid by" tap (change_payer). In order:
       1. A YouTrip top-up is paid from the wallet's funding card, whoever sent it, and is a
          Transfer. No open wallet or no funding card -> WalletNotSetUp: never guess.
       2. An outside text payer uses the open outside-payer account, whatever the model picked.
@@ -314,6 +322,9 @@ def resolve_payment(transaction: dict, directory: Directory, sender: Participant
          an unowned account takes the text payer or sender. Warnings never block saving.
     """
     warning = None
+    # The account the message itself named (after the closed-card correction), before any payer
+    # rule moved it. Kept on the entry for change_payer. None when no card was named.
+    base = None
     if transaction.get("category") == "YouTrip top-up":
         wallet = directory.open_account_named(WALLET_NAME)
         funder = directory.account(wallet.funded_by_account_id) if wallet else None
@@ -334,6 +345,7 @@ def resolve_payment(transaction: dict, directory: Directory, sender: Participant
             # stays, with its warning and "Save anyway": a late refund said loosely ("my old
             # visa", often from a voice transcript) must not slip onto the default card unseen.
             account = _open_account_in(message, directory) or account
+        base = account
         if text_payer is not None and not text_payer.is_household:
             outside = directory.open_account_named(OUTSIDE_PAYER_ACCOUNT_NAME)
             if outside is None:
@@ -353,6 +365,14 @@ def resolve_payment(transaction: dict, directory: Directory, sender: Participant
                 warning = OWNER_WINS_WARNING.format(
                     payer=text_payer.display_name, account=account.name, owner=payer.display_name)
 
+    transaction["base_account_id"] = base.id if base else None
+    return _set_payment(transaction, account, payer, warning)
+
+
+def _set_payment(transaction: dict, account: Account, payer: Participant, warning: str | None) -> dict:
+    """Writes the chosen account and payer onto the entry: the two ids that get saved, and the
+    names and flags the card shows. One place, so resolve_payment (the message) and change_payer
+    (a "Paid by" tap) can never fill these fields differently."""
     transaction["account_id"] = account.id
     transaction["payment_method"] = account.name
     transaction["account_owner"] = payer.display_name
@@ -361,3 +381,41 @@ def resolve_payment(transaction: dict, directory: Directory, sender: Participant
     transaction["payer_warning"] = warning
     transaction["closed_account"] = not account.is_open
     return transaction
+
+
+def change_payer(transaction: dict, directory: Directory, payer: Participant) -> dict:
+    """The entry as it would be with `payer` tapped on the card's "Paid by" menu. Returns a
+    changed copy; the entry passed in is left alone, so the caller can redraw the card first and
+    keep the old entry if that fails.
+
+    The same rules as resolve_payment, with the tapped person in place of a name in the message:
+      - An outside payer goes on the open "Paid by someone else" account
+        (none -> OutsideAccountNotSetUp).
+      - A household payer keeps the account the message named (base_account_id) when it is
+        unowned (Cash, the wallet) or their own. Someone else's card can't stay: an owned account
+        always decides the payer, and here the tap decides. Then, as if no card had been named:
+        the wallet for a foreign currency, otherwise the payer's default account. A default that
+        is missing, or is someone else's card -> PayerHasNoAccount: never guess.
+
+    It starts from base_account_id, not the account the card shows now, so taps don't pile up:
+    tapping Bob and then Alice again gives back exactly the card Alice started with.
+
+    A tap is a deliberate choice, so the result carries no payer warning.
+    """
+    if not payer.is_household:
+        account = directory.open_account_named(OUTSIDE_PAYER_ACCOUNT_NAME)
+        if account is None:
+            raise OutsideAccountNotSetUp()
+    else:
+        def usable(a: Account | None) -> Account | None:
+            return a if a is not None and a.owner_participant_id in (None, payer.id) else None
+
+        account = usable(directory.account(transaction.get("base_account_id")))
+        if account is None and transaction.get("currency", "SGD") != "SGD":
+            # usable() here too: a wallet that has an owner is that person's, like any card.
+            account = usable(directory.open_account_named(WALLET_NAME))
+        if account is None:
+            account = usable(directory.account(payer.default_account_id))
+        if account is None:
+            raise PayerHasNoAccount()
+    return _set_payment(dict(transaction), account, payer, None)

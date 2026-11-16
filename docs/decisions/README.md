@@ -45,6 +45,7 @@ supersedes the old one rather than editing history.
 | [0035](0035-trips-tagged-at-log-time.md) | Trips: one active trip in the database, entries tagged when logged, families per trip | Partly superseded by [0036](0036-trip-switch-per-person.md) | 2026-11-14 |
 | [0036](0036-trip-switch-per-person.md) | Trip mode is a switch per person, picked from buttons, shown by a pinned banner | Accepted | 2026-11-14 |
 | [0037](0037-paid-by-person-read-from-text.md) | The payer is a person column, read from the message by Python; an owned account decides the payer | Accepted | 2026-11-15 |
+| [0038](0038-paid-by-button-starts-from-the-message.md) | A tapped payer starts from the account the message named, using the card's own directory snapshot | Accepted | 2026-11-16 |
 
 ## Writing a new one
 
