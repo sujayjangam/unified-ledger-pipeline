@@ -33,18 +33,18 @@ production 2026-11-14 after a Neon-branch rehearsal and a backup). Before 0005, 
 no `account_id` were given a card by hand in SQL, one guarded `UPDATE` per `transaction_id`.
 
 **Next action:** group-trip splitting, below: step 3, splits
-(`docs/superpowers/plans/2026-11-16-splits.md`). PR 1 (read, store and show an even split) is
-written on branch `feat/splits-read-store-show`, not yet merged
+(`docs/superpowers/plans/2026-11-16-splits.md`). PR 2 (the split menu), then PR 3 (uneven shares).
+
+**Done 2026-11-16:** step 3, splits, PR 1 (read, store and show an even split), merged as PR
+[#101](https://github.com/sujayjangam/unified-ledger-pipeline/pull/101) and deployed
 ([ADR-0039](docs/decisions/0039-splits-read-by-the-model-worked-out-by-python.md),
-[ADR-0040](docs/decisions/0040-model-as-second-reader-for-the-payer.md)): migration 0008
-(`transaction_splits`), the model's `split_reference` and `payer_name`, name matching and whole-cent
-shares in Python, share lines on the card, shares saved with the entry, and the model as a second
-reader for the payer. Migration 0008 is on the Neon test branch. `scripts/check_extraction` gave
-35 of 35 messages right in 20 of 20 runs, after three readings moved from the model to Python (is
-there a split word; does "between" leave the sender out; is there a paying word before the
-model's payer is believed). Still to do before merging: a test-bot
-run on the Neon branch, then a production backup and migration 0008 by hand. After that PR 2 (the
-split menu) and PR 3 (uneven shares).
+[ADR-0040](docs/decisions/0040-model-as-second-reader-for-the-payer.md)). Migration 0008
+(`transaction_splits`) was applied to production by hand after a backup, before the merge. Shipped:
+the model's `split_reference` and `payer_name`, name matching and whole-cent shares in Python, share
+lines on the card, shares saved with the entry, and the model as a second reader for the payer.
+`scripts/check_extraction` gave 35 of 35 messages right in 20 of 20 runs, after three readings moved
+from the model to Python (is there a split word; does "between" leave the sender out; is there a
+paying word before the model's payer is believed).
 
 **Done 2026-11-16:** step 2, paid-by, PR 2, merged as PR
 [#99](https://github.com/sujayjangam/unified-ledger-pipeline/pull/99) and deployed
@@ -334,6 +334,9 @@ only shared costs they pay get logged. Travel minimum, in build order:
      64-byte limit. Shares are in whole cents and must add up to the amount (see the whole-cents
      item under Phase 3). Leftover cents go to the largest remainder, ties to the lowest
      participant id (ADR-0039). How refunds split is still open.
+     PR 1 (read, store and show an even split) done 2026-11-16,
+     [#101](https://github.com/sujayjangam/unified-ledger-pipeline/pull/101); PR 2, the split menu,
+     and PR 3, uneven shares, remain.
      - Weighted shares, needed for the trip's accommodation: a 5-night booking where some members
        stay only 4 nights. Ticking people gives only an even split, so the split also needs a
        weight per person (nights, or any count). Each share is amount × weight ÷ total weight,
@@ -449,8 +452,10 @@ The trip, split and settle-up items here moved to Phase 1 ("Group-trip splitting
 What stays here builds on them: the household as a group with no end date, and the items below that
 weren't pulled forward.
 
-- [ ] Schema: `transaction_splits` child table, `split_type` enum. *Moved to Phase 1, Group-trip
-splitting.*
+- [x] Schema: `transaction_splits` child table. *Moved to Phase 1, Group-trip splitting; shipped
+2026-11-16 in migration 0008 (#101), storing whole-cent shares only. The `split_type` enum was not
+built: the kind of split is worked out in Python and not stored. It waits until uneven shares
+(PR 3) show whether it is needed.*
 - [ ] Application logic: who-owes-who calculation. *Moved to Phase 1, Group-trip splitting, with
 uneven splits from the start.*
 - [ ] Extend as real usage surfaces the need for more flexible splitting
