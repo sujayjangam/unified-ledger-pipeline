@@ -155,17 +155,17 @@ async def _press(context, data):
     return query
 
 
-async def test_card_has_the_button_and_offers_the_household(monkeypatch, directory):
+async def test_card_has_the_button_and_offers_everyone(monkeypatch, directory):
+    """Everyday menus include outside people without widening the text reader."""
     _, pending = await _card(monkeypatch, directory)
     assert _data(bot_core._keyboard_for(pending))[-1] == ["payer:menu"]
-    # No trip on: the people offered are the household. Carol is not among them.
-    assert [p.display_name for p in pending["payer_menu"]["people"]] == ["Alice", "Bob"]
+    assert _labels(bot_core._payer_keyboard(pending)) == [["✅ Alice", "Bob"], ["Carol"], ["◂ Back"]]
 
 
 async def test_trip_card_offers_the_trip_members(monkeypatch, directory):
     monkeypatch.setattr(bot_core, "_load_active_trip", lambda participant_id: BEACH)
     _, pending = await _card(monkeypatch, directory)
-    assert [p.display_name for p in pending["payer_menu"]["people"]] == ["Alice", "Bob", "Carol"]
+    assert _data(bot_core._payer_keyboard(pending)) == [["payer:set:1", "payer:set:2"], ["payer:set:3"], ["payer:back"]]
 
 
 async def test_current_payer_is_offered_even_when_not_a_candidate(monkeypatch, directory):
@@ -173,7 +173,7 @@ async def test_current_payer_is_offered_even_when_not_a_candidate(monkeypatch, d
     monkeypatch.setattr(bot_core, "_load_active_trip",
                         lambda participant_id: replace(BEACH, member_ids=(1,)))
     _, pending = await _card(monkeypatch, directory, message="Lunch 40 card b", payment_method="Card B")
-    assert [p.display_name for p in pending["payer_menu"]["people"]] == ["Alice", "Bob"]
+    assert _data(bot_core._payer_keyboard(pending)) == [["payer:set:1", "payer:set:2"], ["payer:back"]]
 
 
 async def test_topup_card_has_no_payer_button(monkeypatch, directory):
@@ -201,7 +201,7 @@ async def test_back_restores_the_card_buttons_unchanged(monkeypatch, directory):
     context, pending = await _card(monkeypatch, directory)
     query = await _press(context, "payer:back")
     markup = query.edit_message_reply_markup.await_args.kwargs["reply_markup"]
-    assert _data(markup) == [["confirm_save", "cancel_save"], ["payer:menu"]]
+    assert _data(markup) == [["confirm_save", "cancel_save"], ["split:menu"], ["payer:menu"]]
     assert pending["paid_by_participant_id"] == 1
 
 
@@ -219,7 +219,7 @@ async def test_picking_a_person_redraws_the_card_and_changes_the_entry(monkeypat
     assert "**Account:** Paid by someone else" in reply.args[0]
     assert "**Paid by:** Carol" in reply.args[0]
     # The card's own buttons are back, trip toggle included.
-    assert _data(reply.kwargs["reply_markup"]) == [["confirm_save", "cancel_save"], ["trip_toggle"], ["payer:menu"]]
+    assert _data(reply.kwargs["reply_markup"]) == [["confirm_save", "cancel_save"], ["trip_toggle"], ["split:menu"], ["payer:menu"]]
     # The same dict the cache holds was changed in place, and the trip tag was not touched.
     assert context.user_data["pending_cards"][500] is pending
     assert (pending["account_id"], pending["paid_by_participant_id"], pending["trip_id"]) == (15, 3, 7)

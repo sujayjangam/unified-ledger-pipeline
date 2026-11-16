@@ -18,6 +18,7 @@ from app.services.participants import Participant, match_person
 
 # Card lines. Display only: never stored, and they never block a save.
 UNEVEN_NOT_BUILT_WARNING = "⚠️ This asks for uneven shares, which the bot can't do yet. No split recorded."
+UNEVEN_EVEN_SPLIT_WARNING = "⚠️ This asked for uneven shares, which the bot can't do yet. Shown as an even split."
 EVERYONE_NEEDS_TRIP_WARNING = '⚠️ "Everyone" needs a trip switched on. No split recorded.'
 NOBODY_SHARES_WARNING = "⚠️ Couldn't tell who shares this. No split recorded."
 NO_MATCH_WARNING = "⚠️ Couldn't match '{name}'"
@@ -192,3 +193,99 @@ def split_shares(amount_cents: int, people) -> tuple[dict, ...]:
     shares = share_out(amount_cents, {pid: 1 for pid in people})
     return tuple({"participant_id": pid, "name": people[pid].display_name, "share_cents": cents}
                  for pid, cents in shares.items())
+
+
+def menu_people(directory) -> tuple[Participant, ...]:
+    """Offer household first, then other people by name, consistently in both menus."""
+    return directory.household() + tuple(sorted(
+        (p for p in directory.participants if not p.is_household),
+        key=lambda p: p.display_name.casefold(),
+    ))
+
+
+def split_groups(people, families: dict) -> tuple:
+    """Keep trip families in card order, with unlabelled members last, for stable callbacks."""
+    groups = {}
+    for person in sorted(people, key=lambda p: p.id):
+        groups.setdefault(families.get(person.id) or None, []).append(person)
+    labels = [label for label in groups if label is not None]
+    if None in groups:
+        labels.append(None)
+    return tuple((label, tuple(groups[label])) for label in labels)
+
+
+def split_people(pending: dict) -> tuple[Participant, ...]:
+    """Return exactly the people drawn now, retaining ticks outside the current list."""
+    menu = pending['split_menu']
+    people = (tuple(p for _, members in menu['groups'] for p in members)
+              if pending.get('trip_id') else menu['everyone'])
+    by_id = {p.id: p for p in people}
+    # A ticked person must stay in the menu so they can be unticked, even when they aren't on
+    # the list shown now (ticked from the everyone list, then the card was tagged back to the
+    # trip). Every participant is in 'everyone', so their real record is normally there; the
+    # stand-in built from the row is only a safety net, so a tick can never get stuck.
+    everyone = {p.id: p for p in menu['everyone']}
+    for row in pending.get('split') or ():
+        pid = row['participant_id']
+        if pid not in by_id:
+            by_id[pid] = everyone.get(pid) or Participant(pid, row['name'], None, None)
+    return tuple(by_id.values())
+
+
+def split_rows(pending: dict, participant_ids) -> tuple[dict, ...]:
+    """Build the same whole-cent rows for text readings and taps; nobody means no split."""
+    ids = set(participant_ids)
+    if not ids:
+        return ()  # share_out deliberately refuses an empty set of sharers.
+    menu = pending['split_menu']
+    people = {p.id: p for p in menu['everyone']}
+    people.update((p.id, p) for p in split_people(pending))
+    return tuple({**row, 'family': menu['families'].get(row['participant_id'])}
+                 for row in split_shares(menu['amount_cents'], (people[pid] for pid in ids)))
+
+
+def _set_split(pending: dict, participant_ids) -> dict:
+    """Replace ticks in a copy, retiring reading warnings only when the choice changes."""
+    ids = set(participant_ids)
+    changed = {**pending, 'split': split_rows(pending, ids)}
+    if ids != {row['participant_id'] for row in pending.get('split') or ()}:
+        uneven = any(w in (UNEVEN_NOT_BUILT_WARNING, UNEVEN_EVEN_SPLIT_WARNING)
+                     for w in pending.get('split_warnings') or ())
+        warning = UNEVEN_EVEN_SPLIT_WARNING if ids else UNEVEN_NOT_BUILT_WARNING
+        changed['split_warnings'] = (warning,) if uneven else ()
+    return changed
+
+
+def open_split(pending: dict) -> dict:
+    """Seed an empty trip split once only, so reopening after Remove respects that choice."""
+    menu = pending['split_menu']
+    changed = dict(pending)
+    if pending.get('trip_id') and not pending.get('split') and not menu.get('opened'):
+        changed = _set_split(pending, (p.id for _, members in menu['groups'] for p in members))
+    changed['split_menu'] = {**menu, 'opened': True}
+    return changed
+
+
+def toggle_split_person(pending: dict, participant_id: int) -> dict:
+    """Flip one visible person's tick, rejecting stale callbacks before changing shares."""
+    if participant_id not in {p.id for p in split_people(pending)}:
+        raise ValueError('Person is not offered')
+    ids = {row['participant_id'] for row in pending.get('split') or ()}
+    return _set_split(pending, ids ^ {participant_id})
+
+
+def toggle_split_family(pending: dict, index: int) -> dict:
+    """Flip a visible family's ticks together, so partial families become fully selected."""
+    groups = pending['split_menu']['groups']
+    if not pending.get('trip_id') or not 0 <= index < len(groups) or not groups[index][0]:
+        raise ValueError('Family is not offered')
+    members = {p.id for p in groups[index][1]}
+    ids = {row['participant_id'] for row in pending.get('split') or ()}
+    return _set_split(pending, ids - members if members <= ids else ids | members)
+
+
+def remove_split(pending: dict) -> dict:
+    """Untick everyone and remember the choice even if Remove arrives before first open."""
+    changed = _set_split(pending, ())
+    changed['split_menu'] = {**pending['split_menu'], 'opened': True}
+    return changed

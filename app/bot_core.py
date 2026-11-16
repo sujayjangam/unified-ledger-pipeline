@@ -5,6 +5,7 @@ from dataclasses import replace
 from dotenv import load_dotenv
 from telegram import BotCommand, Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.helpers import escape_markdown
+from telegram.error import BadRequest
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 import asyncio
 import tempfile
@@ -20,7 +21,10 @@ from app.services.participants import (
     NO_OUTSIDE_ACCOUNT_TOAST, NO_PAYER_ACCOUNT_TOAST, PayerHasNoAccount, change_payer,
     PAYER_READ_AS_WARNING, second_reader_payer,
 )
-from app.services.splits import resolve_split, split_shares
+from app.services.splits import (
+    resolve_split, menu_people, split_groups, split_people, split_rows,
+    open_split, toggle_split_person, toggle_split_family, remove_split,
+)
 from app.services.trips import (
     Trip, load_active_trip, trip_families, switch_trip_off, switch_trip_on, member_trips,
     banner_message_id, set_banner_message_id, format_trip_dates,
@@ -796,6 +800,9 @@ def _keyboard_for(transaction: dict) -> InlineKeyboardMarkup:
         # the entry by the card's message_id anyway.
         label = "🏠 Not trip" if transaction.get('trip_id') else f"🧳 Tag to {offer['name']}"
         rows.append([InlineKeyboardButton(label, callback_data="trip_toggle")])
+    if transaction.get('split_menu'):
+        label = "👥 Change split" if transaction.get('split') else "👥 Add split"
+        rows.append([InlineKeyboardButton(label, callback_data="split:menu")])
     if transaction.get('payer_menu'):
         # Opens the list of people (handle_payer_button). Absent on a YouTrip top-up, and on a
         # card stashed before this button shipped.
@@ -806,8 +813,8 @@ def _keyboard_for(transaction: dict) -> InlineKeyboardMarkup:
 def _people_keyboard(people, pick_prefix: str, back_data: str, marked_ids=(), per_row: int = 2) -> InlineKeyboardMarkup:
     """A menu of people to tap, two to a row, with a Back button under them.
 
-    Shared on purpose: "Paid by" uses it now, and the "Add split" menu will use it with its own
-    prefix and more than one person marked. Each button sends `<pick_prefix>:<participant id>`,
+    Shared on purpose: "Paid by" and "Add split" use their own prefixes, and splits can mark
+    more than one person. Each button sends `<pick_prefix>:<participant id>`,
     which stays far under Telegram's 64-byte limit however long a name is. People in
     `marked_ids` get a ✅. Labels are plain text, so names need no Markdown escaping.
     """
@@ -823,8 +830,36 @@ def _people_keyboard(people, pick_prefix: str, back_data: str, marked_ids=(), pe
 
 def _payer_keyboard(transaction: dict) -> InlineKeyboardMarkup:
     """The "who paid?" menu for one pending entry, with the current payer marked."""
-    return _people_keyboard(transaction['payer_menu']['people'], "payer:set", "payer:back",
+    return _people_keyboard(_payer_people(transaction), "payer:set", "payer:back",
                             marked_ids=(transaction.get('paid_by_participant_id'),))
+
+
+def _payer_people(transaction: dict) -> tuple:
+    """Use the card's current trip tag for both drawing and validating a payer pick."""
+    menu = transaction['payer_menu']
+    people = menu['trip_people'] if transaction.get('trip_id') else menu['everyone']
+    current = menu['directory'].participant(transaction.get('paid_by_participant_id'))
+    if current is not None and all(p.id != current.id for p in people):
+        people = (*people, current)
+    return people
+
+
+def _split_keyboard(transaction: dict) -> InlineKeyboardMarkup:
+    """Draw trip families or everyone, retaining outside ticks so each can be removed."""
+    marked = {row['participant_id'] for row in transaction.get('split') or ()}
+    rows, shown = [], set()
+    if transaction.get('trip_id'):
+        for index, (label, members) in enumerate(transaction['split_menu']['groups']):
+            if label:
+                tick = "✅ " if all(p.id in marked for p in members) else ""
+                rows.append([InlineKeyboardButton(tick + label, callback_data=f"split:f:{index}")])
+            rows.extend(_people_keyboard(members, "split:p", "split:done", marked).inline_keyboard[:-1])
+            shown.update(p.id for p in members)
+    people = tuple(p for p in split_people(transaction) if p.id not in shown)
+    rows.extend(_people_keyboard(people, "split:p", "split:done", marked).inline_keyboard[:-1])
+    rows.append([InlineKeyboardButton("Remove split", callback_data="split:none"),
+                 InlineKeyboardButton("Done", callback_data="split:done")])
+    return InlineKeyboardMarkup(rows)
 
 
 def _trip_lines(transaction: dict) -> str:
@@ -959,6 +994,8 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
     elif reading.unclear and second_payer is None:
         single_transaction['payer_warning'] = PAYER_UNCLEAR_WARNING
 
+    everyone = menu_people(directory)
+    trip_people = candidates if active_trip else ()
     single_transaction['split'] = ()
     single_transaction['split_warnings'] = ()
     if (single_transaction.get('category') != "YouTrip top-up"
@@ -968,28 +1005,25 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
         result = resolve_split(single_transaction.get('split_reference'), split_candidates,
                                sender, families, active_trip is not None, message=raw_text)
         single_transaction['split_warnings'] = result.warnings
-        if result.people:
-            try:
-                amount_cents = dollars_to_cents(single_transaction['amount'])
-            except ValueError:
-                pass  # Saving rejects this amount too; no share should imply it was valid.
-            else:
-                single_transaction['split'] = tuple(
-                    {**row, 'family': families.get(row['participant_id'])}
-                    for row in split_shares(amount_cents, result.people)
-                )
+        try:
+            amount_cents = dollars_to_cents(single_transaction['amount'])
+        except ValueError:
+            pass  # Saving rejects this amount too; no share should imply it was valid.
+        else:
+            single_transaction['split_menu'] = {
+                'amount_cents': amount_cents, 'groups': split_groups(trip_people, families),
+                'families': families, 'everyone': everyone,
+            }
+            single_transaction['split'] = split_rows(single_transaction, (p.id for p in result.people))
 
     # What the "Paid by" button needs, copied onto the entry so a tap never reads the database:
-    # the people offered (the same candidates the text was read against, plus whoever is shown
-    # as paying now, so the menu always has a ✅) and this message's directory snapshot, which
+    # both people lists (chosen at draw time from the card's trip tag) and the snapshot, which
     # change_payer uses to find each person's account. Not on a top-up: its payer is the owner
     # of the wallet's funding card, and there is nothing to choose.
     if single_transaction.get('category') != "YouTrip top-up":
-        people = list(candidates)
-        current = directory.participant(single_transaction['paid_by_participant_id'])
-        if current not in people:
-            people.append(current)
-        single_transaction['payer_menu'] = {'people': tuple(people), 'directory': directory}
+        single_transaction['payer_menu'] = {
+            'trip_people': trip_people, 'everyone': everyone, 'directory': directory,
+        }
 
     # One idempotency key per confirm prompt (not per save attempt) - reused on every
     # save attempt for this same prompt, so a double-tap or webhook retry can't insert twice.
@@ -1153,7 +1187,7 @@ async def _payer_tap(query, context: ContextTypes.DEFAULT_TYPE, message_id: int)
 
     # "payer:set:<id>". The id must be one of the people this card offered; anything else is a
     # stale or malformed button.
-    person = next((p for p in menu['people'] if action == "set" and str(p.id) == value), None)
+    person = next((p for p in _payer_people(pending) if action == "set" and str(p.id) == value), None)
     if person is None:
         await query.answer("⚠️ This button is no longer supported. Please send the entry again.")
         return
@@ -1190,6 +1224,60 @@ async def _payer_tap(query, context: ContextTypes.DEFAULT_TYPE, message_id: int)
     # In place, so the dict the cache holds is the one that changes.
     pending.update(changed)
     await query.answer(f"👤 Paid by {person.display_name}.")
+
+
+async def handle_split_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Serialize split edits with Confirm so only the shares actually shown can be saved."""
+    query = update.callback_query
+    message_id = query.message.message_id
+    async with _card_lock(context, message_id):
+        await _split_tap(query, context, message_id)
+
+
+async def _split_tap(query, context: ContextTypes.DEFAULT_TYPE, message_id: int):
+    """Apply a split tap from a copy, answering once and last after the redraw succeeds."""
+    outcome = _card_outcome(context, message_id)
+    if outcome in ('saved', 'cancelled'):
+        await query.answer("Already saved to the ledger." if outcome == 'saved' else "This entry was cancelled.")
+        return
+    pending = context.user_data.get('pending_cards', {}).get(message_id)
+    if pending is None or not pending.get('split_menu'):
+        await query.answer("This entry can't be changed now.")
+        return
+
+    action, _, value = query.data.removeprefix('split:').partition(':')
+    try:
+        if query.data == 'split:menu':
+            changed = open_split(pending)
+        elif query.data == 'split:none':
+            changed = remove_split(pending)
+        elif query.data == 'split:done':
+            changed = dict(pending)
+        elif action == 'p' and value in {str(p.id) for p in split_people(pending)}:
+            changed = toggle_split_person(pending, int(value))
+        elif action == 'f' and value in {str(i) for i in range(len(pending['split_menu']['groups']))}:
+            changed = toggle_split_family(pending, int(value))
+        else:
+            raise ValueError('Unknown split button')
+    except ValueError:
+        await query.answer("This button is no longer supported. Please send the entry again.")
+        return
+
+    keyboard = _keyboard_for(changed) if action in ('done', 'none') else _split_keyboard(changed)
+    try:
+        await query.edit_message_text(_pending_card_text(changed), reply_markup=keyboard, parse_mode="Markdown")
+    except Exception as e:
+        # Telegram refuses identical redraws, including Done or opening an unchanged menu.
+        # That still means the card already shows the copy we intend to keep.
+        if not isinstance(e, BadRequest) or 'message is not modified' not in str(e).lower():
+            print(f"❌ Split redraw failed: {e}")
+            await query.answer("Couldn't change the split, try again.")
+            return
+    if context.user_data.get('pending_cards', {}).get(message_id) is not pending:
+        await query.answer("This entry is already being saved or was cancelled.")
+        return
+    pending.update(changed)
+    await query.answer()
 
 
 # buttons!
@@ -1425,6 +1513,7 @@ def get_application():
     # handler for buttons
     app.add_handler(CallbackQueryHandler(handle_trip_button, pattern=r"^trip:"))
     app.add_handler(CallbackQueryHandler(handle_payer_button, pattern=r"^payer:"))
+    app.add_handler(CallbackQueryHandler(handle_split_button, pattern=r"^split:"))
     app.add_handler(CallbackQueryHandler(handle_button_click))
 
     return app
