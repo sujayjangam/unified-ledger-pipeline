@@ -359,9 +359,11 @@ only shared costs they pay get logged. Travel minimum, in build order:
      [#101](https://github.com/sujayjangam/unified-ledger-pipeline/pull/101); PR 2, the split menu,
      done 2026-11-16, [#103](https://github.com/sujayjangam/unified-ledger-pipeline/pull/103).
      The one-person split wording fix merged 2026-11-16 (#105). PR 3, uneven shares by count
-     (nights), written 2026-11-16 (ADR-0042), awaiting the test bot; fixed amounts wait for a
-     follow-up. Remaining, in this order: PR 3 (uneven
-     shares), PR 2b (an immediate-family group), then aliases per sender if time allows.
+     (nights), written 2026-11-16 (ADR-0042), awaiting the test bot. Remaining, in this order:
+     PR 3 (uneven shares), PR 2b (an immediate-family group), then aliases per sender if time
+     allows. After those: fixed amounts and percentages ("Carol's share is 50, rest split
+     evenly"), which PR 3 leaves as a warning with no split; and a count editor in the split
+     menu, so a newly ticked person's count can be changed without resending.
      - Weighted shares, needed for the trip's accommodation: a 5-night booking where some members
        stay only 4 nights. Ticking people gives only an even split, so the split also needs a
        weight per person (nights, or any count). Each share is amount × weight ÷ total weight,
@@ -487,8 +489,8 @@ weren't pulled forward.
 
 - [x] Schema: `transaction_splits` child table. *Moved to Phase 1, Group-trip splitting; shipped
 2026-11-16 in migration 0008 (#101), storing whole-cent shares only. The `split_type` enum was not
-built: the kind of split is worked out in Python and not stored. It waits until uneven shares
-(PR 3) show whether it is needed.*
+built: the kind of split is worked out in Python and not stored. Uneven shares (PR 3,
+ADR-0042) store cents only too, so it is not needed for now.*
 - [ ] Application logic: who-owes-who calculation. *Moved to Phase 1, Group-trip splitting, with
 uneven splits from the start.*
 - [ ] Extend as real usage surfaces the need for more flexible splitting

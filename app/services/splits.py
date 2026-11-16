@@ -34,6 +34,12 @@ _SENDER_WORDS = frozenset({"me", "i", "myself"})
 _COLLECTIVE_WORDS = frozenset({"everyone", "everybody", "all", "the rest", "rest", "others", "everyone else"})
 # "Carol's family", "Carol’s family", "Carol family": the name before the family wording.
 _FAMILY_SUFFIX = re.compile(r"^(?P<name>.+?)(?:'s|’s)?\s+family$", re.IGNORECASE)
+# A fixed share or a percentage: "Carol's share is 50", "share of 20", "Dave owes 30", "40%".
+# "Paid"/"pay" are left out on purpose: "I paid 50, split with Carol" is an ordinary split.
+_FIXED_SHARE = re.compile(
+    r"(?<!\w)(?:share|portion|part)\s+(?:is|was|of|=)\s*\$?\d"
+    r"|\d\s*(?:%|percent(?!\w))"
+    r"|(?<!\w)owes?\s+(?:me\s+|us\s+)?\$?\d", re.IGNORECASE)
 _EXCEPT_WORD = re.compile(r"(?<!\w)(?:except|excluding|but\s+not|apart\s+from|other\s+than)(?!\w)", re.IGNORECASE)
 _EVERYONE_WORD = re.compile(r"(?<!\w)(?:everyone|everybody|all|all\s+of\s+us|whole\s+group|the\s+group)(?!\w)", re.IGNORECASE)
 
@@ -87,7 +93,7 @@ def share_out(amount_cents: int, weights: dict[int, int]) -> dict[int, int]:
     """Hands out `amount_cents` between people in whole cents that add up exactly.
 
     `weights` maps participant id -> a positive whole number. An even split is every weight 1;
-    a split by nights is the number of nights each (PR 3 uses that, the maths is already here).
+    a split by nights is the number of nights each (ADR-0042, through split_shares).
 
     Rounding each share separately loses or invents cents: 5.55 two ways is 2.775 each, which
     rounds to 2.78 + 2.78 = 5.56. So instead:
@@ -133,14 +139,45 @@ def _valid_count(count, message: str | None) -> bool:
         return False
     if message is None:
         return True
-    words = ('one two three four five six seven eight nine ten eleven twelve thirteen '
-             'fourteen fifteen sixteen seventeen eighteen nineteen twenty').split()
-    words += [f'twenty[ -]{word}' for word in words[:9]] + ['thirty']
-    alternatives = str(count)
-    if count <= len(words):
-        alternatives += '|' + words[count - 1]
-    # Do not find 3 inside 2300, 3.50, or 3,000. Dictated numbers are case insensitive.
-    return re.search(rf'(?<![\w.])(?:{alternatives})(?!\w|[.,]\d)', message, re.IGNORECASE) is not None
+    return count in _numbers(message)
+
+
+# Number words a Whisper transcript may use for a count: one .. thirty.
+_NUMBER_WORDS = ('one two three four five six seven eight nine ten eleven twelve thirteen '
+                 'fourteen fifteen sixteen seventeen eighteen nineteen twenty').split()
+_NUMBER_WORDS += [f'twenty {word}' for word in _NUMBER_WORDS[:9]] + ['thirty']
+# A whole number standing alone: never the 3 inside 2300, 3.50 or 3,000. Number words longest
+# first, so "twenty one" is read as 21, not 20. "twenty-one" is accepted too.
+_NUMBER_TOKEN = re.compile(
+    r"(?<![\w.])(?<!\d,)(?:(?P<digits>\d+)|(?P<word>"
+    + "|".join(w.replace(' ', '[ -]') for w in sorted(_NUMBER_WORDS, key=len, reverse=True))
+    + r"))(?!\w|[.,]\d)", re.IGNORECASE)
+
+
+def _numbers(text: str) -> list[int]:
+    """Every whole number in the text, in the order they appear (digits and number words)."""
+    values = []
+    for found in _NUMBER_TOKEN.finditer(text):
+        if found.group('digits'):
+            values.append(int(found.group('digits')))
+        else:
+            word = re.sub(r'[ -]+', ' ', found.group('word').casefold())
+            values.append(_NUMBER_WORDS.index(word) + 1)
+    return values
+
+
+def _count_after(name: str, message: str) -> int | None:
+    """The first count (1-999, digits or a number word up to thirty) after `name` in the message.
+
+    Used only to fill a count the model left out for someone it did list as a sharer. For
+    "Carol and Erin 4" the model gave 4 to Carol and nothing to Erin in 9 of 10 runs
+    (2026-11-16); in the message, the 4 is the first number after "Erin". The count still has
+    to be in the text, so this never invents one, and the card shows every count before Confirm.
+    """
+    found = re.search(rf"(?<!\w){re.escape(name.strip())}(?!\w)", message, re.IGNORECASE)
+    if not found:
+        return None
+    return next((n for n in _numbers(message[found.end():]) if 1 <= n <= 999), None)
 
 
 def _number_after_except(message: str) -> bool:
@@ -148,8 +185,7 @@ def _number_after_except(message: str) -> bool:
     found = _EXCEPT_WORD.search(message)
     if not found:
         return False
-    rest = message[found.end():]
-    return any(_valid_count(n, rest) for n in range(1, 31)) or re.search(r"(?<![\w.])\d+(?![\w.,]\d)", rest) is not None
+    return bool(_numbers(message[found.end():]))
 
 
 def resolve_split(reference: dict | None, candidates, sender: Participant,
@@ -179,8 +215,11 @@ def resolve_split(reference: dict | None, candidates, sender: Participant,
         # The model read a split the message never asked for. A personal entry, silently: the
         # message decides.
         return SplitResult((), ())
-    if reference.get("uneven") and not by_count:
+    if (reference.get("uneven") and not by_count) or (message is not None and _FIXED_SHARE.search(message)):
         # Recording an even split for "split by nights" would be wrong without looking wrong.
+        # A fixed share or a percentage isn't built yet, and the model turns "Carol's share is
+        # 50" into a count of 50 for Carol alone (5 of 10 runs, 2026-11-16), so the words are
+        # checked here too.
         return SplitResult((), (UNEVEN_NOT_BUILT_WARNING,))
     # The shorthand without a split word is allowed only with trustworthy counts.
     # Unused defaults are deliberately checked later, after resolving the sharers.
@@ -229,6 +268,13 @@ def resolve_split(reference: dict | None, candidates, sender: Participant,
     elif kind == "named":
         # "Split with Carol" includes the sender; "split between Carol and Dave" doesn't.
         include_sender = sender_shares(message) if message is not None else None
+        if include_sender is None and by_count and message is not None:
+            # In a split by count the model said the sender shares even when the message
+            # didn't name them ("Bob's family 5, Carol and Dave 4": 10 of 10 runs, 2026-11-16).
+            # The sender then has no count and the split fails, so read it from the words:
+            # "me" or "myself" in the list (not "paid by me"), or the sender inside a family
+            # or name the message lists (added below with the other entries).
+            include_sender = _SENDER_IN_LIST.search(_PAID_BY_ME.sub(" ", message)) is not None
         if include_sender is None:
             include_sender = reference.get("include_sender")
         if include_sender:
@@ -247,6 +293,12 @@ def resolve_split(reference: dict | None, candidates, sender: Participant,
             continue
         if count is not None and not _valid_count(count, message):
             return SplitResult((), (*warnings, COUNT_UNREAD_WARNING))
+        if count is None and by_count and message is not None and name:
+            # The model listed this sharer but dropped their count; take the first number
+            # after their name in the message (see _count_after).
+            count = _count_after(_FAMILY_SUFFIX.sub(r"\g<name>", name.strip()).removesuffix("'s"), message)
+            if count is not None:
+                entry = {**entry, 'count': count} if isinstance(entry, dict) else {'name': entry, 'count': count}
         matched = named(entry)
         people.update((p.id, p) for p in matched)
         if isinstance(entry, dict) and entry.get("count") is not None:
@@ -282,6 +334,13 @@ def resolve_split(reference: dict | None, candidates, sender: Participant,
     if not people and not warnings:
         warnings.append(NOBODY_SHARES_WARNING)
     counts = {}
+    if (by_count and message is not None and sender.id in people
+            and sender.id not in explicit_counts and default_count is None):
+        # "me 3 and Carol 2" with no "me" entry from the model: the sender's count is the
+        # first number after "me", the same reading _count_after gives everyone else.
+        mine = _count_after("me", message) or _count_after("myself", message)
+        if mine is not None:
+            explicit_counts[sender.id] = mine
     if by_count:
         counts = {pid: explicit_counts.get(pid, default_count) for pid in people}
         # An unused model default is discarded; menu additions use the modal read count.
@@ -289,6 +348,15 @@ def resolve_split(reference: dict | None, candidates, sender: Participant,
             default_count = None
         if any(not _valid_count(c, message) for c in counts.values()):
             return SplitResult((), (*warnings, COUNT_UNREAD_WARNING))
+        if len(counts) == 1:
+            # A count matters only relative to someone else's. One sharer with a count means
+            # a number was misread as a count, so refuse rather than charge them the lot.
+            return SplitResult((), (*warnings, COUNT_UNREAD_WARNING))
+        if len(set(counts.values())) == 1:
+            # Everyone has the same count, so the shares are even. "dinner for 4, split between
+            # Carol and Dave" came back as 4 each (7 of 10 runs, 2026-11-16): the same cents,
+            # but the card would say "split by count". An even split is what was meant.
+            by_count, counts = False, {}
     return SplitResult(tuple(people[pid] for pid in sorted(people)), tuple(warnings),
                        counts, default_count if by_count else None,
                        reference.get('count_unit') if by_count else None)

@@ -25,8 +25,10 @@ reading the counts, keeping them through the split menu, and showing them on the
   count ("everyone except Carol's family who only stayed 4" is Carol's family at 4, the rest at
   the default); one without a count is left out. Asking the model to make this choice was
   tried first and made it drop plain exclusions ("everyone except Carol's family" lost Carol's
-  family in 3 of 5 runs, 2026-11-16). If the message has an except word and nobody ends up left
-  out or counted, the card warns and no split is recorded. In a split by count, an except entry
+  family in 3 of 5 runs, 2026-11-16). If the message has an except word, nobody ends up left
+  out, and no sharer has a count of their own, the card warns and no split is recorded. Any
+  count of their own lets it through, so "5 nights, Carol 4, everyone except Dave" with Dave
+  dropped by the model is not caught; the card shows every sharer. In a split by count, an except entry
   with no count is refused when a number follows the except word: the count was probably lost
   (1 of 10 runs), and leaving that family out would be a wrong split that looks right.
   Family wording left in a name ("Carol's family") is stripped in Python and read as a family.
@@ -35,6 +37,17 @@ reading the counts, keeping them through the split menu, and showing them on the
   (ADR-0031). Every sharer must end up with a count; otherwise a "couldn't read a count" warning
   and no split, never an even split. A family's count applies to each member. A default count
   nobody uses is ignored, and "everyone" or "the rest" listed as a person carries the default.
+  Numbers are read as whole words: never the 3 in 2300, 3.50 or 3,000.
+- **Python fills in what the model drops, from the text.** A listed sharer with no count gets
+  the first number after their name ("Carol and Erin 4": the model gave Erin nothing in 9 of
+  10 runs). In a split by count, the sender shares only if the message names them ("me",
+  "with", or inside a named family); the model said they shared when they weren't named in 10
+  of 10 runs. The sender's count is the first number after "me".
+- **Python rules out what isn't a count.** A count split with one sharer is refused: a count
+  only means something next to another, and "Carol's share is 50" came back as Carol at 50.
+  Fixed-share wording ("share is 50", "owes 30", "40%") gets the "can't do uneven shares yet"
+  warning whatever the model read. When every sharer has the same count, it is an even split:
+  "dinner for 4, split between Carol and Dave" came back as 4 each in 7 of 10 runs.
 - **"Everyone" is read from the text.** The model's `everyone` is honoured only when the
   message says everyone (or all, the whole group); with people listed and no such word it is
   read as those people. A message with no split word gets through only when it is a split by
@@ -47,7 +60,9 @@ reading the counts, keeping them through the split menu, and showing them on the
 - **The card shows the count on each line**, under a header naming the unit: "👥 Split by nights
   between 10:", then " • Alice: 5, 241.97".
 - **Only cents are stored.** No migration and no `split_type` column: `/balances` needs only the
-  shares, and the counts are kept word for word in `description` (ADR-0008).
+  shares, and the counts read from the message are kept word for word in `description`
+  (ADR-0008). A count given in the menu to a newly ticked person is not in the message, so it
+  is stored only as that person's cents.
 
 ## Alternatives considered
 

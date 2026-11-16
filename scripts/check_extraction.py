@@ -120,6 +120,19 @@ SPLIT_CASES[3]['outcome'] = {('Alice', 5), ('Bob', 5), ('Frank', 5), ('Carol', 4
 SPLIT_CASES[4]['outcome'] = {(p.display_name, 4 if p.id in (3, 4) else 5) for p in SPLIT_PEOPLE}
 SPLIT_CASES[5]['outcome'] = {('Alice', 3), ('Carol', 2)}
 
+# Cases the directory above would otherwise hide, each with its outcome stated outright.
+SPLIT_CASES += [
+    # Carol misread as a family would add Dave at 4 nights.
+    {"message": "Airbnb 2300, split by nights: Alice's family 5, Carol and Erin 4",
+     "outcome": {('Alice', 5), ('Carol', 4), ('Erin', 4)}},
+    # The sender (Alice) isn't named, so she must not get a share.
+    {"message": "Airbnb 2300, split by nights: Bob's family 5, Carol and Dave 4",
+     "outcome": {('Bob', 5), ('Frank', 5), ('Carol', 4), ('Dave', 4)}},
+    # A number that isn't a count must leave an even split even.
+    {"message": "3 pizzas 60 split with Carol", "outcome": {('Alice', None), ('Carol', None)}},
+    {"message": "dinner for 4, 120, split between Carol and Dave", "outcome": {('Carol', None), ('Dave', None)}},
+]
+
 
 def _name(value):
     """Ignore case and a trailing possessive when comparing the model's copied names."""
