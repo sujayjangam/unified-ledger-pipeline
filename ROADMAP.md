@@ -32,19 +32,21 @@ columns) and [#91](https://github.com/sujayjangam/unified-ledger-pipeline/pull/9
 production 2026-11-14 after a Neon-branch rehearsal and a backup). Before 0005, the 5 rows with
 no `account_id` were given a card by hand in SQL, one guarded `UPDATE` per `transaction_id`.
 
-**Next action:** group-trip splitting, below: step 2, paid-by
-(`docs/superpowers/plans/2026-11-15-paid-by.md`, [ADR-0037](docs/decisions/0037-paid-by-person-read-from-text.md)).
-PR 1 is built on branch `feat/paid-by`, in review: migration 0007
+**Next action:** group-trip splitting, below: step 2, paid-by, PR 2: the "Paid by" button and its
+menu (plan step 6 in `docs/superpowers/plans/2026-11-15-paid-by.md`), built so step 3's "Add
+split" menu can reuse it. Then step 3, splits.
+
+**Done 2026-11-15:** step 2, paid-by, PR 1, merged as PR
+[#97](https://github.com/sujayjangam/unified-ledger-pipeline/pull/97) and deployed
+([ADR-0037](docs/decisions/0037-paid-by-person-read-from-text.md)): migration 0007
 (`participants.is_household`, `transactions.paid_by_participant_id`), Python reading the payer
 from the message (a whole name, or one word of it no other candidate shares), the payer rules in
 `resolve_payment`, the card's "Paid by" line and warnings, and totals that skip outside payers.
-0007 is applied to the Neon test branch, and the test bot was run there 2026-11-15 with fictional
-trip guests: every payer case gave the right card. That run also found `/today`, `/week`,
-`/month` and the category views crashing on Postgres Decimal sums, older than this branch and
-fixed in it. Left before merging: production by hand (plan step 10): backup,
-`alembic upgrade head`, then seed the "Paid by someone else" account. 0007 must reach production
-before the merge: the new code reads `is_household`, and without it the directory load fails and
-the bot lets nobody in. PR 2, the "Paid by" button, comes after.
+The test-bot run on the Neon branch, with fictional trip guests, gave the right card for every
+payer case. It also found `/today`, `/week`, `/month` and the category views crashing on Postgres
+Decimal sums (older than the branch, fixed in it). Before the merge, production got a fresh
+backup, migration 0007 by hand, and the "Paid by someone else" account seeded. Not yet done: an
+"X paid" entry logged on production after the deploy.
 
 **Done 2026-11-15:** step 1, trips, merged as PR
 [#95](https://github.com/sujayjangam/unified-ledger-pipeline/pull/95) and deployed
@@ -298,8 +300,8 @@ only shared costs they pay get logged. Travel minimum, in build order:
      required. Planned 2026-11-15 in `docs/superpowers/plans/2026-11-15-paid-by.md`: a payer
      column read by Python from the message, a "Paid by" button to fix it, an owned account
      always deciding the payer, and a shared "Paid by someone else" account for outside payers.
-     PR 1 (everything but the button) built and tested on the test bot 2026-11-15, in review; PR 2
-     is the button.
+     PR 1 (everything but the button) done 2026-11-15,
+     [#97](https://github.com/sujayjangam/unified-ledger-pipeline/pull/97); PR 2 is the button.
   3. Uneven splits from the start, with an even split as the easy case. Per-person shares, rolling
      up to family. A message that says nothing about splitting is personal, and the card gets an
      "Add split" button. That opens a menu of the active trip's members only, one row per family,
