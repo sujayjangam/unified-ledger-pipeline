@@ -33,8 +33,12 @@ production 2026-11-14 after a Neon-branch rehearsal and a backup). Before 0005, 
 no `account_id` were given a card by hand in SQL, one guarded `UPDATE` per `transaction_id`.
 
 **Next action:** group-trip splitting, below: step 3, splits
-(`docs/superpowers/plans/2026-11-16-splits.md`). PR 2b (an immediate-family group), then PR 3
-(uneven shares).
+(`docs/superpowers/plans/2026-11-16-splits.md`). First a small wording fix: a split with only one
+person, not the payer, reads "Split: only Carol", which looks like Carol splitting with herself;
+it should say Carol owes the payer the whole amount. Then PR 3 (uneven shares), then PR 2b (an
+immediate-family group), then aliases per sender (below; moves to after the trip if time runs
+short). Reordered 2026-11-16: the trip's accommodation needs uneven shares, and
+nothing for the trip depends on PR 2b.
 
 **Done 2026-11-16:** step 3, splits, PR 2 (the split menu, and people menus offering everyone
 off-trip), merged as PR [#103](https://github.com/sujayjangam/unified-ledger-pipeline/pull/103)
@@ -349,7 +353,8 @@ only shared costs they pay get logged. Travel minimum, in build order:
      PR 1 (read, store and show an even split) done 2026-11-16,
      [#101](https://github.com/sujayjangam/unified-ledger-pipeline/pull/101); PR 2, the split menu,
      done 2026-11-16, [#103](https://github.com/sujayjangam/unified-ledger-pipeline/pull/103).
-     PR 2b, an immediate-family group, and PR 3, uneven shares, remain.
+     Remaining, in this order: the one-person split wording fix, PR 3 (uneven shares), PR 2b
+     (an immediate-family group), then aliases per sender if time allows.
      - Weighted shares, needed for the trip's accommodation: a 5-night booking where some members
        stay only 4 nights. Ticking people gives only an even split, so the split also needs a
        weight per person (nights, or any count). Each share is amount × weight ÷ total weight,
@@ -395,6 +400,14 @@ only shared costs they pay get logged. Travel minimum, in build order:
   Open: a settlement paid in a different currency from the balance it clears (deferred). Not
   planned for now: more than one payer per bill (log two entries), itemised bills, FX conversion.
   After the trip: a chat flow for creating trips, and the expense dashboard (Phase 4).
+
+  Planned before the trip, after PR 2b, and the first item to move after it if time runs short:
+  aliases per sender. People say "dad" or "mummy", not a display name,
+  and the same word means different people for different senders, so one shared alias list would
+  be wrong. An alias belongs to the sender: (sender, alias) → participant, set up from the
+  gitignored seed like the directory, and checked by `match_person` after display names. Not the
+  old-spellings `aliases` table ADR-0032 dropped; that was a different problem. Needs an ADR.
+  Until then, name the person.
 - [ ] Refund and reversal representation — `app/add_expense.py` rejects `amount <= 0` today, and
 real statements contain refunds almost immediately (see "Known issues"). Needs an ADR on how a
 refund is stored before the staging table is designed.
