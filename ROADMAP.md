@@ -38,9 +38,10 @@ immediate-family group), then aliases per sender (below; moves to after the trip
 short). Reordered 2026-11-16: the trip's accommodation needs uneven shares, and
 nothing for the trip depends on PR 2b.
 
-**Done 2026-11-16:** the one-person split wording. A split with one person who didn't pay read
-"Split: only Carol", which looked like Carol splitting with herself; the card now says "Carol owes
-Alice all of it", and "nobody owes anything" when the one person is the payer. Card text only.
+**PR open 2026-11-16, not merged:** the one-person split wording. A split with one person who
+didn't pay read "Split: only Carol", which looked like Carol splitting with herself; the card now
+says "Carol owes Alice all of it", and "nobody owes anything" when the one person is the payer.
+An entry with no payer recorded keeps "only Carol". Card text only.
 
 **Done 2026-11-16:** step 3, splits, PR 2 (the split menu, and people menus offering everyone
 off-trip), merged as PR [#103](https://github.com/sujayjangam/unified-ledger-pipeline/pull/103)
@@ -355,7 +356,7 @@ only shared costs they pay get logged. Travel minimum, in build order:
      PR 1 (read, store and show an even split) done 2026-11-16,
      [#101](https://github.com/sujayjangam/unified-ledger-pipeline/pull/101); PR 2, the split menu,
      done 2026-11-16, [#103](https://github.com/sujayjangam/unified-ledger-pipeline/pull/103).
-     The one-person split wording fix is done 2026-11-16. Remaining, in this order: PR 3 (uneven
+     The one-person split wording fix has a PR open (2026-11-16). Remaining, in this order: PR 3 (uneven
      shares), PR 2b (an immediate-family group), then aliases per sender if time allows.
      - Weighted shares, needed for the trip's accommodation: a 5-night booking where some members
        stay only 4 nights. Ticking people gives only an even split, so the split also needs a

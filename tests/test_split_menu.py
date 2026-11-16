@@ -72,6 +72,21 @@ async def test_first_trip_open_and_remove_reopen(monkeypatch, directory):
     assert _data(query.edit_message_text.await_args.kwargs['reply_markup']) == _data(bot_core._keyboard_for(pending))
 
 
+async def test_one_person_split_follows_a_payer_change(monkeypatch, directory):
+    """The one-person line names whoever pays now, on the live card and on the saved receipt."""
+    context, pending, _ = await _card(monkeypatch, directory, amount=5.55)
+    await _press(context, 'split:menu')
+    await _press(context, 'split:p:1')
+    await _press(context, 'split:p:2')
+    assert _ids(pending) == [3]
+    query = await _payer_press(context, 'payer:set:3')
+    assert 'only Carol, who paid: nobody owes anything' in query.edit_message_text.await_args.args[0]
+    query = await _payer_press(context, 'payer:set:2')
+    assert 'Carol owes Bob all of it: 5.55' in query.edit_message_text.await_args.args[0]
+    _, saved = await _confirm(monkeypatch, context)
+    assert 'Carol owes Bob all of it: 5.55' in saved
+
+
 async def test_no_trip_open_and_person_shares(monkeypatch, directory):
     """An everyday entry starts personal and hands leftover cents to the lowest id."""
     context, pending, _ = await _card(monkeypatch, directory, trip=False, amount=5.55)
