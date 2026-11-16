@@ -452,8 +452,10 @@ The trip, split and settle-up items here moved to Phase 1 ("Group-trip splitting
 What stays here builds on them: the household as a group with no end date, and the items below that
 weren't pulled forward.
 
-- [ ] Schema: `transaction_splits` child table, `split_type` enum. *Moved to Phase 1, Group-trip
-splitting.*
+- [x] Schema: `transaction_splits` child table. *Moved to Phase 1, Group-trip splitting; shipped
+2026-11-16 in migration 0008 (#101), storing whole-cent shares only. The `split_type` enum was not
+built: the kind of split is worked out in Python and not stored. It waits until uneven shares
+(PR 3) show whether it is needed.*
 - [ ] Application logic: who-owes-who calculation. *Moved to Phase 1, Group-trip splitting, with
 uneven splits from the start.*
 - [ ] Extend as real usage surfaces the need for more flexible splitting
