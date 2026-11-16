@@ -18,9 +18,11 @@ from app.services.participants import (
     CLOSED_CARD_WARNING, NO_WALLET_MESSAGE, Directory, WalletNotSetUp, load_directory, resolve_payment,
     NO_OUTSIDE_ACCOUNT_MESSAGE, PAYER_UNCLEAR_WARNING, OutsideAccountNotSetUp, read_payer,
     NO_OUTSIDE_ACCOUNT_TOAST, NO_PAYER_ACCOUNT_TOAST, PayerHasNoAccount, change_payer,
+    PAYER_READ_AS_WARNING, second_reader_payer,
 )
+from app.services.splits import resolve_split, split_shares
 from app.services.trips import (
-    Trip, load_active_trip, trip_member_ids, switch_trip_off, switch_trip_on, member_trips,
+    Trip, load_active_trip, trip_families, switch_trip_off, switch_trip_on, member_trips,
     banner_message_id, set_banner_message_id, format_trip_dates,
 )
 
@@ -58,7 +60,10 @@ def _load_active_trip(participant_id: int) -> Trip | None:
     with get_connection() as conn:
         trip = load_active_trip(conn, participant_id)
         # Read members in this connection, without another checkout for payer inference.
-        return replace(trip, member_ids=trip_member_ids(conn, trip.id)) if trip else None
+        if trip is None:
+            return None
+        families = trip_families(conn, trip.id)
+        return replace(trip, member_ids=tuple(pid for pid, _ in families), families=families)
 
 
 # Shown on the card when the trip couldn't be read. Not a refusal: missing a trip tag can be put
@@ -670,6 +675,35 @@ def _account_lines(transaction: dict) -> str:
     )
 
 
+def _split_lines(transaction: dict) -> str:
+    """Show every share, grouping family labels in lowest-member-id order."""
+    rows = sorted(transaction.get('split') or (), key=lambda row: row['participant_id'])
+    if not rows:
+        return ""
+    if len(rows) == 1:
+        row = rows[0]
+        return f"👥 **Split:** only {_md(row['name'])}: {format_cents(row['share_cents'])}\n"
+    lines = [f"👥 **Split between {len(rows)}:**"]
+    groups = {}
+    for row in rows:
+        groups.setdefault(row.get('family') or None, []).append(row)
+    # Unlabelled people come last; insertion order already sorts families by their first id.
+    labels = [label for label in groups if label is not None]
+    if None in groups:
+        labels.append(None)
+    for label in labels:
+        if label:
+            lines.append(_md(label))
+        for row in groups[label]:
+            lines.append(f" • {_md(row['name'])}: {format_cents(row['share_cents'])}")
+    return "\n".join(lines) + "\n"
+
+
+def _live_split_lines(transaction: dict) -> str:
+    """Keep reading warnings on live cards only, never on the saved receipt."""
+    return _split_lines(transaction) + "".join(f"{_md(warning)}\n" for warning in transaction.get('split_warnings') or ())
+
+
 def _live_account_lines(transaction: dict) -> str:
     """Show the payer warning below Paid by on live cards, never the saved card.
 
@@ -821,6 +855,7 @@ def _pending_card_text(transaction: dict) -> str:
         f"💰 **Amount:** {_display_amount(transaction)}\n"
         f"🏷️ **Category:** {transaction.get('category')}\n"
         f"{_live_account_lines(transaction)}"
+        f"{_live_split_lines(transaction)}"
         f"{_trip_lines(transaction)}"
         f"📝 **Notes:** {transaction.get('description', 'None')}\n"
         f"{_date_lines(transaction)}"
@@ -904,20 +939,45 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
     candidates = (tuple(p for p in directory.participants if p.id in active_trip.member_ids)
                   if active_trip else directory.household())
     reading = read_payer(raw_text, candidates, sender, directory.account_names())
+    second_payer = (second_reader_payer(single_transaction.get('payer_name'), candidates, sender, raw_text)
+                    if reading.payer is None else None)
 
     # Which account paid, and whose it is (app/services/participants.py has the rules). A top-up
     # with no wallet set up is refused outright rather than guessed at: nothing is stashed, so
     # there is no card to confirm.
     try:
-        single_transaction = resolve_payment(single_transaction, directory, sender, text_payer=reading.payer)
+        single_transaction = resolve_payment(single_transaction, directory, sender, text_payer=reading.payer or second_payer)
     except WalletNotSetUp:
         await status_msg.edit_text(NO_WALLET_MESSAGE)
         return
     except OutsideAccountNotSetUp:
         await status_msg.edit_text(NO_OUTSIDE_ACCOUNT_MESSAGE)
         return
-    if reading.unclear:
+    if (second_payer and single_transaction.get('paid_by_participant_id') == second_payer.id
+            and not single_transaction.get('payer_warning')):
+        single_transaction['payer_warning'] = PAYER_READ_AS_WARNING.format(payer=second_payer.display_name)
+    elif reading.unclear and second_payer is None:
         single_transaction['payer_warning'] = PAYER_UNCLEAR_WARNING
+
+    single_transaction['split'] = ()
+    single_transaction['split_warnings'] = ()
+    if (single_transaction.get('category') != "YouTrip top-up"
+            and single_transaction.get('transaction_type') != "Transfer"):
+        split_candidates = candidates if active_trip else directory.participants
+        families = dict(active_trip.families) if active_trip else {}
+        result = resolve_split(single_transaction.get('split_reference'), split_candidates,
+                               sender, families, active_trip is not None, message=raw_text)
+        single_transaction['split_warnings'] = result.warnings
+        if result.people:
+            try:
+                amount_cents = dollars_to_cents(single_transaction['amount'])
+            except ValueError:
+                pass  # Saving rejects this amount too; no share should imply it was valid.
+            else:
+                single_transaction['split'] = tuple(
+                    {**row, 'family': families.get(row['participant_id'])}
+                    for row in split_shares(amount_cents, result.people)
+                )
 
     # What the "Paid by" button needs, copied onto the entry so a tap never reads the database:
     # the people offered (the same candidates the text was read against, plus whoever is shown
@@ -1209,6 +1269,7 @@ async def _card_tap(query, context: ContextTypes.DEFAULT_TYPE, message_id: int):
             # The trip as the card showed it, after any "Not trip" tap. None for an everyday entry.
             trip_id=transaction_to_save.get('trip_id'),
             paid_by_participant_id=transaction_to_save.get('paid_by_participant_id'),
+            splits=[(row['participant_id'], row['share_cents']) for row in transaction_to_save.get('split') or ()],
         )
 
         if save_success:
@@ -1220,6 +1281,7 @@ async def _card_tap(query, context: ContextTypes.DEFAULT_TYPE, message_id: int):
                 f"🏷️ **Category:** {transaction_to_save.get('category')}\n"
                 # The account stays on record in the chat after the buttons go (#92)
                 f"{_account_lines(transaction_to_save)}"
+                f"{_split_lines(transaction_to_save)}"
                 f"{_trip_lines(transaction_to_save)}"
                 f"📝 **Notes:** {transaction_to_save.get('description', 'None')}\n"
                 f"📅 **Date:** {transaction_to_save.get('date')}\n"
@@ -1242,6 +1304,7 @@ async def _card_tap(query, context: ContextTypes.DEFAULT_TYPE, message_id: int):
                 f"🏷️ **Category:** {transaction_to_save.get('category')}\n"
                 # The card is live again, so it shows the account a retry would save against
                 f"{_live_account_lines(transaction_to_save)}"
+                f"{_live_split_lines(transaction_to_save)}"
                 f"{_trip_lines(transaction_to_save)}"
                 f"📝 **Notes:** {transaction_to_save.get('description', 'None')}\n"
                 # Same date lines as the first card, ⚠️ included: this card is live again,

@@ -30,6 +30,7 @@ OUTSIDE_PAYER_ACCOUNT_NAME = "Paid by someone else"
 # Setup failures replace the card; payer warnings are display-only lines on it.
 NO_OUTSIDE_ACCOUNT_MESSAGE = "⚠️ No outside-payer account set up — add Paid by someone else in the accounts table. Nothing was saved."
 PAYER_UNCLEAR_WARNING = "⚠️ Couldn't tell who paid"
+PAYER_READ_AS_WARNING = "⚠️ Read as: {payer} paid. Check."
 # Toasts for a "Paid by" tap that can't be applied. The card and the entry stay as they were.
 NO_PAYER_ACCOUNT_TOAST = "⚠️ {payer} has no default account to put this on. Nothing changed."
 NO_OUTSIDE_ACCOUNT_TOAST = "⚠️ No 'Paid by someone else' account is set up. Nothing changed."
@@ -251,6 +252,56 @@ _PAYER_EXCLUSIONS = frozenset("""
     card cash credit debit paynow paylah nets grab visa mastercard amex bank transfer
     cheque check apple google someone somebody
 """.split())
+
+
+def match_person(name: str, candidates) -> Participant | None:
+    """The one candidate a name as said stands for, or None. Used for split names and for the
+    model's payer_name; never guesses.
+
+    The same rule read_payer uses: a candidate's whole display name, or one word of a
+    multi-word display name that no other candidate shares ("Lee" for "Ann Lee" while she is
+    the only Lee). Case and extra spaces are ignored, and family wording is stripped first, so
+    "Carol's family" and "Carol's" both look up "carol". None when nobody matches, or when
+    the name could be more than one person.
+    """
+    name = " ".join(name.casefold().split())
+    name = re.sub(r"\s+famil(?:y|ies)$", "", name)
+    name = re.sub(r"['’]s$", "", name).strip()
+    candidates = tuple(candidates)
+    word_counts = {}
+    for person in candidates:
+        for word in set(person.display_name.casefold().split()):
+            word_counts[word] = word_counts.get(word, 0) + 1
+    matches = []
+    for person in candidates:
+        words = person.display_name.casefold().split()
+        if name == " ".join(words) or (len(words) > 1 and name in words and word_counts[name] == 1):
+            matches.append(person)
+    return matches[0] if len(matches) == 1 else None
+
+
+# The model's payer_name is believed only when the message has one of these words. Measured
+# 2026-11-16, 20 runs each: with a name in the message and no such word, the model still named a
+# payer - "Carol's birthday cake 55" in 3 runs, "dinner with Carol 70" in 1 - and a wording fix
+# didn't stop it. Whether a word is there is something Python answers exactly (as in ADR-0031).
+_PAYING_WORD = re.compile(
+    r"(?<!\w)(?:paid|pay|pays|paying|cover|covers|covered|treat|treats|treated|shout|shouts|shouted|"
+    r"footed|settled|sponsored|belanja)(?!\w)", re.IGNORECASE)
+
+
+def mentions_paying(message: str) -> bool:
+    """True when the message has a word about someone paying ("paid", "covered", "treat")."""
+    return _PAYING_WORD.search(message) is not None
+
+
+def second_reader_payer(payer_name: str | None, candidates, sender, message: str) -> Participant | None:
+    """The person the model says paid, if the message has a paying word and the name is one
+    known candidate other than the sender. None otherwise. The caller uses it only when
+    read_payer found nobody: Python's own reading always wins (ADR-0040)."""
+    if not payer_name or not mentions_paying(message):
+        return None
+    person = match_person(payer_name, candidates)
+    return person if person and person.id != sender.id else None
 
 
 def read_payer(message: str, candidates, sender: Participant, account_names=()) -> PayerReading:

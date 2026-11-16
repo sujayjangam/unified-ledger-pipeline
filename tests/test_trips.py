@@ -15,10 +15,11 @@ TODAY = date(2026, 11, 14)
 _real_load_active_trip = bot_core._load_active_trip
 
 
-def test_trip_member_ids():
+def test_trip_families():
+    """One ordered query supplies both member ids and their family labels."""
     conn = MagicMock()
-    conn.execute.return_value.all.return_value = [(1,), (2,), (3,)]
-    assert trips.trip_member_ids(conn, 7) == (1, 2, 3)
+    conn.execute.return_value.all.return_value = [(1, "Alice family"), (2, "Bob family")]
+    assert trips.trip_families(conn, 7) == ((1, "Alice family"), (2, "Bob family"))
     conn.execute.assert_called_once()
     sql, params = conn.execute.call_args.args
     assert "FROM trip_members WHERE trip_id = :trip_id" in str(sql)
@@ -32,15 +33,15 @@ def test_bot_reads_trip_and_members_in_one_connection(monkeypatch, active):
     connection = MagicMock(return_value=manager)
     monkeypatch.setattr(bot_core, "get_connection", connection)
     load = MagicMock(return_value=active)
-    members = MagicMock(return_value=(1, 2, 3))
+    members = MagicMock(return_value=((1, "Alice family"), (2, "Bob family"), (3, "Carol family")))
     monkeypatch.setattr(bot_core, "load_active_trip", load)
-    monkeypatch.setattr(bot_core, "trip_member_ids", members)
+    monkeypatch.setattr(bot_core, "trip_families", members)
     result = _real_load_active_trip(2)
     connection.assert_called_once_with()
     load.assert_called_once_with(manager.__enter__.return_value, 2)
     if active:
         members.assert_called_once_with(manager.__enter__.return_value, 7)
-        assert result == replace(BEACH, member_ids=(1, 2, 3))
+        assert result == replace(BEACH, member_ids=(1, 2, 3), families=members.return_value)
     else:
         members.assert_not_called()
         assert result is None

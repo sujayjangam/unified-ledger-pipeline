@@ -91,9 +91,14 @@ Env vars (`.env.example` shows the format):
 - `resolve_payment` never guesses: no open wallet or funding card for a YouTrip top-up → refuse the
   entry (`WalletNotSetUp`); an outside payer with no open "Paid by someone else" account → refuse
   it too (`OutsideAccountNotSetUp`).
-- The payer is read from the message by `read_payer` in Python, never by the model, so "split
-  with Carol" can't become "Carol paid". Candidates are the sender's trip members while a trip is
-  on, otherwise the household; one word of a name is enough when no other candidate shares it.
+- The payer is read from the message by `read_payer` in Python first, so "split with Carol"
+  can't become "Carol paid". The model's `payer_name` is a second reader, used only when Python
+  finds nobody, the message has a paying word (`mentions_paying`) and the name matches one known
+  person other than the sender; the card then says
+  "⚠️ Read as: … paid. Check." Python's reading always wins
+  ([ADR-0040](docs/decisions/0040-model-as-second-reader-for-the-payer.md)). Candidates are the
+  sender's trip members while a trip is on, otherwise the household; one word of a name is enough
+  when no other candidate shares it (`match_person`).
   An owned account always decides the payer; "Paid by someone else"
   is reached only by the outside-payer rule, never named in the prompt's account list
   ([ADR-0037](docs/decisions/0037-paid-by-person-read-from-text.md)). Payer warnings are card
@@ -104,6 +109,16 @@ Env vars (`.env.example` shows the format):
   No account fits → an alert, and nothing changes. No button on a YouTrip top-up. Build new
   people menus with `_people_keyboard`
   ([ADR-0038](docs/decisions/0038-paid-by-button-starts-from-the-message.md)).
+- A split is read by the model and worked out by Python
+  ([ADR-0039](docs/decisions/0039-splits-read-by-the-model-worked-out-by-python.md)). The model
+  returns only a `split_reference` (who and how many), never a share. `resolve_split` matches
+  the names and `share_out` hands out whole cents (both in `app/services/splits.py`). The message
+  decides whether an entry is split, never trip mode: a split is kept only if the text has a
+  split word (`asks_for_split`), and "with"/"between" decide whether the sender shares
+  (`sender_shares`), both read by Python. Nobody is guessed: an unmatched name, or
+  "everyone" with no trip on, is a ⚠️ card line. Split warnings are never stored and never block a
+  save. Uneven shares aren't built yet: a message asking for them gets a warning and no split,
+  never a wrong even one. Transfers and YouTrip top-ups are never split.
 - The duplicate check runs before the card is shown, never inside the insert, and a failed check
   gives a normal card — it must never block a save
   ([ADR-0027](docs/decisions/0027-duplicate-warning-before-the-card.md)).
@@ -174,6 +189,11 @@ Env vars (`.env.example` shows the format):
   `entered_by_participant_id`). Names and owners are looked up from `accounts` and
   `participants` when shown. Migration 0005 dropped the old text columns (`account_desc`,
   `account_owner`, `entered_by`); never bring a stored name back.
+- `transaction_splits` holds one row per person sharing an entry, in whole cents. No rows means
+  "not split": the entry is the payer's alone. The shares must add up to the entry's amount;
+  `add_expense` checks that and writes them in the same database transaction as the entry, only
+  when the entry row was really inserted. Leftover cents go to the largest remainder, ties to the
+  lowest participant id, never to "whoever paid".
 - `ON CONFLICT (idempotency_key) DO NOTHING` stops a double-tapped Confirm inserting twice
   ([ADR-0011](docs/decisions/0011-idempotency-key-over-update-id.md)). Duplicate webhook
   deliveries (`update_id`) are a different problem, deduped only in memory today.

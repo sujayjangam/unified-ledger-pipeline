@@ -32,9 +32,19 @@ columns) and [#91](https://github.com/sujayjangam/unified-ledger-pipeline/pull/9
 production 2026-11-14 after a Neon-branch rehearsal and a backup). Before 0005, the 5 rows with
 no `account_id` were given a card by hand in SQL, one guarded `UPDATE` per `transaction_id`.
 
-**Next action:** group-trip splitting, below: step 3, splits. Planned 2026-11-16 in
-`docs/superpowers/plans/2026-11-16-splits.md`, not started. Three PRs: read, store and show an
-even split; the split menu; uneven shares. Start with PR 1.
+**Next action:** group-trip splitting, below: step 3, splits
+(`docs/superpowers/plans/2026-11-16-splits.md`). PR 1 (read, store and show an even split) is
+written on branch `feat/splits-read-store-show`, not yet merged
+([ADR-0039](docs/decisions/0039-splits-read-by-the-model-worked-out-by-python.md),
+[ADR-0040](docs/decisions/0040-model-as-second-reader-for-the-payer.md)): migration 0008
+(`transaction_splits`), the model's `split_reference` and `payer_name`, name matching and whole-cent
+shares in Python, share lines on the card, shares saved with the entry, and the model as a second
+reader for the payer. Migration 0008 is on the Neon test branch. `scripts/check_extraction` gave
+35 of 35 messages right in 20 of 20 runs, after three readings moved from the model to Python (is
+there a split word; does "between" leave the sender out; is there a paying word before the
+model's payer is believed). Still to do before merging: a test-bot
+run on the Neon branch, then a production backup and migration 0008 by hand. After that PR 2 (the
+split menu) and PR 3 (uneven shares).
 
 **Done 2026-11-16:** step 2, paid-by, PR 2, merged as PR
 [#99](https://github.com/sujayjangam/unified-ledger-pipeline/pull/99) and deployed
@@ -322,8 +332,8 @@ only shared costs they pay get logged. Travel minimum, in build order:
      with an "all of this family" toggle and a tap to toggle individuals. Trip members are copied
      into the pending entry (a tap never loads the directory). Button data stays inside Telegram's
      64-byte limit. Shares are in whole cents and must add up to the amount (see the whole-cents
-     item under Phase 3). Decide the leftover-cent rule for a payer who isn't in the split, and how
-     refunds split.
+     item under Phase 3). Leftover cents go to the largest remainder, ties to the lowest
+     participant id (ADR-0039). How refunds split is still open.
      - Weighted shares, needed for the trip's accommodation: a 5-night booking where some members
        stay only 4 nights. Ticking people gives only an even split, so the split also needs a
        weight per person (nights, or any count). Each share is amount × weight ÷ total weight,
@@ -363,7 +373,8 @@ only shared costs they pay get logged. Travel minimum, in build order:
   outside the household; a shared bill a household member paid still counts in full until step 3
   decides on own-share. Settlements and deleted rows are filtered out of every query, including
   `find_recent_duplicate`. Entries already logged before this ships get their splits added by hand
-  in SQL. A database check on the splits table rejects shares that don't add up.
+  in SQL. Shares that don't add up are rejected in Python, inside the same database transaction
+  as the entry (ADR-0039).
 
   Open: a settlement paid in a different currency from the balance it clears (deferred). Not
   planned for now: more than one payer per bill (log two entries), itemised bills, FX conversion.

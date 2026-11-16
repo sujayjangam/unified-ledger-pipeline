@@ -26,6 +26,8 @@ def test_valid_full_payload_parses():
         payment_method="Bank A Platinum",
         category="Food",
         date_reference={"kind": "unstated"},
+        split_reference={"kind": "none", "include_sender": False, "people": [], "except_people": [], "uneven": False},
+        payer_name=None,
         needs_review=False,
     )
     assert txn.amount == 12.50
@@ -38,6 +40,8 @@ def test_amount_none_is_allowed():
         transaction_type="Expense",
         category="Other",
         date_reference={"kind": "unstated"},
+        split_reference={"kind": "none", "include_sender": False, "people": [], "except_people": [], "uneven": False},
+        payer_name=None,
         needs_review=True,
     )
     assert txn.amount is None
@@ -51,6 +55,8 @@ def test_invalid_category_rejected():
             transaction_type="Expense",
             category="Foods",
             date_reference={"kind": "unstated"},
+            split_reference={"kind": "none", "include_sender": False, "people": [], "except_people": [], "uneven": False},
+            payer_name=None,
             needs_review=False,
         )
 
@@ -62,6 +68,8 @@ def test_invalid_transaction_type_rejected():
             transaction_type="Refund",
             category="Food",
             date_reference={"kind": "unstated"},
+            split_reference={"kind": "none", "include_sender": False, "people": [], "except_people": [], "uneven": False},
+            payer_name=None,
             needs_review=False,
         )
 
@@ -72,6 +80,8 @@ def test_currency_defaults_to_sgd():
         transaction_type="Expense",
         category="Food",
         date_reference={"kind": "unstated"},
+        split_reference={"kind": "none", "include_sender": False, "people": [], "except_people": [], "uneven": False},
+        payer_name=None,
         needs_review=False,
     )
     assert txn.currency == "SGD"
@@ -85,6 +95,8 @@ def test_transaction_list_wraps_multiple_transactions():
                 "transaction_type": "Expense",
                 "category": "Food",
                 "date_reference": {"kind": "unstated"},
+                "split_reference": {"kind": "none", "include_sender": False, "people": [], "except_people": [], "uneven": False},
+                "payer_name": None,
                 "needs_review": False,
             },
             {
@@ -92,6 +104,8 @@ def test_transaction_list_wraps_multiple_transactions():
                 "transaction_type": "Expense",
                 "category": "Transport",
                 "date_reference": {"kind": "unstated"},
+                "split_reference": {"kind": "none", "include_sender": False, "people": [], "except_people": [], "uneven": False},
+                "payer_name": None,
                 "needs_review": False,
             },
         ]
@@ -134,6 +148,8 @@ def test_transaction_requires_a_date_reference():
             amount=12.50,
             transaction_type="Expense",
             category="Food",
+            split_reference={"kind": "none", "include_sender": False, "people": [], "except_people": [], "uneven": False},
+            payer_name=None,
             needs_review=False,
         )
 
