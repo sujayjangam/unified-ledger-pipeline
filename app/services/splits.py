@@ -195,8 +195,27 @@ def split_shares(amount_cents: int, people) -> tuple[dict, ...]:
                  for pid, cents in shares.items())
 
 
+# --- The split menu (PR 2, ADR-0041) --------------------------------------------------------
+#
+# The card's split menu changes the pending entry one tap at a time. Each function below takes
+# the pending entry and returns a changed copy (it never changes its argument), so the handler in
+# bot_core can redraw the card from the copy first and keep the change only once that worked.
+#
+# process_expense_text stores `split_menu` on the pending entry when the entry can be split:
+#   amount_cents  the amount as whole cents, so a tap never converts it again
+#   groups        the trip's members as (family label or None, members), in card order
+#   families      participant id -> family label on the trip (empty with no trip on)
+#   everyone      every participant, household first, then A-Z (menu_people)
+#   opened        set once the menu has been opened or the split removed; stops the
+#                 "tick everyone" on first open from happening a second time
+# "Ticked" always means "has a row in pending['split']": there is no second list to drift.
+
+
 def menu_people(directory) -> tuple[Participant, ...]:
-    """Offer household first, then other people by name, consistently in both menus."""
+    """Every participant, household first (directory order), then everyone else A-Z.
+
+    Both people menus use this order when the card isn't tagged to a trip, so the people the
+    sender picks most often are at the top and the rest are easy to find."""
     return directory.household() + tuple(sorted(
         (p for p in directory.participants if not p.is_household),
         key=lambda p: p.display_name.casefold(),
@@ -204,7 +223,11 @@ def menu_people(directory) -> tuple[Participant, ...]:
 
 
 def split_groups(people, families: dict) -> tuple:
-    """Keep trip families in card order, with unlabelled members last, for stable callbacks."""
+    """The trip's members grouped by family label, in the order the card lists them.
+
+    Families are ordered by their lowest member id and people within a family by id; people
+    with no family label form one group at the end. The order must not change while the card
+    is open, because a family button sends its index in this tuple, not its label."""
     groups = {}
     for person in sorted(people, key=lambda p: p.id):
         groups.setdefault(families.get(person.id) or None, []).append(person)
@@ -215,7 +238,9 @@ def split_groups(people, families: dict) -> tuple:
 
 
 def split_people(pending: dict) -> tuple[Participant, ...]:
-    """Return exactly the people drawn now, retaining ticks outside the current list."""
+    """The people the split menu shows now: the trip's members while the card is tagged to the
+    trip, otherwise everyone. Decided from the card as it is now, so a "Not trip" tap changes
+    the list. A tap on a person is checked against this, so a stale button is refused."""
     menu = pending['split_menu']
     people = (tuple(p for _, members in menu['groups'] for p in members)
               if pending.get('trip_id') else menu['everyone'])
@@ -233,7 +258,11 @@ def split_people(pending: dict) -> tuple[Participant, ...]:
 
 
 def split_rows(pending: dict, participant_ids) -> tuple[dict, ...]:
-    """Build the same whole-cent rows for text readings and taps; nobody means no split."""
+    """The split rows for the ticked people: {participant_id, name, share_cents, family}.
+
+    Used for the split read from the message and for every tap, so both give identical rows,
+    the rows the card draws and Confirm saves. Nobody ticked is a personal entry, `()`, and
+    share_out is never called then (it refuses an empty set of sharers)."""
     ids = set(participant_ids)
     if not ids:
         return ()  # share_out deliberately refuses an empty set of sharers.
@@ -245,7 +274,12 @@ def split_rows(pending: dict, participant_ids) -> tuple[dict, ...]:
 
 
 def _set_split(pending: dict, participant_ids) -> dict:
-    """Replace ticks in a copy, retiring reading warnings only when the choice changes."""
+    """A copy of the entry with exactly these people ticked, and the warnings brought up to date.
+
+    Once the ticks really change, the reading warnings ("Couldn't match 'Zed'") go: the menu is
+    now the answer. The uneven-shares warning stays until Confirm, because an even split is still
+    not what the message asked for; its wording says "shown as an even split" once anyone is
+    ticked, so the card never says "No split recorded" above a split."""
     ids = set(participant_ids)
     changed = {**pending, 'split': split_rows(pending, ids)}
     if ids != {row['participant_id'] for row in pending.get('split') or ()}:
@@ -257,7 +291,9 @@ def _set_split(pending: dict, participant_ids) -> dict:
 
 
 def open_split(pending: dict) -> dict:
-    """Seed an empty trip split once only, so reopening after Remove respects that choice."""
+    """Opening the menu. On a card tagged to a trip with no split yet, the first opening ticks
+    every trip member and applies that split at once, so the ticks and the card agree. It
+    happens once only: after "Remove split", reopening ticks nobody."""
     menu = pending['split_menu']
     changed = dict(pending)
     if pending.get('trip_id') and not pending.get('split') and not menu.get('opened'):
@@ -267,7 +303,7 @@ def open_split(pending: dict) -> dict:
 
 
 def toggle_split_person(pending: dict, participant_id: int) -> dict:
-    """Flip one visible person's tick, rejecting stale callbacks before changing shares."""
+    """Tick or untick one person. Raises ValueError for someone the menu doesn't show now."""
     if participant_id not in {p.id for p in split_people(pending)}:
         raise ValueError('Person is not offered')
     ids = {row['participant_id'] for row in pending.get('split') or ()}
@@ -275,7 +311,9 @@ def toggle_split_person(pending: dict, participant_id: int) -> dict:
 
 
 def toggle_split_family(pending: dict, index: int) -> dict:
-    """Flip a visible family's ticks together, so partial families become fully selected."""
+    """Tick a whole family, or untick it when every member is already ticked. Raises ValueError
+    for an index the menu doesn't show now: the card isn't tagged to the trip, the index is out
+    of range, or the group has no label (the unlabelled group has no toggle)."""
     groups = pending['split_menu']['groups']
     if not pending.get('trip_id') or not 0 <= index < len(groups) or not groups[index][0]:
         raise ValueError('Family is not offered')
@@ -285,7 +323,8 @@ def toggle_split_family(pending: dict, index: int) -> dict:
 
 
 def remove_split(pending: dict) -> dict:
-    """Untick everyone and remember the choice even if Remove arrives before first open."""
+    """"Remove split": untick everyone. Also marks the menu as opened, so a later opening
+    doesn't tick everyone again and undo the choice."""
     changed = _set_split(pending, ())
     changed['split_menu'] = {**pending['split_menu'], 'opened': True}
     return changed

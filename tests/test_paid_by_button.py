@@ -176,6 +176,23 @@ async def test_current_payer_is_offered_even_when_not_a_candidate(monkeypatch, d
     assert _data(bot_core._payer_keyboard(pending)) == [["payer:set:1", "payer:set:2"], ["payer:back"]]
 
 
+async def test_pick_is_checked_against_the_list_the_card_shows_now(monkeypatch, directory):
+    # A trip with only Alice and Bob on it. While the card is tagged to it, Carol is not offered,
+    # so a "payer:set:3" left over from the everyone list is a stale button and changes nothing.
+    monkeypatch.setattr(bot_core, "_load_active_trip",
+                        lambda participant_id: replace(BEACH, member_ids=(1, 2)))
+    context, pending = await _card(monkeypatch, directory)
+    query = await _press(context, "payer:set:3")
+    assert "no longer supported" in query.answer.await_args.args[0]
+    query.edit_message_text.assert_not_awaited()
+    assert pending["paid_by_participant_id"] == 1
+
+    # After "Not trip" the menu offers everyone, so the same tap now picks Carol (ADR-0041).
+    pending["trip_id"] = None
+    query = await _press(context, "payer:set:3")
+    assert pending["paid_by_participant_id"] == 3
+
+
 async def test_topup_card_has_no_payer_button(monkeypatch, directory):
     _, pending = await _card(monkeypatch, directory, message="top up youtrip 100", category="YouTrip top-up")
     assert "payer_menu" not in pending

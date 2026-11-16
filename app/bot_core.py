@@ -835,7 +835,14 @@ def _payer_keyboard(transaction: dict) -> InlineKeyboardMarkup:
 
 
 def _payer_people(transaction: dict) -> tuple:
-    """Use the card's current trip tag for both drawing and validating a payer pick."""
+    """The people the "Change who paid" menu offers right now (ADR-0041).
+
+    Decided from the card as it is now, not when the entry was logged: tagged to a trip, the
+    trip's members; not tagged (no trip on, or after "Not trip"), every participant, household
+    first. The payer shown now is always added, so the menu always has a ✅. _payer_tap checks a
+    tapped id against this same list, so a button left over from the other state is refused.
+    Both lists were copied onto the entry at log time, so this never reads the database.
+    """
     menu = transaction['payer_menu']
     people = menu['trip_people'] if transaction.get('trip_id') else menu['everyone']
     current = menu['directory'].participant(transaction.get('paid_by_participant_id'))
@@ -845,7 +852,16 @@ def _payer_people(transaction: dict) -> tuple:
 
 
 def _split_keyboard(transaction: dict) -> InlineKeyboardMarkup:
-    """Draw trip families or everyone, retaining outside ticks so each can be removed."""
+    """The split menu for one pending entry (ADR-0041).
+
+    Tagged to a trip: each family gets a toggle row (✅ when all its members are ticked), with its
+    members two to a row under it; the unlabelled group comes last and has no toggle. Not tagged:
+    every participant, two to a row, no families. Anyone ticked who isn't on that list is added at
+    the end, so they can always be unticked. Then "Remove split" and "Done".
+
+    Buttons carry only a participant id or a group index, never a name, to stay inside Telegram's
+    64-byte limit; _split_tap checks each one against what this function would draw now.
+    """
     marked = {row['participant_id'] for row in transaction.get('split') or ()}
     rows, shown = [], set()
     if transaction.get('trip_id'):
@@ -1227,7 +1243,17 @@ async def _payer_tap(query, context: ContextTypes.DEFAULT_TYPE, message_id: int)
 
 
 async def handle_split_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Serialize split edits with Confirm so only the shares actually shown can be saved."""
+    """The split menu on a pending card: open it, tick people or a family, remove, or close.
+
+    callback_data is "split:menu", "split:p:<participant id>", "split:f:<group index>",
+    "split:none" (Remove split) or "split:done". Everything comes from the pending entry
+    (process_expense_text stored the lists and the amount in cents there), so no tap reads the
+    database, and nothing is saved here: Confirm saves what the card shows.
+
+    Same rules as handle_payer_button: it runs inside the card's lock, so a Confirm can't land
+    between the redraw and the change to the entry; it answers the query exactly once, and last;
+    and a finished card gets a toast only.
+    """
     query = update.callback_query
     message_id = query.message.message_id
     async with _card_lock(context, message_id):
@@ -1235,14 +1261,21 @@ async def handle_split_button(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def _split_tap(query, context: ContextTypes.DEFAULT_TYPE, message_id: int):
-    """Apply a split tap from a copy, answering once and last after the redraw succeeds."""
+    """handle_split_button's work, run while holding the card's lock.
+
+    The state functions in app/services/splits.py return a changed copy. The card is redrawn
+    from the copy first, and the pending entry changes only once that worked, so Confirm always
+    saves what the card showed. A tap that changes nothing (Done, or reopening the same menu)
+    makes Telegram say "message is not modified"; the card already shows the copy, so that
+    counts as success.
+    """
     outcome = _card_outcome(context, message_id)
     if outcome in ('saved', 'cancelled'):
-        await query.answer("Already saved to the ledger." if outcome == 'saved' else "This entry was cancelled.")
+        await query.answer("✅ Already saved to the ledger." if outcome == 'saved' else "❌ This entry was cancelled.")
         return
     pending = context.user_data.get('pending_cards', {}).get(message_id)
     if pending is None or not pending.get('split_menu'):
-        await query.answer("This entry can't be changed now.")
+        await query.answer("⚠️ This entry can't be changed now.")
         return
 
     action, _, value = query.data.removeprefix('split:').partition(':')
@@ -1260,7 +1293,7 @@ async def _split_tap(query, context: ContextTypes.DEFAULT_TYPE, message_id: int)
         else:
             raise ValueError('Unknown split button')
     except ValueError:
-        await query.answer("This button is no longer supported. Please send the entry again.")
+        await query.answer("⚠️ This button is no longer supported. Please send the entry again.")
         return
 
     keyboard = _keyboard_for(changed) if action in ('done', 'none') else _split_keyboard(changed)
@@ -1271,10 +1304,10 @@ async def _split_tap(query, context: ContextTypes.DEFAULT_TYPE, message_id: int)
         # That still means the card already shows the copy we intend to keep.
         if not isinstance(e, BadRequest) or 'message is not modified' not in str(e).lower():
             print(f"❌ Split redraw failed: {e}")
-            await query.answer("Couldn't change the split, try again.")
+            await query.answer("⚠️ Couldn't change the split, try again.")
             return
     if context.user_data.get('pending_cards', {}).get(message_id) is not pending:
-        await query.answer("This entry is already being saved or was cancelled.")
+        await query.answer("⏳ This entry is already being saved or was cancelled.")
         return
     pending.update(changed)
     await query.answer()
