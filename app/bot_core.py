@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from telegram import BotCommand, Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.helpers import escape_markdown
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
+import asyncio
 import tempfile
 import time
 from app.add_expense import add_expense, dollars_to_cents, format_cents
@@ -16,6 +17,7 @@ from app.database import get_connection
 from app.services.participants import (
     CLOSED_CARD_WARNING, NO_WALLET_MESSAGE, Directory, WalletNotSetUp, load_directory, resolve_payment,
     NO_OUTSIDE_ACCOUNT_MESSAGE, PAYER_UNCLEAR_WARNING, OutsideAccountNotSetUp, read_payer,
+    NO_OUTSIDE_ACCOUNT_TOAST, NO_PAYER_ACCOUNT_TOAST, PayerHasNoAccount, change_payer,
 )
 from app.services.trips import (
     Trip, load_active_trip, trip_member_ids, switch_trip_off, switch_trip_on, member_trips,
@@ -575,6 +577,26 @@ def _card_outcome(context: ContextTypes.DEFAULT_TYPE, message_id: int):
     return context.user_data.get('resolved_cards', {}).get(message_id)
 
 
+def _card_lock(context: ContextTypes.DEFAULT_TYPE, message_id: int) -> asyncio.Lock:
+    """The lock for one card. Every tap that reads or changes a card's pending entry runs inside
+    it: Confirm, Cancel, the trip toggle and the "Paid by" menu.
+
+    Why it is needed: the webhook handles updates concurrently, and every `await` on a Telegram
+    call is a point where another tap on the same card can run. Without the lock, a Confirm
+    landing while a payer change is still redrawing the card would save the old payer under a
+    card that shows the new one. With it, taps on one card run one at a time, in arrival order,
+    so what is saved is always what the card showed. Taps on different cards never wait for
+    each other.
+
+    One lock per card, kept in user_data like the pending entries and bounded the same way. It
+    only works inside one process - which is also where the pending entries live (ADR-0023).
+    """
+    locks = context.user_data.setdefault('card_locks', {})
+    if message_id not in locks:
+        _bounded_put(locks, message_id, asyncio.Lock())
+    return locks[message_id]
+
+
 def _confirm_keyboard() -> InlineKeyboardMarkup:
     """The Confirm/Cancel pair a pending card carries. Built by a function rather than held
     as a constant because the failure path re-attaches it after it has been swapped out."""
@@ -732,16 +754,43 @@ def _keyboard_for(transaction: dict) -> InlineKeyboardMarkup:
     """The buttons a pending card carries: the warning pair if it was flagged, else Confirm/Cancel,
     and under them the trip toggle when a trip was on as the entry was logged."""
     main = _duplicate_keyboard() if _is_flagged(transaction) else _confirm_keyboard()
+    rows = [*main.inline_keyboard]
     offer = transaction.get('trip_offer')
-    if not offer:
-        return main
-    # One button that flips between the two states, so a mis-tap on "Not trip" can be undone.
-    # The callback_data is fixed and short: Telegram allows only 64 bytes, and the tap finds the
-    # entry by the card's message_id anyway.
-    label = "🏠 Not trip" if transaction.get('trip_id') else f"🧳 Tag to {offer['name']}"
-    return InlineKeyboardMarkup(
-        [*main.inline_keyboard, [InlineKeyboardButton(label, callback_data="trip_toggle")]]
-    )
+    if offer:
+        # One button that flips between the two states, so a mis-tap on "Not trip" can be undone.
+        # The callback_data is fixed and short: Telegram allows only 64 bytes, and the tap finds
+        # the entry by the card's message_id anyway.
+        label = "🏠 Not trip" if transaction.get('trip_id') else f"🧳 Tag to {offer['name']}"
+        rows.append([InlineKeyboardButton(label, callback_data="trip_toggle")])
+    if transaction.get('payer_menu'):
+        # Opens the list of people (handle_payer_button). Absent on a YouTrip top-up, and on a
+        # card stashed before this button shipped.
+        rows.append([InlineKeyboardButton("👤 Change who paid", callback_data="payer:menu")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _people_keyboard(people, pick_prefix: str, back_data: str, marked_ids=(), per_row: int = 2) -> InlineKeyboardMarkup:
+    """A menu of people to tap, two to a row, with a Back button under them.
+
+    Shared on purpose: "Paid by" uses it now, and the "Add split" menu will use it with its own
+    prefix and more than one person marked. Each button sends `<pick_prefix>:<participant id>`,
+    which stays far under Telegram's 64-byte limit however long a name is. People in
+    `marked_ids` get a ✅. Labels are plain text, so names need no Markdown escaping.
+    """
+    buttons = [
+        InlineKeyboardButton(("✅ " if p.id in marked_ids else "") + p.display_name,
+                             callback_data=f"{pick_prefix}:{p.id}")
+        for p in people
+    ]
+    rows = [buttons[i:i + per_row] for i in range(0, len(buttons), per_row)]
+    rows.append([InlineKeyboardButton("◂ Back", callback_data=back_data)])
+    return InlineKeyboardMarkup(rows)
+
+
+def _payer_keyboard(transaction: dict) -> InlineKeyboardMarkup:
+    """The "who paid?" menu for one pending entry, with the current payer marked."""
+    return _people_keyboard(transaction['payer_menu']['people'], "payer:set", "payer:back",
+                            marked_ids=(transaction.get('paid_by_participant_id'),))
 
 
 def _trip_lines(transaction: dict) -> str:
@@ -759,9 +808,15 @@ def _trip_lines(transaction: dict) -> str:
 
 def _pending_card_text(transaction: dict) -> str:
     """The text of a card waiting for Confirm. Built from the pending entry alone, so the trip
-    toggle can redraw the card without the directory or the model: the banner (duplicate and
-    closed-card warnings) is worked out once, when the entry is logged, and kept on the entry."""
-    return transaction.get('card_banner', "") + (
+    toggle and the "Paid by" menu can redraw the card without the database or the model. The
+    duplicate banner is worked out once, when the entry is logged, and kept on the entry. The
+    closed-card warning is worked out here, from closed_account, because a "Paid by" tap can move
+    the entry onto or off a closed card."""
+    banner = transaction.get('card_banner', "")
+    if transaction.get('closed_account'):
+        # Under the duplicate banner when both apply - one card, every reason to look twice.
+        banner += f"{CLOSED_CARD_WARNING}\n\n"
+    return banner + (
         f"Please confirm your **{transaction.get('transaction_type', 'Expense')}**:\n\n"
         f"💰 **Amount:** {_display_amount(transaction)}\n"
         f"🏷️ **Category:** {transaction.get('category')}\n"
@@ -864,6 +919,18 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
     if reading.unclear:
         single_transaction['payer_warning'] = PAYER_UNCLEAR_WARNING
 
+    # What the "Paid by" button needs, copied onto the entry so a tap never reads the database:
+    # the people offered (the same candidates the text was read against, plus whoever is shown
+    # as paying now, so the menu always has a ✅) and this message's directory snapshot, which
+    # change_payer uses to find each person's account. Not on a top-up: its payer is the owner
+    # of the wallet's funding card, and there is nothing to choose.
+    if single_transaction.get('category') != "YouTrip top-up":
+        people = list(candidates)
+        current = directory.participant(single_transaction['paid_by_participant_id'])
+        if current not in people:
+            people.append(current)
+        single_transaction['payer_menu'] = {'people': tuple(people), 'directory': directory}
+
     # One idempotency key per confirm prompt (not per save attempt) - reused on every
     # save attempt for this same prompt, so a double-tap or webhook retry can't insert twice.
     single_transaction['idempotency_key'] = str(uuid.uuid4())
@@ -881,11 +948,9 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
     banner = ""
     if single_transaction['suspected_duplicate']:
         banner = _duplicate_banner(single_transaction['suspected_duplicate'], amount_text, sender.id, directory)
-    if single_transaction.get('closed_account'):
-        # Under the duplicate banner when both apply - one card, every reason to look twice.
-        banner += f"{CLOSED_CARD_WARNING}\n\n"
-    # Kept on the entry so the trip toggle can redraw the card exactly as it was (see
-    # _pending_card_text). The duplicate banner names people, which needs the directory.
+    # Kept on the entry so a button tap can redraw the card exactly as it was (see
+    # _pending_card_text, which adds the closed-card warning itself). The duplicate banner names
+    # people, which needs the directory.
     single_transaction['card_banner'] = banner
 
     # Send the clean summary with its buttons attached - Confirm/Cancel, or Save anyway/Cancel if
@@ -974,6 +1039,99 @@ async def delete_pin_notice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Could not delete pin notice: {e}")
 
 
+async def handle_payer_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """The "Paid by" menu on a pending card: open it, pick a person, or go back.
+
+    callback_data is "payer:menu", "payer:back" or "payer:set:<participant id>". Everything
+    comes from the pending entry (process_expense_text put the people and the directory
+    snapshot there), so no tap reads the database. Nothing is saved here: a pick changes only
+    the in-memory entry, and Confirm then saves what the card shows.
+
+    Like handle_button_click, each path answers the query exactly once, and last, so the single
+    toast can say what really happened. It runs inside the card's lock (_card_lock), so a
+    Confirm or Cancel tap can't slip in between the redraw and the change to the entry.
+    """
+    query = update.callback_query
+    message_id = query.message.message_id
+    async with _card_lock(context, message_id):
+        await _payer_tap(query, context, message_id)
+
+
+async def _payer_tap(query, context: ContextTypes.DEFAULT_TYPE, message_id: int):
+    """handle_payer_button's work, run while holding the card's lock."""
+    # A finished card gets a toast only, never an edit (#29).
+    outcome = _card_outcome(context, message_id)
+    if outcome == "saved":
+        await query.answer("✅ Already saved to the ledger.")
+        return
+    if outcome == "cancelled":
+        await query.answer("❌ This entry was cancelled.")
+        return
+
+    # Looked up, not taken: the entry stays pending for Confirm. Missing while a save is in
+    # flight (Confirm takes it out) or after a restart.
+    pending = context.user_data.get('pending_cards', {}).get(message_id)
+    if pending is None or not pending.get('payer_menu'):
+        await query.answer("⚠️ This entry can't be changed now.")
+        return
+    menu = pending['payer_menu']
+
+    action, _, value = query.data.removeprefix("payer:").partition(":")
+
+    if action in ("menu", "back"):
+        # Only the buttons change: the people list replaces Confirm/Cancel, or they come back.
+        # While the list is open there is no Confirm to tap, so a half-made choice can't be saved.
+        keyboard = _payer_keyboard(pending) if action == "menu" else _keyboard_for(pending)
+        try:
+            await query.edit_message_reply_markup(reply_markup=keyboard)
+        except Exception as e:
+            print(f"❌ Paid-by menu redraw failed: {e}")
+            await query.answer("⚠️ Couldn't update the buttons, try again.")
+            return
+        await query.answer()
+        return
+
+    # "payer:set:<id>". The id must be one of the people this card offered; anything else is a
+    # stale or malformed button.
+    person = next((p for p in menu['people'] if action == "set" and str(p.id) == value), None)
+    if person is None:
+        await query.answer("⚠️ This button is no longer supported. Please send the entry again.")
+        return
+
+    if person.id == pending.get('paid_by_participant_id'):
+        # Tapping the person already marked ✅ keeps the account as it is and closes the menu.
+        # It is still a deliberate "yes, them", so a payer warning has done its job and goes.
+        changed = {**pending, 'payer_warning': None}
+    else:
+        try:
+            changed = change_payer(pending, menu['directory'], person)
+        except PayerHasNoAccount:
+            await query.answer(NO_PAYER_ACCOUNT_TOAST.format(payer=person.display_name), show_alert=True)
+            return
+        except OutsideAccountNotSetUp:
+            await query.answer(NO_OUTSIDE_ACCOUNT_TOAST, show_alert=True)
+            return
+
+    # Redraw from the changed copy first, and change the pending entry only once the card shows
+    # the new payer. If the redraw fails, the card still shows the old one, so the entry must
+    # keep it too: Confirm saves exactly what the card showed. (Same order as the trip toggle.)
+    try:
+        await query.edit_message_text(_pending_card_text(changed), reply_markup=_keyboard_for(changed),
+                                      parse_mode="Markdown")
+    except Exception as e:
+        print(f"❌ Paid-by redraw failed: {e}")
+        await query.answer("⚠️ Couldn't change who paid, try again.")
+        return
+    # The webhook runs updates concurrently, so a Confirm or Cancel tap can have taken this entry
+    # while the redraw above was waiting. Then it is no longer this card's to change.
+    if context.user_data.get('pending_cards', {}).get(message_id) is not pending:
+        await query.answer("⏳ This entry is already being saved or was cancelled.")
+        return
+    # In place, so the dict the cache holds is the one that changes.
+    pending.update(changed)
+    await query.answer(f"👤 Paid by {person.display_name}.")
+
+
 # buttons!
 async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Processes the Confirm/Cancel presses on a pending-transaction card.
@@ -993,6 +1151,15 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.answer("⏳ Adding your expense, one moment...")
         return
 
+    # Everything else reads or changes the card's pending entry, so it runs one tap at a time
+    # per card (see _card_lock). The progress toast above stays outside: it touches nothing.
+    async with _card_lock(context, message_id):
+        await _card_tap(query, context, message_id)
+
+
+async def _card_tap(query, context: ContextTypes.DEFAULT_TYPE, message_id: int):
+    """handle_button_click's work for Confirm, Cancel and the trip toggle, run while holding
+    the card's lock."""
     if query.data == "confirm_save":
         # A card whose outcome is already settled must not be processed again, and - just as
         # importantly - must not have its result message overwritten. This is the branch that
@@ -1194,6 +1361,7 @@ def get_application():
 
     # handler for buttons
     app.add_handler(CallbackQueryHandler(handle_trip_button, pattern=r"^trip:"))
+    app.add_handler(CallbackQueryHandler(handle_payer_button, pattern=r"^payer:"))
     app.add_handler(CallbackQueryHandler(handle_button_click))
 
     return app

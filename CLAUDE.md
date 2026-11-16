@@ -98,6 +98,12 @@ Env vars (`.env.example` shows the format):
   is reached only by the outside-payer rule, never named in the prompt's account list
   ([ADR-0037](docs/decisions/0037-paid-by-person-read-from-text.md)). Payer warnings are card
   lines only: never stored, never block a save. Every bot user is household (a database check).
+- The "Change who paid" button (`handle_payer_button`) applies `change_payer`, which starts from
+  the account the message named (`base_account_id`), never the account on the card now, so taps
+  don't pile up. It reads the directory snapshot kept on the pending entry, never the database.
+  No account fits → an alert, and nothing changes. No button on a YouTrip top-up. Build new
+  people menus with `_people_keyboard`
+  ([ADR-0038](docs/decisions/0038-paid-by-button-starts-from-the-message.md)).
 - The duplicate check runs before the card is shown, never inside the insert, and a failed check
   gives a normal card — it must never block a save
   ([ADR-0027](docs/decisions/0027-duplicate-warning-before-the-card.md)).
@@ -119,6 +125,11 @@ Env vars (`.env.example` shows the format):
     ([#29](https://github.com/sujayjangam/unified-ledger-pipeline/issues/29)).
   - A failed save puts the entry back with its original `idempotency_key` and buttons.
   - A tap never loads the directory: what was confirmed is what is saved.
+  - Every tap that reads or changes a pending entry runs inside that card's lock (`_card_lock`),
+    so a Confirm can't land in the middle of a redraw. A new card button must take it too.
+  - `handle_payer_button` follows the answer-once, toast-only-on-resolved-cards and
+    never-load-the-directory rules. Like the trip toggle, it redraws from a copy and changes the
+    pending entry only after the redraw worked.
 
 ## Participants and accounts
 
