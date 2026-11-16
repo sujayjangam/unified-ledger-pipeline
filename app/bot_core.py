@@ -704,7 +704,11 @@ def _split_lines(transaction: dict) -> str:
         row = rows[0]
         payer = transaction.get('paid_by') or transaction.get('account_owner')
         return f"👥 **Split:** {_md(row['name'])} owes {_md(payer)} {format_cents(row['share_cents'])}\n"
-    lines = [f"👥 **Split between {len(rows)}:**"]
+    # Keep the unit on the pending snapshot so the saved receipt uses the same wording.
+    by_count = 'count' in rows[0]
+    unit = (transaction.get('split_menu') or {}).get('unit') or 'count'
+    heading = f"Split by {_md(unit)}" if by_count else "Split"
+    lines = [f"👥 **{heading} between {len(rows)}:**"]
     groups = {}
     for row in rows:
         groups.setdefault(row.get('family') or None, []).append(row)
@@ -716,7 +720,8 @@ def _split_lines(transaction: dict) -> str:
         if label:
             lines.append(_md(label))
         for row in groups[label]:
-            lines.append(f" • {_md(row['name'])}: {format_cents(row['share_cents'])}")
+            count = f"{row['count']}, " if by_count else ""
+            lines.append(f" • {_md(row['name'])}: {count}{format_cents(row['share_cents'])}")
     return "\n".join(lines) + "\n"
 
 
@@ -1046,6 +1051,7 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
             single_transaction['split_menu'] = {
                 'amount_cents': amount_cents, 'groups': split_groups(trip_people, families),
                 'families': families, 'everyone': everyone,
+                'counts': dict(result.counts), 'default_count': result.default_count, 'unit': result.unit,
             }
             single_transaction['split'] = split_rows(single_transaction, (p.id for p in result.people))
 

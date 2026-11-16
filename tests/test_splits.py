@@ -6,6 +6,156 @@ from app.services.participants import Participant
 from app.services.splits import resolve_split, share_out, split_shares
 
 
+@pytest.mark.parametrize('word', ['EXCEPT', 'excluding', 'but not', 'apart from', 'other than'])
+def test_dropped_exclusion_refuses_split(directory, word):
+    from app.services.splits import EXCEPT_UNREAD_WARNING
+    result = resolve_split({'kind': 'everyone'}, directory.participants,
+                           directory.participant(1), {}, True, f'split everyone {word} Carol')
+    assert not result.people and result.warnings == (EXCEPT_UNREAD_WARNING,)
+
+
+def test_plain_family_exclusion_and_whole_word_backstop(directory):
+    reference = {'kind': 'everyone', 'except_people': [{'name': 'Carol', 'is_family': True}]}
+    result = resolve_split(reference, directory.participants, directory.participant(1),
+                           {2: 'Carol', 3: 'Carol'}, True, "split everyone except Carol's family")
+    assert [p.id for p in result.people] == [1] and not result.counts and not result.warnings
+    result = resolve_split({'kind': 'everyone'}, directory.participants, directory.participant(1),
+                           {}, True, 'split everyone for an exceptional dinner')
+    assert len(result.people) == 3 and not result.warnings
+
+
+def test_everyone_without_entries_keeps_existing_behavior(directory):
+    result = resolve_split({'kind': 'everyone'}, directory.participants, directory.participant(1),
+                           {}, True, 'split dinner 80')
+    assert len(result.people) == 3 and not result.warnings
+
+
+@pytest.mark.parametrize('count', [None, 0, 1000, 7])
+def test_exception_without_valid_count_excludes(directory, count):
+    result = resolve_split({'kind': 'everyone', 'default_count': 5,
+                            'except_people': [{'name': 'Carol', 'count': count}]},
+                           directory.participants, directory.participant(1), {}, True,
+                           'split everyone 5 nights except Carol')
+    assert result.counts == {1: 5, 2: 5}
+
+
+def test_counted_exception_overrides_inclusion(directory):
+    result = _resolve(directory, {'kind': 'named', 'people': [{'name': 'Carol', 'count': 5}],
+                                  'except_people': [{'name': 'Carol', 'count': 4}]})
+    assert result.counts == {3: 4}
+
+
+@pytest.mark.parametrize('name', ['everyone', 'EVERYBODY', 'all', 'the rest', 'rest', 'others', 'everyone else'])
+def test_collective_name_supplies_default(directory, name):
+    result = resolve_split({'kind': 'everyone', 'people': [{'name': name, 'count': 5}],
+                            'except_people': [{'name': 'Carol', 'count': 4}]},
+                           directory.participants, directory.participant(1), {}, True,
+                           '5 nights everyone except Carol 4')
+    assert result.counts == {1: 5, 2: 5, 3: 4} and not result.warnings
+
+
+@pytest.mark.parametrize('default', [5, 0, 1000, 'bad'])
+def test_unused_default_is_dropped(directory, default):
+    result = resolve_split({'kind': 'everyone', 'default_count': default,
+                            'include_sender': True,
+                            'people': [{'name': 'me', 'count': 3}, {'name': 'Carol', 'count': 2}]},
+                           directory.participants, directory.participant(1), {}, False,
+                           'Hotel 600 split by nights, me 3 and Carol 2')
+    assert result.counts == {1: 3, 3: 2}
+    assert result.default_count is None and not result.warnings
+
+
+def test_everyone_downgrade_obeys_between(directory):
+    result = resolve_split({'kind': 'everyone', 'include_sender': True, 'people': ['Carol']},
+                           directory.participants, directory.participant(1), {}, True,
+                           'split between Carol')
+    assert [p.id for p in result.people] == [3]
+
+
+@pytest.mark.parametrize('word', ['everyone', 'everybody', 'all', 'all of us', 'whole group', 'the group'])
+def test_count_shorthand_requires_everyone_and_valid_counts(directory, word):
+    reference = {'kind': 'everyone', 'default_count': 5}
+    valid = resolve_split(reference, directory.participants, directory.participant(1), {}, True,
+                          f'Hotel 600, {word}, 5 nights')
+    assert valid.counts == {1: 5, 2: 5, 3: 5}
+    invalid = resolve_split(reference, directory.participants, directory.participant(1), {}, True,
+                            f'Hotel 600, {word}, 4 nights')
+    from app.services.splits import COUNT_UNREAD_WARNING
+    assert not invalid.people and invalid.warnings == (COUNT_UNREAD_WARNING,)
+
+
+@pytest.mark.parametrize('message', ['Dinner with everyone 80', 'Dinner with everybody 80',
+                                     'Hotel 600 Carol 5 nights', 'Dinner with alligator 80'])
+def test_no_split_word_traps(directory, message):
+    reference = {'kind': 'everyone'}
+    if 'nights' in message:
+        reference.update(kind='named', people=[{'name': 'Carol', 'count': 5}])
+    result = resolve_split(reference, directory.participants, directory.participant(1), {}, True, message)
+    assert not result.people and not result.warnings
+
+
+def test_missing_sender_count_warns_even_without_uneven_flag(directory):
+    from app.services.splits import COUNT_UNREAD_WARNING
+    result = _resolve(directory, {'kind': 'named', 'include_sender': True,
+                                  'people': [{'name': 'Carol', 'count': 2}]})
+    assert not result.people and result.warnings == (COUNT_UNREAD_WARNING,)
+
+
+def test_invalid_inclusion_refuses_even_if_excluded(directory):
+    from app.services.splits import COUNT_UNREAD_WARNING
+    result = _resolve(directory, {'kind': 'everyone', 'default_count': 5,
+                                  'people': [{'name': 'Carol', 'count': 0}], 'except_people': ['Carol']}, True)
+    assert not result.people and result.warnings == (COUNT_UNREAD_WARNING,)
+
+
+@pytest.mark.parametrize('message,count,valid', [
+    ('split Carol 5 nights', 5, True), ('split Carol FIVE nights', 5, True),
+    ('split Carol twenty-nine nights', 29, True), ('split Carol thirty nights', 30, True),
+    ('split Carol 999 nights', 999, True), ('split Carol 2300', 3, False),
+    ('split Carol 5.', 5, True),
+    ('split Carol 5.50', 5, False), ('split Carol 4 nights', 5, False),
+    ('split Carol 0 nights', 0, False), ('split Carol 1000 nights', 1000, False),
+    (None, 5, True), (None, -1, False),
+])
+def test_counts_must_be_said(directory, message, count, valid):
+    """Numbers are checked against raw text, including dictated English number words."""
+    from app.services.splits import COUNT_UNREAD_WARNING
+    result = resolve_split({'kind': 'named', 'uneven': True,
+                            'people': [{'name': 'Carol', 'count': count}]},
+                           directory.participants, directory.participant(1), {}, False, message)
+    assert bool(result.people) is valid
+    assert result.counts == ({3: count} if valid else {})
+    assert result.warnings == (() if valid else (COUNT_UNREAD_WARNING,))
+
+
+def test_everyone_with_family_duration_and_exclusion(directory):
+    """A duration exception expands to each family member; a real exclusion still wins."""
+    reference = {'kind': 'everyone', 'default_count': 5, 'count_unit': 'nights',
+                 'except_people': [{'name': 'Carol', 'is_family': True, 'count': 4}]}
+    result = resolve_split(reference, directory.participants, directory.participant(1),
+                           {2: 'family', 3: 'family'}, True,
+                           "Airbnb 2300, 5 nights, everyone except Carol's family who stayed 4")
+    assert result.counts == {1: 5, 2: 4, 3: 4}
+    assert result.default_count == 5 and result.unit == 'nights'
+    rows = split_shares(230000, result.people, result.counts)
+    assert sum(r['share_cents'] for r in rows) == 230000
+    assert [r['count'] for r in rows] == [5, 4, 4]
+    excluded = _resolve(directory, {**reference, 'except_people': ['Carol']}, True)
+    assert excluded.counts == {1: 5, 2: 5}
+
+
+def test_sender_count_and_missing_count(directory):
+    """A me entry supplies the sender's count; include_sender alone cannot invent one."""
+    from app.services.splits import COUNT_UNREAD_WARNING
+    reference = {'kind': 'named', 'include_sender': True, 'uneven': True,
+                 'people': [{'name': 'me', 'count': 3}, {'name': 'Carol', 'count': 2}]}
+    result = resolve_split(reference, directory.participants, directory.participant(1), {}, False,
+                           'Hotel 600 split by nights, me 3 and Carol 2')
+    assert result.counts == {1: 3, 3: 2}
+    missing = _resolve(directory, {**reference, 'people': [{'name': 'Carol', 'count': 2}]})
+    assert missing.people == () and missing.warnings == (COUNT_UNREAD_WARNING,)
+
+
 @pytest.mark.parametrize("amount,weights,expected", [
     (555, {1: 1, 2: 1}, {1: 278, 2: 277}),
     (100, {3: 1, 1: 1, 2: 1}, {1: 34, 2: 33, 3: 33}),
@@ -175,3 +325,48 @@ def test_a_split_the_message_never_asked_for_is_dropped(directory):
     result = resolve_split(reference, directory.participants, directory.participants[0], {}, False,
                            message="dinner with Carol 70")
     assert result.people == () and result.warnings == ()
+
+
+@pytest.mark.parametrize("name", ["Carol's family", "Carol’s family", "Carol family"])
+def test_family_wording_left_in_the_name_still_matches(directory, name):
+    """The model sometimes returns "Carol's family" as the name; it still means Carol's family."""
+    reference = {'kind': 'everyone', 'default_count': 5, 'count_unit': 'nights',
+                 'people': [{'name': name, 'is_family': False, 'count': 4}]}
+    result = resolve_split(reference, directory.participants, directory.participant(1),
+                           {2: 'family', 3: 'family'}, True,
+                           "Airbnb 2300, 5 nights, everyone except Carol's family who only stayed 4")
+    assert result.warnings == ()
+    assert result.counts == {1: 5, 2: 4, 3: 4}
+
+
+def test_except_read_as_counted_sharer_passes_the_backstop(directory):
+    """"Except Carol's family who stayed 4" may come back under people with a count rather
+    than under except_people; that is a counted sharer, not a dropped exclusion."""
+    reference = {'kind': 'everyone', 'default_count': 5,
+                 'people': [{'name': 'Carol', 'is_family': True, 'count': 4}], 'except_people': []}
+    result = resolve_split(reference, directory.participants, directory.participant(1),
+                           {2: 'family', 3: 'family'}, True,
+                           "Airbnb 2300, 5 nights, everyone except Carol's family who only stayed 4")
+    assert result.counts == {1: 5, 2: 4, 3: 4}
+
+
+@pytest.mark.parametrize("message", [
+    "Airbnb 2300, 5 nights, everyone except Carol's family who only stayed 4",
+    "Airbnb 2300, five nights, everyone except Carol's family who only stayed four",
+])
+def test_uncounted_exception_with_a_number_after_except_refuses(directory, message):
+    """Carol under except with her count lost would drop her family from the bill; refuse."""
+    from app.services.splits import COUNT_UNREAD_WARNING
+    reference = {'kind': 'everyone', 'default_count': 5,
+                 'except_people': [{'name': 'Carol', 'is_family': True}]}
+    result = resolve_split(reference, directory.participants, directory.participant(1),
+                           {2: 'family', 3: 'family'}, True, message)
+    assert not result.people and result.warnings == (COUNT_UNREAD_WARNING,)
+
+
+def test_plain_exclusion_in_a_count_split_still_excludes(directory):
+    """"5 nights, everyone except Carol" has no number after except: Carol is left out."""
+    reference = {'kind': 'everyone', 'default_count': 5, 'except_people': [{'name': 'Carol'}]}
+    result = resolve_split(reference, directory.participants, directory.participant(1),
+                           {}, True, "Airbnb 2300, 5 nights, everyone except Carol")
+    assert result.counts == {1: 5, 2: 5}

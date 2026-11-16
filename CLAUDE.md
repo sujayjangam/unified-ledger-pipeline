@@ -121,9 +121,14 @@ Env vars (`.env.example` shows the format):
   split word (`asks_for_split`), and "with"/"between" decide whether the sender shares
   (`sender_shares`), both read by Python. Nobody is guessed: an unmatched name, or
   "everyone" with no trip on, is a ⚠️ card line. Split warnings are never stored and never block a
-  save. Uneven shares aren't built yet: a message asking for them gets a warning and no split,
-  never a wrong even one read from the text. An even split set in the menu keeps the warning,
-  reworded, until Confirm. Transfers and YouTrip top-ups are never split.
+  save. Uneven shares are counts only (nights, or any count per person;
+  [ADR-0042](docs/decisions/0042-uneven-shares-by-count.md)): the model reads each count, a
+  count is used only if its number is in the message, and a menu tap keeps the counts (one row
+  builder for the message and every tap). Python, not the model, decides that an "except" entry
+  with a count is a sharer at that count; "everyone" counts only when the text says it. A fixed
+  amount or percentage, or a sharer left without a count, gets a warning and no split, never a
+  wrong even one. An even split set in the menu
+  keeps that warning, reworded, until Confirm. Transfers and YouTrip top-ups are never split.
 - The split menu (`handle_split_button`, ADR-0041) follows the payer button's rules: card lock,
   answer once and last, toast only on resolved cards, never load the directory, redraw from a
   copy and change the pending entry only after the redraw worked. State changes are pure

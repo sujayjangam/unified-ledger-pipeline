@@ -61,6 +61,8 @@ class SplitPerson(BaseModel):
 
     name: str = Field(description="The name as said, without possessive or family wording: Carol's family -> Carol.")
     is_family: bool = Field(description="True for '<name>'s family', 'the <name>s', or '<name> family'; false for one person.")
+    count: Optional[int] = Field(default=None, description="""Count said for this person or each
+        family member: 'Carol and Dave 4' means 4 each. Null if not said. Never money or a percentage.""")
 
 
 class SplitReference(BaseModel):
@@ -79,11 +81,19 @@ class SplitReference(BaseModel):
         'me and Carol', 'between me, Carol and Dave', 'shared with...'. False for 'split between
         Carol and Dave', where the sender is not named. True for everyone; false for none.""")
     people: List[SplitPerson] = Field(description="""Each person or family named as sharing, name
-        copied as said without possessive/family wording. Never include the sender ('me', 'I'):
-        use include_sender instead. Empty for none and everyone.""")
+        copied as said without possessive/family wording. The sender is include_sender, not an
+        entry, except when a count is said for them: 'me 3 and Carol 2' -> a 'me' entry with
+        count 3. Empty for none and everyone.
+        Each entry copies a count if said for that person/family, else null.""")
     # The same shape as people, so "everyone except Carol's family" can leave out a whole family.
     except_people: List[SplitPerson] = Field(description="""People or families named after 'except',
-        'but not' or 'excluding': 'everyone except Dave' -> Dave. Usually with everyone. Empty otherwise.""")
+        'but not' or 'excluding': 'everyone except Dave' -> Dave. Usually with everyone. Empty otherwise.
+        Each entry copies a count if said for that person/family, else null: 'everyone except
+        Carol's family who only stayed 4' -> Carol, family, count 4.""")
+    default_count: Optional[int] = Field(default=None, description="""Count said for every sharer
+        without their own: '5 nights, everyone except Carol family who stayed 4' -> 5.
+        Null if not said. Never calculate a count or share.""")
+    count_unit: Optional[str] = Field(default=None, description="The unit as said, lower case and plural, e.g. nights; otherwise null.")
     uneven: bool = Field(description="""True only for shares that are NOT equal: by nights, by a
         count, a percentage, or a fixed amount for someone ('Carol's share is 50'). False otherwise.""")
 
@@ -188,6 +198,11 @@ async def extract_transactions(transcript_text: str, today: date, allowed_accoun
                                                 Typed shorthand: 'yday' and 'ytd' both mean yesterday.
                                                 Record who shares only in split_reference, only when the message asks
                                                 to split or share the cost; never work out a share yourself.
+                                                Read counts per person/family, default_count and count_unit.
+                                                'Carol and Dave 4' is two people, each count 4, not families;
+                                                'Carol's family 4' is a family with count 4.
+                                                Fixed amounts/percentages set uneven
+                                                true but are never counts.
                                                 Record who paid in payer_name, null unless the message says someone
                                                 other than the sender paid; sharing with someone does not mean they paid.
                                                 Numeric dates are day first: 3/7 is 3 July."""},

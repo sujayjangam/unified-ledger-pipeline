@@ -12,7 +12,8 @@ Nothing in this module touches the database, the model or Telegram.
 """
 
 import re
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, field
 
 from app.services.participants import Participant, match_person
 
@@ -22,10 +23,19 @@ UNEVEN_EVEN_SPLIT_WARNING = "⚠️ This asked for uneven shares, which the bot 
 EVERYONE_NEEDS_TRIP_WARNING = '⚠️ "Everyone" needs a trip switched on. No split recorded.'
 NOBODY_SHARES_WARNING = "⚠️ Couldn't tell who shares this. No split recorded."
 NO_MATCH_WARNING = "⚠️ Couldn't match '{name}'"
+ADDED_AT_COUNT_WARNING = "⚠️ {name} added at {count} {unit}. Check."
+EXCEPT_UNREAD_WARNING = "⚠️ Couldn't tell who is left out. No split recorded."
+COUNT_UNREAD_WARNING = "⚠️ Couldn't read a count for everyone. No split recorded."
+COUNT_EVEN_SPLIT_WARNING = "⚠️ Couldn't read a count for everyone. Shown as an even split."
 
-# Words that mean the person who sent the message. The model is told to use include_sender
-# instead of listing these, but if it lists one anyway it must not become "Couldn't match 'me'".
+# Words that mean the sender. A 'me' entry carries their explicit count, while
+# include_sender alone includes them without specifying a count.
 _SENDER_WORDS = frozenset({"me", "i", "myself"})
+_COLLECTIVE_WORDS = frozenset({"everyone", "everybody", "all", "the rest", "rest", "others", "everyone else"})
+# "Carol's family", "Carol’s family", "Carol family": the name before the family wording.
+_FAMILY_SUFFIX = re.compile(r"^(?P<name>.+?)(?:'s|’s)?\s+family$", re.IGNORECASE)
+_EXCEPT_WORD = re.compile(r"(?<!\w)(?:except|excluding|but\s+not|apart\s+from|other\s+than)(?!\w)", re.IGNORECASE)
+_EVERYONE_WORD = re.compile(r"(?<!\w)(?:everyone|everybody|all|all\s+of\s+us|whole\s+group|the\s+group)(?!\w)", re.IGNORECASE)
 
 
 # A message asks for a split only if it uses one of these words. The model sometimes invented
@@ -112,6 +122,34 @@ class SplitResult:
 
     people: tuple[Participant, ...]
     warnings: tuple[str, ...]
+    counts: dict[int, int] = field(default_factory=dict)
+    default_count: int | None = None
+    unit: str | None = None
+
+
+def _valid_count(count, message: str | None) -> bool:
+    """Check literal counts, never infer them from amounts or other numbers."""
+    if type(count) is not int or not 1 <= count <= 999:
+        return False
+    if message is None:
+        return True
+    words = ('one two three four five six seven eight nine ten eleven twelve thirteen '
+             'fourteen fifteen sixteen seventeen eighteen nineteen twenty').split()
+    words += [f'twenty[ -]{word}' for word in words[:9]] + ['thirty']
+    alternatives = str(count)
+    if count <= len(words):
+        alternatives += '|' + words[count - 1]
+    # Do not find 3 inside 2300, 3.50, or 3,000. Dictated numbers are case insensitive.
+    return re.search(rf'(?<![\w.])(?:{alternatives})(?!\w|[.,]\d)', message, re.IGNORECASE) is not None
+
+
+def _number_after_except(message: str) -> bool:
+    """True when a whole number (digits or a number word) comes after the first except word."""
+    found = _EXCEPT_WORD.search(message)
+    if not found:
+        return False
+    rest = message[found.end():]
+    return any(_valid_count(n, rest) for n in range(1, 31)) or re.search(r"(?<![\w.])\d+(?![\w.,]\d)", rest) is not None
 
 
 def resolve_split(reference: dict | None, candidates, sender: Participant,
@@ -122,7 +160,8 @@ def resolve_split(reference: dict | None, candidates, sender: Participant,
     otherwise every participant. `families` maps participant id -> family label on that trip
     (empty with no trip on, so then a "family" is just the person named). `message` is the raw
     text: with it, two things the model gets wrong are read from the words instead (see
-    asks_for_split and sender_shares). None skips both checks.
+    asks_for_split and sender_shares). Counts must also appear literally in the message;
+    None skips the text checks, but not the 1..999 range check.
 
     Nobody is ever guessed. A name that matches no one, or more than one person, becomes a
     "Couldn't match" warning and the others keep their shares. A reference with keys missing
@@ -130,13 +169,25 @@ def resolve_split(reference: dict | None, candidates, sender: Participant,
     """
     if not reference or reference.get("kind", "none") == "none":
         return SplitResult((), ())
-    if message is not None and not asks_for_split(message):
+    entries = reference.get("people") or ()
+    exceptions = reference.get("except_people") or ()
+    default_count = reference.get("default_count")
+    by_count = default_count is not None or any(
+        isinstance(e, dict) and e.get("count") is not None for e in (*entries, *exceptions))
+    if message is not None and not asks_for_split(message) and not (
+            by_count and _EVERYONE_WORD.search(message)):
         # The model read a split the message never asked for. A personal entry, silently: the
         # message decides.
         return SplitResult((), ())
-    if reference.get("uneven"):
+    if reference.get("uneven") and not by_count:
         # Recording an even split for "split by nights" would be wrong without looking wrong.
         return SplitResult((), (UNEVEN_NOT_BUILT_WARNING,))
+    # The shorthand without a split word is allowed only with trustworthy counts.
+    # Unused defaults are deliberately checked later, after resolving the sharers.
+    if message is not None and not asks_for_split(message) and any(
+            isinstance(e, dict) and e.get('count') is not None
+            and not _valid_count(e['count'], message) for e in (*entries, *exceptions)):
+        return SplitResult((), (COUNT_UNREAD_WARNING,))
     candidates = tuple(candidates)
     warnings = []
 
@@ -148,6 +199,12 @@ def resolve_split(reference: dict | None, candidates, sender: Participant,
         if not name:
             return []
         is_family = not isinstance(entry, str) and entry.get("is_family")
+        # The model is told to drop "'s family", but sometimes returns "Carol's family" as the
+        # name (2 of 5 runs, 2026-11-16), which matches nobody. The wording itself says it is
+        # a family, so strip it and treat the entry as one.
+        family_words = _FAMILY_SUFFIX.match(name.strip())
+        if family_words:
+            name, is_family = family_words.group("name"), True
         person = sender if name.strip().casefold() in _SENDER_WORDS else match_person(name, candidates)
         if person is None:
             warnings.append(NO_MATCH_WARNING.format(name=name))
@@ -159,7 +216,10 @@ def resolve_split(reference: dict | None, candidates, sender: Participant,
 
     # Keyed by id, so naming someone twice (or the sender by name and by "with") is one share.
     people = {}
+    explicit_counts = {}
     kind = reference.get("kind")
+    if kind == "everyone" and entries and message is not None and not _EVERYONE_WORD.search(message):
+        kind = "named"
     if kind == "everyone":
         if not trip_on:
             # Outside a trip "everyone" has no fixed meaning, and the whole directory would be
@@ -167,8 +227,6 @@ def resolve_split(reference: dict | None, candidates, sender: Participant,
             return SplitResult((), (EVERYONE_NEEDS_TRIP_WARNING,))
         people = {p.id: p for p in candidates}
     elif kind == "named":
-        for entry in reference.get("people") or ():
-            people.update((p.id, p) for p in named(entry))
         # "Split with Carol" includes the sender; "split between Carol and Dave" doesn't.
         include_sender = sender_shares(message) if message is not None else None
         if include_sender is None:
@@ -177,21 +235,74 @@ def resolve_split(reference: dict | None, candidates, sender: Participant,
             people[sender.id] = sender
     else:
         return SplitResult((), ())
-    for entry in reference.get("except_people") or ():
-        for p in named(entry):
-            people.pop(p.id, None)
+    # Collective pseudo-names carry the default, never a directory lookup.
+    for entry in entries:
+        count = entry.get('count') if isinstance(entry, dict) else None
+        name = entry if isinstance(entry, str) else entry.get('name', '')
+        if name.strip().casefold() in _COLLECTIVE_WORDS:
+            if _valid_count(count, message):
+                default_count = count
+            elif count is not None:
+                return SplitResult((), (*warnings, COUNT_UNREAD_WARNING))
+            continue
+        if count is not None and not _valid_count(count, message):
+            return SplitResult((), (*warnings, COUNT_UNREAD_WARNING))
+        matched = named(entry)
+        people.update((p.id, p) for p in matched)
+        if isinstance(entry, dict) and entry.get("count") is not None:
+            explicit_counts.update((p.id, entry['count']) for p in matched)
+    excluded = set()
+    counted_exception = False
+    for entry in exceptions:
+        count = entry.get('count') if isinstance(entry, dict) else None
+        matched = named(entry)
+        if _valid_count(count, message):
+            counted_exception = True
+            people.update((p.id, p) for p in matched)
+            explicit_counts.update((p.id, count) for p in matched)
+        elif by_count and message is not None and _number_after_except(message):
+            # "5 nights, everyone except Carol's family who only stayed 4" once came back with
+            # Carol under except and no count (1 of 10 runs, 2026-11-16), which would drop her
+            # family from a bill they share. In a split by count, a number after "except"
+            # probably belongs to someone left out, so refuse rather than guess. A refusal only
+            # costs a warning; a wrong exclusion costs someone's share.
+            return SplitResult((), (*warnings, COUNT_UNREAD_WARNING))
+        else:
+            excluded.update(p.id for p in matched if p.id in people)
+    for pid in excluded:
+        people.pop(pid, None)
+    # A dropped plain exclusion must never silently charge the entire group. An "except" that
+    # came back as a counted sharer is fine: for "everyone except Carol's family who only stayed
+    # 4" the model puts Carol's family at 4 in either list (3 of 5 runs in people, 2026-11-16).
+    # What this still can't catch is a message with both a dropped exclusion and someone else's
+    # count, such as "5 nights, Carol 4, everyone except Dave"; the card shows every sharer.
+    if (message is not None and _EXCEPT_WORD.search(message)
+            and not excluded and not counted_exception and not explicit_counts):
+        return SplitResult((), (*warnings, EXCEPT_UNREAD_WARNING))
     if not people and not warnings:
         warnings.append(NOBODY_SHARES_WARNING)
-    return SplitResult(tuple(people[pid] for pid in sorted(people)), tuple(warnings))
+    counts = {}
+    if by_count:
+        counts = {pid: explicit_counts.get(pid, default_count) for pid in people}
+        # An unused model default is discarded; menu additions use the modal read count.
+        if all(pid in explicit_counts for pid in people):
+            default_count = None
+        if any(not _valid_count(c, message) for c in counts.values()):
+            return SplitResult((), (*warnings, COUNT_UNREAD_WARNING))
+    return SplitResult(tuple(people[pid] for pid in sorted(people)), tuple(warnings),
+                       counts, default_count if by_count else None,
+                       reference.get('count_unit') if by_count else None)
 
 
-def split_shares(amount_cents: int, people) -> tuple[dict, ...]:
-    """An even split of `amount_cents` between `people`, as the rows kept on the pending entry:
-    {"participant_id", "name", "share_cents"}, ordered by participant id. The card draws these
-    rows and Confirm saves them, so what was shown is what is stored."""
+def split_shares(amount_cents: int, people, counts: dict[int, int] | None = None) -> tuple[dict, ...]:
+    """An even or count-weighted split, as the rows kept on the pending entry:
+    {"participant_id", "name", "share_cents"}, ordered by participant id, plus count for counted
+    rows only. The card draws these rows and Confirm saves their cents, so the money shown is
+    the money stored. Missing counts raise rather than silently becoming even shares."""
     people = {p.id: p for p in people}
-    shares = share_out(amount_cents, {pid: 1 for pid in people})
-    return tuple({"participant_id": pid, "name": people[pid].display_name, "share_cents": cents}
+    shares = share_out(amount_cents, {pid: counts[pid] if counts else 1 for pid in people})
+    return tuple({"participant_id": pid, "name": people[pid].display_name, "share_cents": cents,
+                  **({'count': counts[pid]} if counts else {})}
                  for pid, cents in shares.items())
 
 
@@ -208,6 +319,9 @@ def split_shares(amount_cents: int, people) -> tuple[dict, ...]:
 #   everyone      every participant, household first, then A-Z (menu_people)
 #   opened        set once the menu has been opened or the split removed; stops the
 #                 "tick everyone" on first open from happening a second time
+#   counts        participant id -> count, retained even while unticked
+#   default_count, unit  the default and unit read from the message
+#   added_counts  participant id -> warning for guessed counts; only ticked warnings display
 # "Ticked" always means "has a row in pending['split']": there is no second list to drift.
 
 
@@ -270,23 +384,42 @@ def split_rows(pending: dict, participant_ids) -> tuple[dict, ...]:
     people = {p.id: p for p in menu['everyone']}
     people.update((p.id, p) for p in split_people(pending))
     return tuple({**row, 'family': menu['families'].get(row['participant_id'])}
-                 for row in split_shares(menu['amount_cents'], (people[pid] for pid in ids)))
+                 for row in split_shares(menu['amount_cents'], (people[pid] for pid in ids), menu.get('counts')))
 
 
 def _set_split(pending: dict, participant_ids) -> dict:
     """A copy of the entry with exactly these people ticked, and the warnings brought up to date.
 
     Once the ticks really change, the reading warnings ("Couldn't match 'Zed'") go: the menu is
-    now the answer. The uneven-shares warning stays until Confirm, because an even split is still
+    now the answer. Uneven-share and unread-count warnings stay until Confirm, because an even split is still
     not what the message asked for; its wording says "shown as an even split" once anyone is
-    ticked, so the card never says "No split recorded" above a split."""
+    ticked, so the card never says "No split recorded" above a split. Count-addition warnings
+    also persist while their person is ticked, including after unticking and re-ticking them."""
     ids = set(participant_ids)
-    changed = {**pending, 'split': split_rows(pending, ids)}
+    menu = dict(pending['split_menu'])
+    counts = dict(menu.get('counts') or {})
+    added = dict(menu.get('added_counts') or {})
+    if counts or menu.get('default_count') is not None:
+        # Guessed additions never vote for the fallback; only the original reading does.
+        frequencies = Counter(c for pid, c in counts.items() if pid not in added)
+        default = menu.get('default_count') or max(frequencies, key=lambda c: (frequencies[c], c))
+        people = {p.id: p for p in split_people(pending)}
+        for pid in sorted(ids - counts.keys()):
+            counts[pid] = default
+            added[pid] = ADDED_AT_COUNT_WARNING.format(
+                name=people[pid].display_name, count=default,
+                unit=menu.get('unit') or '').replace(' . Check.', '. Check.')
+        menu.update(counts=counts, added_counts=added)
+    changed = {**pending, 'split_menu': menu}
+    changed['split'] = split_rows(changed, ids)
     if ids != {row['participant_id'] for row in pending.get('split') or ()}:
-        uneven = any(w in (UNEVEN_NOT_BUILT_WARNING, UNEVEN_EVEN_SPLIT_WARNING)
-                     for w in pending.get('split_warnings') or ())
-        warning = UNEVEN_EVEN_SPLIT_WARNING if ids else UNEVEN_NOT_BUILT_WARNING
-        changed['split_warnings'] = (warning,) if uneven else ()
+        retained = []
+        for unread, even in ((UNEVEN_NOT_BUILT_WARNING, UNEVEN_EVEN_SPLIT_WARNING),
+                             (COUNT_UNREAD_WARNING, COUNT_EVEN_SPLIT_WARNING)):
+            if any(w in (unread, even) for w in pending.get('split_warnings') or ()):
+                retained.append(even if ids else unread)
+        changed['split_warnings'] = tuple(retained) + tuple(
+            added[pid] for pid in sorted(ids) if pid in added)
     return changed
 
 
@@ -298,7 +431,7 @@ def open_split(pending: dict) -> dict:
     changed = dict(pending)
     if pending.get('trip_id') and not pending.get('split') and not menu.get('opened'):
         changed = _set_split(pending, (p.id for _, members in menu['groups'] for p in members))
-    changed['split_menu'] = {**menu, 'opened': True}
+    changed['split_menu'] = {**changed['split_menu'], 'opened': True}
     return changed
 
 
@@ -326,5 +459,5 @@ def remove_split(pending: dict) -> dict:
     """"Remove split": untick everyone. Also marks the menu as opened, so a later opening
     doesn't tick everyone again and undo the choice."""
     changed = _set_split(pending, ())
-    changed['split_menu'] = {**pending['split_menu'], 'opened': True}
+    changed['split_menu'] = {**changed['split_menu'], 'opened': True}
     return changed

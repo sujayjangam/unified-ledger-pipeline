@@ -33,7 +33,8 @@ production 2026-11-14 after a Neon-branch rehearsal and a backup). Before 0005, 
 no `account_id` were given a card by hand in SQL, one guarded `UPDATE` per `transaction_id`.
 
 **Next action:** group-trip splitting, below: step 3, splits
-(`docs/superpowers/plans/2026-11-16-splits.md`). PR 3 (uneven shares), then PR 2b (an
+(`docs/superpowers/plans/2026-11-16-splits.md`). PR 3 (uneven shares by count, ADR-0042) is
+written and passes the model check, awaiting a test-bot run and merge; then PR 2b (an
 immediate-family group), then aliases per sender (below; moves to after the trip if time runs
 short). Reordered 2026-11-16: the trip's accommodation needs uneven shares, and
 nothing for the trip depends on PR 2b.
@@ -357,7 +358,9 @@ only shared costs they pay get logged. Travel minimum, in build order:
      PR 1 (read, store and show an even split) done 2026-11-16,
      [#101](https://github.com/sujayjangam/unified-ledger-pipeline/pull/101); PR 2, the split menu,
      done 2026-11-16, [#103](https://github.com/sujayjangam/unified-ledger-pipeline/pull/103).
-     The one-person split wording fix has a PR open (2026-11-16). Remaining, in this order: PR 3 (uneven
+     The one-person split wording fix merged 2026-11-16 (#105). PR 3, uneven shares by count
+     (nights), written 2026-11-16 (ADR-0042), awaiting the test bot; fixed amounts wait for a
+     follow-up. Remaining, in this order: PR 3 (uneven
      shares), PR 2b (an immediate-family group), then aliases per sender if time allows.
      - Weighted shares, needed for the trip's accommodation: a 5-night booking where some members
        stay only 4 nights. Ticking people gives only an even split, so the split also needs a

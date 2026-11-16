@@ -16,6 +16,22 @@ TRIP = Trip(7, "Beach Trip", date(2026, 12, 1), date(2026, 12, 7), (1, 2, 3),
 WITH_CAROL = {"kind": "named", "include_sender": True, "people": [{"name": "Carol", "is_family": False}]}
 
 
+@pytest.mark.parametrize('unit,heading', [('nights', 'nights'), (None, 'count'), ('night_units', r'night\_units')])
+async def test_count_card_and_receipt(monkeypatch, directory, unit, heading):
+    """Count shares use the same formatting on the live card and saved receipt."""
+    reference = {'kind': 'named', 'count_unit': unit,
+                 'people': [{'name': 'me', 'count': 3}, {'name': 'Carol', 'count': 2}]}
+    context, pending, text = await _card(monkeypatch, directory, reference,
+        message='Hotel 600 split by nights, me 3 and Carol 2', amount=600)
+    assert f'👥 **Split by {heading} between 2:**' in text
+    assert ' • Alice: 3, 360.00' in text and ' • Carol: 2, 240.00' in text
+    save, saved = await _confirm(monkeypatch, context)
+    assert bot_core._split_lines(pending) in saved
+    assert save.call_args.kwargs['splits'] == [(1, 36000), (3, 24000)]
+    only_carol = {**pending, 'split': [{**pending['split'][1], 'share_cents': 60000}]}
+    assert bot_core._split_lines(only_carol) == '👥 **Split:** Carol owes Alice 600.00\n'
+
+
 async def _card(monkeypatch, directory, reference=None, trip=True, **fields):
     """Show Alice's card and expose its pending snapshot and text."""
     monkeypatch.setattr(bot_core, "_load_active_trip", lambda participant_id: TRIP if trip else None)

@@ -49,6 +49,7 @@ supersedes the old one rather than editing history.
 | [0039](0039-splits-read-by-the-model-worked-out-by-python.md) | The model reads who shares an entry; Python matches the names and hands out the cents | Accepted | 2026-11-16 |
 | [0040](0040-model-as-second-reader-for-the-payer.md) | The model is a second reader for the payer, used only when Python finds nobody | Accepted | 2026-11-16 |
 | [0041](0041-split-menu-and-wider-people-menus.md) | The split menu, and people menus that offer every participant when no trip is on | Accepted | 2026-11-16 |
+| [0042](0042-uneven-shares-by-count.md) | Uneven shares by a count per person, read by the model and checked in Python | Accepted | 2026-11-16 |
 
 ## Writing a new one
 

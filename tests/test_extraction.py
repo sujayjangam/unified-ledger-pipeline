@@ -18,6 +18,20 @@ from app.services.extraction import (
 # (which cards this household actually holds) shouldn't be committed to it.
 
 
+def test_split_count_fields_and_old_defaults():
+    """New count fields are optional so existing references keep their even semantics."""
+    old = extraction.SplitReference(kind='named', include_sender=False,
+                                    people=[{'name': 'Carol', 'is_family': False}],
+                                    except_people=[], uneven=False)
+    assert old.people[0].count is None
+    assert old.default_count is None and old.count_unit is None
+    counted = extraction.SplitReference(kind='everyone', include_sender=True,
+        people=[{'name': 'Carol', 'is_family': True, 'count': 4}],
+        except_people=[], uneven=True, default_count=5, count_unit='nights')
+    assert counted.people[0].count == 4
+    assert counted.default_count == 5 and counted.count_unit == 'nights'
+
+
 def test_valid_full_payload_parses():
     txn = TransactionSchema(
         amount=12.50,
