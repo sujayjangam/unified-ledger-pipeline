@@ -3,7 +3,7 @@ import os
 import uuid
 from dataclasses import replace
 from dotenv import load_dotenv
-from telegram import BotCommand, Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import BotCommand, Update, InlineKeyboardButton, InlineKeyboardMarkup, ForceReply
 from telegram.helpers import escape_markdown
 from telegram.error import BadRequest
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
@@ -14,7 +14,7 @@ from app.add_expense import add_expense, dollars_to_cents, format_cents
 from app.services.utils import get_sgt_now, get_week_start, get_month_start
 from app.services.ledger_queries import (
     get_recent_entries, get_period_summary, get_category_summary, find_recent_duplicate,
-    get_trip_split_entries,
+    get_trip_split_entries, get_trip_settlements, get_trip_currencies,
 )
 from app.services.dates import apply_date_resolution
 from app.database import get_connection
@@ -32,7 +32,10 @@ from app.services.trips import (
     Trip, load_active_trip, trip_families, switch_trip_off, switch_trip_on, member_trips,
     member_trip, banner_message_id, set_banner_message_id, format_trip_dates,
 )
-from app.services.balances import trip_balance_lines
+from app.services.balances import trip_balance_lines, trip_payments, unit_of
+from app.services.settlements import (
+    add_settlement, is_overpayment, settlement_card_text, change_settlement_amount,
+)
 from app.services.help_topics import INTRO as HELP_INTRO, TOPICS as HELP_TOPICS
 
 # use the local windows persmissions
@@ -652,23 +655,31 @@ def _bals_screen(trip: Trip, directory: Directory, today):
     """
     header = f"🧳 {trip.name} · {format_trip_dates(trip, today)}"
     entries = get_trip_split_entries(trip.id)
-    if entries is None:
+    settlements = get_trip_settlements(trip.id)
+    payments = []
+    if entries is None or settlements is None:
         body = [BALS_ERROR]
     else:
         names = {person.id: person.display_name for person in directory.participants}
-        body = trip_balance_lines(entries, names, dict(trip.families))
-    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("Other trip", callback_data="bals:page:0")]])
+        body = trip_balance_lines(entries, names, dict(trip.families), settlements=settlements)
+        payments = trip_payments(entries, dict(trip.families), settlements)
     text = "\n".join([header, "", *body])
     if len(text) > TELEGRAM_MESSAGE_LIMIT:
         # First try the shorter form: every family and every payment, without the people
         # under each family. Nothing that decides who pays whom is lost.
-        body = trip_balance_lines(entries, names, dict(trip.families), show_members=False)
+        body = trip_balance_lines(entries, names, dict(trip.families), show_members=False, settlements=settlements)
         text = "\n".join([header, BALS_FAMILIES_ONLY, "", *body])
     if len(text) > TELEGRAM_MESSAGE_LIMIT:
         # Still too long: keep whole lines from the top and say plainly that it was cut.
         kept = text[:TELEGRAM_MESSAGE_LIMIT - len(BALS_CUT_SHORT) - 1].rsplit("\n", 1)[0]
         text = kept + "\n" + BALS_CUT_SHORT
-    return text, keyboard
+    # A shortened report must not offer invisible payments. Leave room under Telegram's
+    # keyboard limit for Other trip; omitted suggestions remain available after a refresh.
+    rows = [[InlineKeyboardButton(f"Mark paid {n}", callback_data=f"settle:new:{trip.id}:{n}:{p.cents}")]
+            for n, (_, p) in enumerate(payments, 1)
+            if any(line.startswith(f"{n}. ") for line in text.splitlines())][:99]
+    rows.append([InlineKeyboardButton("Other trip", callback_data="bals:page:0")])
+    return text, InlineKeyboardMarkup(rows)
 
 
 async def trip_bals_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -690,7 +701,8 @@ async def trip_bals_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text(BALS_ERROR)
         return
     text, keyboard = _bals_screen(trip, directory, today) if trip else _bals_picker(choices, 0, more, today)
-    await update.effective_message.reply_text(text, reply_markup=keyboard)
+    message = await update.effective_message.reply_text(text, reply_markup=keyboard)
+    _bounded_put(context.user_data.setdefault('bals_reports', {}), message.message_id, directory)
 
 
 async def handle_bals_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -732,6 +744,7 @@ async def handle_bals_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         print(f"Could not answer balances tap: {e}")
     try:
         await query.edit_message_text(text, reply_markup=keyboard)
+        _bounded_put(context.user_data.setdefault('bals_reports', {}), query.message.message_id, directory)
     except Exception as e:
         # Nothing was changed, so a failed redraw (or "message is not modified") loses nothing.
         print(f"Could not redraw balances: {e}")
@@ -1336,10 +1349,220 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             os.remove(temp_filepath)
 
 # typed expense entry - no transcription step, the message body IS the input
+SETTLE_STALE = "Balances changed, open /trip_bals again."
+SETTLE_GONE = "This payback card is no longer available. Open /trip_bals again."
+SETTLE_PROMPTS = {
+    'clears': "Reply with the amount it clears, e.g. 250000",
+    'paid': "Reply with what was handed over, e.g. 50 SGD",
+}
+
+
+class _SettlementUnavailable(Exception):
+    """A refused new card with a specific toast, before the query has been answered."""
+
+
+def _settle_keyboard(card: dict) -> InlineKeyboardMarkup:
+    """Offer Confirm only after an trip member has been picked."""
+    first = []
+    if card['from_id'] is not None:
+        label = ("⚠️ Confirm overpayment" if is_overpayment(card['clears_cents'], card['suggested_cents'])
+                 else "Confirm")
+        first.append(InlineKeyboardButton(label, callback_data="settle:confirm"))
+    first.append(InlineKeyboardButton("Cancel", callback_data="settle:cancel"))
+    # Two buttons per row at most, so the labels aren't cut off on a phone screen.
+    return InlineKeyboardMarkup([first, [
+        InlineKeyboardButton("Other amount", callback_data="settle:clears"),
+        InlineKeyboardButton("Other currency", callback_data="settle:paid"),
+    ], [InlineKeyboardButton("Who paid", callback_data="settle:who")]])
+
+
+def _settle_people(card: dict) -> InlineKeyboardMarkup:
+    """Use the people menu shared with expenses, with owing-unit members first."""
+    return _people_keyboard(card['people'], "settle:person", "settle:back", (card['from_id'],))
+
+
+async def _new_settlement(update, context):
+    """Recheck membership and the numbered suggestion using the report's directory snapshot."""
+    query = update.callback_query
+    directory = context.user_data.get('bals_reports', {}).get(query.message.message_id)
+    if directory is None:
+        await query.answer(SETTLE_STALE)
+        return
+    sender = directory.participant_by_telegram_id(str(update.effective_user.id))
+    if sender is None:
+        await query.answer(SETTLE_GONE)
+        return
+    toast = None
+    try:
+        parts = query.data.split(':')
+        if len(parts) != 5 or not all(p.isascii() and p.isdigit() for p in parts[2:]):
+            raise ValueError("Invalid payback button")
+        trip_id, number, cents = map(int, parts[2:])
+        if not all(0 < value <= 2**63 - 1 for value in (trip_id, number, cents)):
+            raise ValueError("Invalid payback number")
+        trip = _load_bals_trip(sender.id, trip_id)
+        if trip is None:
+            raise _SettlementUnavailable(BALS_NOT_MEMBER)
+        entries, settlements = get_trip_split_entries(trip.id), get_trip_settlements(trip.id)
+        if entries is None or settlements is None:
+            raise _SettlementUnavailable(BALS_ERROR)
+        families = dict(trip.families)
+        payments = trip_payments(entries, families, settlements)
+        if number > len(payments) or payments[number - 1][1].cents != cents:
+            raise _SettlementUnavailable(SETTLE_STALE)
+        currencies = get_trip_currencies(trip.id)
+        if currencies is None:
+            raise _SettlementUnavailable(BALS_ERROR)
+        currency, payment = payments[number - 1]
+        member_ids = ((payment.from_unit[1],) if payment.from_unit[0] == 'person' else
+                      tuple(pid for pid in trip.member_ids if unit_of(pid, families) == payment.from_unit))
+        payer = (payment.from_unit[1] if payment.from_unit[0] == 'person' else
+                 sender.id if sender.id in member_ids else None)
+        card = dict(trip_id=trip.id, trip_name=trip.name, from_id=payer,
+                    to_id=payment.to_unit[1], clears_cents=cents, clears_currency=currency,
+                    paid_cents=cents, paid_currency=currency, suggested_cents=cents,
+                    debtor_member_ids=member_ids, for_id=None, idempotency_key=str(uuid.uuid4()),
+                    date=get_sgt_now().date(), entered_by_participant_id=sender.id,
+                    family=payment.from_unit[1] if payment.from_unit[0] == 'family' else None,
+                    names={p.id: p.display_name for p in directory.participants},
+                    people=tuple(sorted((p for p in directory.participants if p.id in trip.member_ids),
+                                        key=lambda p: (p.id not in member_ids, p.display_name.lower(), p.id))),
+                    currencies=currencies | {e['currency'] for e in entries} | {s['currency'] for s in settlements}
+                    | {s['paid_currency'] for s in settlements} | {'SGD'})
+    except _SettlementUnavailable as e:
+        toast = str(e)
+    except Exception as e:
+        print(f"Could not prepare payback: {e}")
+        toast = BALS_ERROR
+    # Answer outside the read's try block: a failed Telegram answer must never be retried.
+    await query.answer(toast)
+    if toast:
+        return
+    message = await query.message.reply_text(settlement_card_text(card),
+                                            reply_markup=_settle_keyboard(card) if payer else _settle_people(card))
+    _bounded_put(context.user_data.setdefault('pending_settlements', {}), message.message_id, card)
+
+
+async def handle_settle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle payback cards separately from expenses, with one answer and one lock per tap."""
+    query = update.callback_query
+    if query.data.startswith('settle:new:'):
+        await _new_settlement(update, context)
+        return
+    if query.data == 'settle:saving':
+        await query.answer("⏳ Saving...")
+        return
+    async with _card_lock(context, query.message.message_id):
+        await _settle_tap(query, context)
+
+
+async def _settle_tap(query, context):
+    """Change or save this payback while holding its lock; never reload the directory."""
+    message_id = query.message.message_id
+    outcome = _card_outcome(context, message_id)
+    if outcome:
+        await query.answer("✅ Payback already saved." if outcome == 'saved' else "❌ Cancelled.")
+        return
+    pending = context.user_data.setdefault('pending_settlements', {})
+    card = pending.get(message_id)
+    if card is None:
+        await query.answer(SETTLE_GONE)
+        return
+    action = query.data.removeprefix('settle:')
+    if action == 'confirm':
+        if card['from_id'] not in {p.id for p in card['people']}:
+            await query.answer("Choose who paid first.")
+            return
+        await query.answer()
+        # Keep state until the progress redraw succeeds. A Telegram failure must not lose it.
+        await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("⏳ Saving...", callback_data="settle:saving")]]))
+        pending.pop(message_id)
+        try:
+            add_settlement(from_id=card['from_id'], to_id=card['to_id'], for_id=card['for_id'],
+                           clears_amount=format_cents(card['clears_cents']), clears_currency=card['clears_currency'],
+                           paid_amount=format_cents(card['paid_cents']), paid_currency=card['paid_currency'],
+                           trip_id=card['trip_id'], date=card['date'], source="telegram_bot",
+                           entered_by_participant_id=card['entered_by_participant_id'],
+                           idempotency_key=card['idempotency_key'])
+        except Exception as e:
+            print(f"Could not save payback: {e}")
+            _bounded_put(pending, message_id, card)
+            await query.edit_message_text(settlement_card_text(card) + "\nCouldn't save. Try Confirm again.",
+                                          reply_markup=_settle_keyboard(card))
+            return
+        # False from the writer means this key was saved before: it is still a success.
+        _mark_card_resolved(context, message_id, 'saved')
+        await query.edit_message_text(settlement_card_text(card) + "\n✅ Payback saved.", reply_markup=None)
+        return
+    if action == 'cancel':
+        await query.answer()
+        await query.edit_message_text(settlement_card_text(card) + "\n❌ Cancelled.", reply_markup=None)
+        pending.pop(message_id)
+        _mark_card_resolved(context, message_id, 'cancelled')
+        return
+    if action in ('clears', 'paid'):
+        await query.answer()
+        message = await query.message.reply_text(SETTLE_PROMPTS[action], reply_markup=ForceReply(selective=True))
+        _bounded_put(context.user_data.setdefault('settlement_prompts', {}), message.message_id,
+                     (message_id, action))
+        return
+    changed = dict(card)
+    if action.startswith('person:'):
+        value = action.removeprefix('person:')
+        if not value.isascii() or not value.isdigit() or int(value) not in {p.id for p in card['people']}:
+            await query.answer("Choose someone from this trip.")
+            return
+        changed['from_id'] = int(value)
+        changed['for_id'] = (None if int(value) in card['debtor_member_ids']
+                             else min(card['debtor_member_ids']))
+    elif action not in ('who', 'back'):
+        await query.answer(SETTLE_GONE)
+        return
+    await query.answer()
+    keyboard = _settle_people(changed) if action == 'who' else _settle_keyboard(changed)
+    await query.edit_message_text(settlement_card_text(changed), reply_markup=keyboard)
+    pending[message_id] = changed  # Only remember what Telegram actually showed.
+
+
+async def _settlement_reply(update, context) -> bool:
+    """Consume replies to amount prompts before expense extraction, even on finished cards."""
+    message = update.message
+    replied = message.reply_to_message
+    link = context.user_data.get('settlement_prompts', {}).get(replied.message_id) if replied else None
+    if link is None:
+        # Prompt links are bounded and disappear on restart. Their bot-authored wording
+        # still tells us this is a payback reply, never a fresh expense to extract.
+        if (replied and replied.text in SETTLE_PROMPTS.values() and replied.from_user
+                and replied.from_user.id == context.bot.id):
+            await message.reply_text(SETTLE_GONE)
+            return True
+        return False
+    card_id, side = link
+    async with _card_lock(context, card_id):
+        card = context.user_data.get('pending_settlements', {}).get(card_id)
+        if card is None:
+            await message.reply_text(SETTLE_GONE)
+            return True
+        try:
+            changed = change_settlement_amount(card, message.text, side)
+        except ValueError as e:
+            await message.reply_text(str(e))
+            return True
+        await context.bot.edit_message_text(chat_id=message.chat_id, message_id=card_id,
+                                            text=settlement_card_text(changed), reply_markup=_settle_keyboard(changed))
+        context.user_data['pending_settlements'][card_id] = changed
+    return True
+
+
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Passes a plain text message through the same pipeline a voice note uses."""
     directory = await authorize(update)
     if directory is None:
+        return
+    # Authorize first (every message, fail closed), then check whether this text is a reply
+    # to a payback amount prompt. Such a reply is never an expense, so it stops here.
+    if await _settlement_reply(update, context):
         return
 
     status_msg = await update.message.reply_text("🧠 Extracting data...")
@@ -1773,6 +1996,7 @@ def get_application():
     # handler for buttons
     app.add_handler(CallbackQueryHandler(handle_trip_button, pattern=r"^trip:"))
     app.add_handler(CallbackQueryHandler(handle_bals_button, pattern=r"^bals:"))
+    app.add_handler(CallbackQueryHandler(handle_settle_button, pattern=r"^settle:"))
     app.add_handler(CallbackQueryHandler(handle_payer_button, pattern=r"^payer:"))
     app.add_handler(CallbackQueryHandler(handle_split_button, pattern=r"^split:"))
     app.add_handler(CallbackQueryHandler(handle_help_button, pattern=r"^help:"))

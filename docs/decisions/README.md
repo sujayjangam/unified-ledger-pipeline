@@ -53,6 +53,8 @@ supersedes the old one rather than editing history.
 | [0043](0043-everyday-groups-for-the-split-menu.md) | Everyday groups for the split menu, and no relationships between people | Accepted | 2026-11-17 |
 | [0044](0044-trip-balances-from-splits.md) | Trip balances worked out from the splits, and totals stay "what was paid" | Accepted | 2026-11-17 |
 | [0045](0045-family-labels-the-rest-and-stricter-wording.md) | Family labels, "the rest", and stricter wording over a model double-check | Accepted | 2026-11-17 |
+| [0046](0046-settlements-as-their-own-records.md) | Paybacks are their own records, and can be in a different currency | Accepted | 2026-11-17 |
+| [0047](0047-pay-back-only-who-you-owe.md) | Pay back only who you owe, and paying on someone's behalf | Accepted | 2026-11-17 |
 
 ## Writing a new one
 

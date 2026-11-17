@@ -142,6 +142,33 @@ inserted and written in the same database transaction as the entry, only when it
   (`ck_transaction_splits_share_not_negative`)
 - Primary key: (`transaction_id`, `participant_id`)
 
+## settlements (revision `0009_add_settlements`)
+
+One person-to-person payback, separate from spending (ADR-0046). The clears side reduces
+trip debt; the paid side records what changed hands, with no exchange-rate lookup.
+
+- **id**: BIGINT GENERATED ALWAYS AS IDENTITY, primary key
+- **trip_id**: BIGINT, nullable, FK → `trips.id`; indexed by `ix_settlements_trip_id`
+- **from_participant_id**, **to_participant_id**: BIGINT, NOT NULL, FK → `participants.id`;
+  must differ (`ck_settlements_different_people`)
+- **for_participant_id**: BIGINT, nullable, FK → `participants.id`; a member of the unit
+  whose debt this gift clears (ADR-0047). NULL means the payer's unit. Must differ from
+  `to_participant_id` (`ck_settlements_different_beneficiary`).
+- **clears_cents**, **paid_cents**: BIGINT, NOT NULL, positive whole cents
+  (`ck_settlements_positive_clears`, `ck_settlements_positive_paid`)
+- **clears_currency**, **paid_currency**: TEXT, NOT NULL. When equal, the amounts must be
+  equal too (`ck_settlements_same_currency_amount`).
+- **date**: DATE, NOT NULL, business date
+- **created_at**: TIMESTAMPTZ, NOT NULL, `DEFAULT now()`, write time only
+- **entered_by_participant_id**: BIGINT, nullable, FK → `participants.id`
+- **source**: TEXT, NOT NULL; the bot writes `telegram_bot`
+- **note**: TEXT, nullable
+- **idempotency_key**: TEXT, NOT NULL, UNIQUE (`uq_settlements_idempotency_key`)
+
+Overpayments are allowed: the excess is owed back to the person who paid. The writer checks
+positive money, different people and equal same-currency amounts before connecting. Retries
+use `ON CONFLICT (idempotency_key) DO NOTHING`; paybacks never affect spending totals.
+
 ## Business date vs. write time
 
 `date` and `created_at` answer different questions and must not be substituted for each other:
