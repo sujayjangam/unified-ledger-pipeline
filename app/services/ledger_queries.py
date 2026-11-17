@@ -113,3 +113,51 @@ def get_category_summary(start_date: str, end_date: str):
     except Exception as e:
         print(f"❌ Query Error: {e}")
         return []
+
+
+def get_trip_split_entries(trip_id: int):
+    """Every split entry tagged to one trip, in the shape app/services/balances.py reads.
+
+    Returns a list of dicts, oldest first:
+      {transaction_id, date, description, amount, currency, paid_by, splits: {participant id: cents}}
+    An empty list means the trip has no split entries. None means the read FAILED, so the
+    caller can say so; a failure must never be shown as "nobody owes anything".
+
+    Only entries with at least one row in transaction_splits come back (the inner JOIN): an
+    entry with no split is the payer's alone and moves no balance.
+
+    paid_by: who paid. When paid_by_participant_id is NULL ("not recorded": an old row given
+    its splits by hand in SQL) it is read the way docs/SCHEMA.md says: the account's owner,
+    or the sender for an unowned account such as Cash. It can still come back None, and
+    unit_balances then hands that entry back instead of counting it.
+
+    Money stays in the entry's own currency (amount, not base_amount): no FX conversion.
+    """
+    try:
+        with get_connection() as conn:
+            rows = conn.execute(text('''
+                SELECT t.transaction_id, t.date, t.description, t.amount, t.currency,
+                       COALESCE(t.paid_by_participant_id, a.owner_participant_id,
+                                t.entered_by_participant_id) AS paid_by,
+                       s.participant_id, s.share_cents
+                FROM transactions t
+                JOIN transaction_splits s ON s.transaction_id = t.transaction_id
+                JOIN accounts a ON a.id = t.account_id
+                WHERE t.trip_id = :trip_id
+                ORDER BY t.date, t.created_at, t.transaction_id, s.participant_id
+            '''), {"trip_id": trip_id}).fetchall()
+    except Exception as e:
+        print(f"❌ Query Error: {e}")
+        return None
+
+    # The query gives one row per share, so an entry split three ways arrives as three rows.
+    # Fold them back into one dict per entry. A dict keeps insertion order, so the entries
+    # stay in the order the query sorted them.
+    entries = {}
+    for transaction_id, date, description, amount, currency, paid_by, participant_id, share_cents in rows:
+        entry = entries.setdefault(transaction_id, {
+            "transaction_id": transaction_id, "date": date, "description": description,
+            "amount": amount, "currency": currency, "paid_by": paid_by, "splits": {},
+        })
+        entry["splits"][participant_id] = share_cents
+    return list(entries.values())

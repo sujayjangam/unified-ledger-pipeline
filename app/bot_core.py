@@ -12,7 +12,10 @@ import tempfile
 import time
 from app.add_expense import add_expense, dollars_to_cents, format_cents
 from app.services.utils import get_sgt_now, get_week_start, get_month_start
-from app.services.ledger_queries import get_recent_entries, get_period_summary, get_category_summary, find_recent_duplicate
+from app.services.ledger_queries import (
+    get_recent_entries, get_period_summary, get_category_summary, find_recent_duplicate,
+    get_trip_split_entries,
+)
 from app.services.dates import apply_date_resolution
 from app.database import get_connection
 from app.services.participants import (
@@ -27,8 +30,9 @@ from app.services.splits import (
 )
 from app.services.trips import (
     Trip, load_active_trip, trip_families, switch_trip_off, switch_trip_on, member_trips,
-    banner_message_id, set_banner_message_id, format_trip_dates,
+    member_trip, banner_message_id, set_banner_message_id, format_trip_dates,
 )
+from app.services.balances import trip_balance_lines
 
 # use the local windows persmissions
 truststore.inject_into_ssl()
@@ -286,6 +290,7 @@ BOT_COMMANDS = [
     BotCommand("cat_week", "This week's categories"),
     BotCommand("cat_month", "This month's categories"),
     BotCommand("trip", "Change your trip mode"),
+    BotCommand("trip_bals", "Who owes whom on a trip"),
 ]
 
 
@@ -534,6 +539,156 @@ async def handle_trip_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
     print(f"Trip tap {action}: auth {_ms(started, authed)}, db {_ms(authed, db_done)}, "
           f"answer {_ms(db_done, answered)}, redraw {_ms(answered, redrawn)}, "
           f"banner {_ms(redrawn, time.perf_counter())}")
+
+
+# --- /trip_bals: who owes whom on one trip --------------------------------------------------
+#
+# Read-only: it changes nothing in the database and holds no pending entry, so it needs no
+# card lock. The maths is in app/services/balances.py; this part only picks the trip, reads
+# the entries and shows the lines.
+
+BALS_ERROR = "❌ Couldn't work out the balances, try again."
+BALS_NOT_MEMBER = "You're not on that trip."
+# Telegram refuses a message longer than this, and a refused reply would look like a dead
+# command. So a long report is shortened here rather than sent and lost.
+TELEGRAM_MESSAGE_LIMIT = 4096
+BALS_FAMILIES_ONLY = "(Too long to list who is owed under each family, so totals and payments only.)"
+BALS_CUT_SHORT = "… (Too long to show in full.)"
+
+
+def _load_bals_trip(participant_id: int, trip_id: int | None) -> Trip | None:
+    """The trip to show balances for, with its members' families, or None.
+
+    trip_id None means "the trip this person has switched on". A trip id (from a button) is
+    loaded only if this person is a member of it. Its own function, like _load_directory, so
+    tests can swap it out without a database.
+    """
+    with get_connection() as conn:
+        if trip_id is None:
+            trip = load_active_trip(conn, participant_id)
+        else:
+            trip = member_trip(conn, participant_id, trip_id)
+        if trip is None:
+            return None
+        families = trip_families(conn, trip.id)
+        return replace(trip, member_ids=tuple(pid for pid, _ in families), families=families)
+
+
+def _load_bals_choices(participant_id: int, offset: int):
+    """One page of this person's trips for the picker, newest first: (trips, more to come)."""
+    with get_connection() as conn:
+        return member_trips(conn, participant_id, offset, TRIP_PAGE_SIZE)
+
+
+def _bals_picker(choices, offset: int, more: bool, today):
+    """The "which trip?" message: one button per trip, paged like /trip's menu. Callback data
+    holds only a trip id or a page offset, never a name."""
+    if not choices and offset == 0:
+        return "You're not on any trips yet.", None
+    rows = [[InlineKeyboardButton(f"{trip.name} · {format_trip_dates(trip, today)}",
+                                  callback_data=f"bals:show:{trip.id}")] for trip in choices]
+    paging = []
+    if offset > 0:
+        paging.append(InlineKeyboardButton("◂ Newer", callback_data=f"bals:page:{max(0, offset - TRIP_PAGE_SIZE)}"))
+    if more:
+        paging.append(InlineKeyboardButton("Older ▸", callback_data=f"bals:page:{offset + TRIP_PAGE_SIZE}"))
+    if paging:
+        rows.append(paging)
+    return "Which trip's balances?", InlineKeyboardMarkup(rows)
+
+
+def _bals_screen(trip: Trip, directory: Directory, today):
+    """The balances message for one trip, and the button under it.
+
+    Sent as plain text (no parse_mode), so a name with _ or * can't break it and it can be
+    forwarded as it is. get_trip_split_entries catches its own errors and returns None for a
+    failed read, which is shown as an error and never as "nobody owes anything".
+    """
+    header = f"🧳 {trip.name} · {format_trip_dates(trip, today)}"
+    entries = get_trip_split_entries(trip.id)
+    if entries is None:
+        body = [BALS_ERROR]
+    else:
+        names = {person.id: person.display_name for person in directory.participants}
+        body = trip_balance_lines(entries, names, dict(trip.families))
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("Other trip", callback_data="bals:page:0")]])
+    text = "\n".join([header, "", *body])
+    if len(text) > TELEGRAM_MESSAGE_LIMIT:
+        # First try the shorter form: every family and every payment, without the people
+        # under each family. Nothing that decides who pays whom is lost.
+        body = trip_balance_lines(entries, names, dict(trip.families), show_members=False)
+        text = "\n".join([header, BALS_FAMILIES_ONLY, "", *body])
+    if len(text) > TELEGRAM_MESSAGE_LIMIT:
+        # Still too long: keep whole lines from the top and say plainly that it was cut.
+        kept = text[:TELEGRAM_MESSAGE_LIMIT - len(BALS_CUT_SHORT) - 1].rsplit("\n", 1)[0]
+        text = kept + "\n" + BALS_CUT_SHORT
+    return text, keyboard
+
+
+async def trip_bals_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/trip_bals: the balances of the trip that is switched on, else a list of trips to tap.
+
+    Nothing is typed after the command; anything typed there is ignored.
+    """
+    directory = await authorize(update)
+    if directory is None:
+        return
+    sender = directory.participant_by_telegram_id(str(update.effective_user.id))
+    today = get_sgt_now().date()
+    try:
+        trip = _load_bals_trip(sender.id, None)
+        if trip is None:
+            choices, more = _load_bals_choices(sender.id, 0)
+    except Exception as e:
+        print(f"Could not load trip balances: {e}")
+        await update.effective_message.reply_text(BALS_ERROR)
+        return
+    text, keyboard = _bals_screen(trip, directory, today) if trip else _bals_picker(choices, 0, more, today)
+    await update.effective_message.reply_text(text, reply_markup=keyboard)
+
+
+async def handle_bals_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """A tap under /trip_bals: "bals:show:<trip id>" or "bals:page:<offset>".
+
+    A callback query can be answered exactly once, so everything is read and the reply is
+    built first; then one answer(), then the redraw.
+    """
+    query = update.callback_query
+    directory = await authorize(update)
+    if directory is None:
+        await query.answer()
+        return
+    sender = directory.participant_by_telegram_id(str(update.effective_user.id))
+    today = get_sgt_now().date()
+    toast = None
+    try:
+        parts = query.data.split(":")
+        action, value = parts[1], int(parts[2])
+        if len(parts) != 3 or action not in ("show", "page") or not 0 <= value <= 2**63 - 1:
+            raise ValueError("Invalid balances callback")
+        trip = _load_bals_trip(sender.id, value) if action == "show" else None
+        if trip is not None:
+            text, keyboard = _bals_screen(trip, directory, today)
+        else:
+            # A page of the picker; also where a tap on a trip this person isn't on lands.
+            offset = value if action == "page" else 0
+            if action == "show":
+                toast = BALS_NOT_MEMBER
+            choices, more = _load_bals_choices(sender.id, offset)
+            text, keyboard = _bals_picker(choices, offset, more, today)
+    except Exception as e:
+        print(f"Could not load trip balances: {e}")
+        await query.answer(BALS_ERROR)
+        return
+    try:
+        await query.answer(toast)
+    except Exception as e:
+        print(f"Could not answer balances tap: {e}")
+    try:
+        await query.edit_message_text(text, reply_markup=keyboard)
+    except Exception as e:
+        # Nothing was changed, so a failed redraw (or "message is not modified") loses nothing.
+        print(f"Could not redraw balances: {e}")
 
 
 # Both caches below live in context.user_data (per Telegram user, pure process memory - the
@@ -1550,6 +1705,7 @@ def get_application():
     app.add_handler(CommandHandler("cat_week", cat_week_command))
     app.add_handler(CommandHandler("cat_month", cat_month_command))
     app.add_handler(CommandHandler("trip", trip_command))
+    app.add_handler(CommandHandler("trip_bals", trip_bals_command))
 
     # voice handler
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
@@ -1569,6 +1725,7 @@ def get_application():
 
     # handler for buttons
     app.add_handler(CallbackQueryHandler(handle_trip_button, pattern=r"^trip:"))
+    app.add_handler(CallbackQueryHandler(handle_bals_button, pattern=r"^bals:"))
     app.add_handler(CallbackQueryHandler(handle_payer_button, pattern=r"^payer:"))
     app.add_handler(CallbackQueryHandler(handle_split_button, pattern=r"^split:"))
     app.add_handler(CallbackQueryHandler(handle_button_click))

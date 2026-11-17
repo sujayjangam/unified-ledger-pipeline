@@ -51,6 +51,7 @@ supersedes the old one rather than editing history.
 | [0041](0041-split-menu-and-wider-people-menus.md) | The split menu, and people menus that offer every participant when no trip is on | Accepted | 2026-11-16 |
 | [0042](0042-uneven-shares-by-count.md) | Uneven shares by a count per person, read by the model and checked in Python | Accepted | 2026-11-16 |
 | [0043](0043-everyday-groups-for-the-split-menu.md) | Everyday groups for the split menu, and no relationships between people | Accepted | 2026-11-17 |
+| [0044](0044-trip-balances-from-splits.md) | Trip balances worked out from the splits, and totals stay "what was paid" | Accepted | 2026-11-17 |
 
 ## Writing a new one
 
