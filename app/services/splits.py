@@ -27,6 +27,9 @@ ADDED_AT_COUNT_WARNING = "⚠️ {name} added at {count} {unit}. Check."
 EXCEPT_UNREAD_WARNING = "⚠️ Couldn't tell who is left out. No split recorded."
 COUNT_UNREAD_WARNING = "⚠️ Couldn't read a count for everyone. No split recorded."
 COUNT_EVEN_SPLIT_WARNING = "⚠️ Couldn't read a count for everyone. Shown as an even split."
+# A count was read loosely: a payer's count dropped though it wasn't in their paying clause, or
+# a missing count taken from a number in another clause. The split stands; the card asks.
+CHECK_COUNT_WARNING = "⚠️ Check {name}'s {unit}."
 
 # Words that mean the sender. A 'me' entry carries their explicit count, while
 # include_sender alone includes them without specifying a count.
@@ -273,6 +276,16 @@ def _rest_count(message: str) -> int | None:
     return numbers[0] if len(numbers) == 1 else None
 
 
+def _clause(message: str, found: re.Match) -> str:
+    """The clause a match sits in: the text between the clause ends either side of it (see
+    _CLAUSE_END), so in "Carol paid 600 for the villa, stayed 4 nights" Carol's clause is
+    "Carol paid 600 for the villa"."""
+    ends = [m.start() for m in _CLAUSE_END.finditer(message)]
+    start = max((e + 1 for e in ends if e < found.start()), default=0)
+    stop = min((e for e in ends if e >= found.end()), default=len(message))
+    return message[start:stop]
+
+
 def _names_a_count(reference: dict) -> bool:
     """True when the model gave a count to someone it named, not just to "the rest"."""
     def name(e):
@@ -281,7 +294,7 @@ def _names_a_count(reference: dict) -> bool:
                for e in (*(reference.get("people") or ()), *(reference.get("except_people") or ())))
 
 
-def _reread(reference: dict, message: str, trip_on: bool) -> dict:
+def _reread(reference: dict, message: str, trip_on: bool) -> tuple[dict, list[tuple[str, int]]]:
     """The model's split_reference with two misreadings fixed from the words (2026-11-17).
 
     Measured on 10 runs of "Carol paid 2717.84 for 6 nights. Reds only staying 5 nights. Rest
@@ -292,16 +305,25 @@ def _reread(reference: dict, message: str, trip_on: bool) -> dict:
       2. The rest's 6 was left out in 6 runs. A count read from the rest word's clause becomes
          the default, over the model's. With a trip on and no "between"/"split with" list of
          sharers, "the rest" means the whole trip.
-    Returns a copy; the model's dict is never changed.
+    Returns a copy (the model's dict is never changed) and the names whose count was dropped
+    although it wasn't in their paying clause, which get a CHECK_COUNT_WARNING line: in "Carol
+    paid 600 for the villa, stayed 4 nights" the 4 may well be Carol's.
     """
     reference = dict(reference)
     # Checked before the payer's count is stripped.
     named_counted = _names_a_count(reference)
+    unsure = []
 
     def fixed(entry):
         name = entry if isinstance(entry, str) else entry.get("name") or ""
         if (isinstance(entry, dict) and entry.get("count") is not None
                 and _only_paying(name, message, entry["count"])):
+            # "Carol paid ... for 6 nights": the 6 sits in the paying clause, so it is the
+            # bill's length and dropping it is safe. A count from anywhere else is a guess
+            # either way, so it is still dropped, but the card asks for a check.
+            if not any(entry["count"] in _numbers(_clause(message, f))
+                       for f in _mentions(name, message)):
+                unsure.append((name, entry["count"]))
             return {**entry, "count": None}
         return entry
 
@@ -319,7 +341,7 @@ def _reread(reference: dict, message: str, trip_on: bool) -> dict:
         # "the rest" there is the rest of that list, not the trip.
         if trip_on and reference.get("kind") in ("named", "everyone") and sender_shares(message) is None:
             reference["kind"] = "everyone"
-    return reference
+    return reference, unsure
 
 
 def _number_after_except(message: str) -> bool:
@@ -351,8 +373,10 @@ def resolve_split(reference: dict | None, candidates, sender: Participant,
     # person's count, so "Dinner with the others 80" stays a personal entry.
     says_everyone = message is not None and bool(
         _EVERYONE_WORD.search(message) or (_REST_WORD.search(message) and _names_a_count(reference)))
+    unsure = []
     if message is not None:
-        reference = _reread(reference, message, trip_on)
+        reference, unsure = _reread(reference, message, trip_on)
+    unit = reference.get('count_unit') or "count"
     entries = reference.get("people") or ()
     exceptions = reference.get("except_people") or ()
     default_count = reference.get("default_count")
@@ -450,9 +474,17 @@ def resolve_split(reference: dict | None, candidates, sender: Participant,
         if count is None and by_count and message is not None and name:
             # The model listed this sharer but dropped their count; take the first number
             # after their name in the message (see _count_after).
-            count = _count_after(_FAMILY_SUFFIX.sub(r"\g<name>", name.strip()).removesuffix("'s"), message)
+            said = _FAMILY_SUFFIX.sub(r"\g<name>", name.strip()).removesuffix("'s")
+            count = _count_after(said, message)
             if count is not None:
                 entry = {**entry, 'count': count} if isinstance(entry, dict) else {'name': entry, 'count': count}
+                # "Carol and Erin 4" gives Erin the 4 in her own clause, which is safe. In
+                # "split between Carol, Dave and Erin. Carol 2, the rest 3" the first number
+                # after Dave is Carol's 2, in another clause, so the card asks for a check.
+                own = next((f for f in _mentions(said, message) if not _is_paying(f, message)), None)
+                line = CHECK_COUNT_WARNING.format(name=name, unit=unit)
+                if own is not None and count not in _numbers(_clause(message, own)) and line not in warnings:
+                    warnings.append(line)
         matched = named(entry)
         people.update((p.id, p) for p in matched)
         if isinstance(entry, dict) and entry.get("count") is not None:
@@ -511,6 +543,11 @@ def resolve_split(reference: dict | None, candidates, sender: Participant,
             # Carol and Dave" came back as 4 each (7 of 10 runs, 2026-11-16): the same cents,
             # but the card would say "split by count". An even split is what was meant.
             by_count, counts = False, {}
+    # A payer whose dropped count is the one they end up with anyway ("Carol paid ...", her
+    # family 5, the model gave her 5) lost nothing, so only a count that changed is flagged.
+    checks = [CHECK_COUNT_WARNING.format(name=name, unit=unit) for name, count in dict.fromkeys(unsure)
+              if (person := match_person(name, candidates)) is None or counts.get(person.id) != count]
+    warnings = [*checks, *warnings]
     return SplitResult(tuple(people[pid] for pid in sorted(people)), tuple(warnings),
                        counts, default_count if by_count else None,
                        reference.get('count_unit') if by_count else None)

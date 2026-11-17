@@ -133,7 +133,11 @@ Env vars (`.env.example` shows the format):
   two numbers or says "2 others" ("the rest of the airbnb" is not a rest word). It is read only
   beside a named person's count, so "dinner with the others 80" stays personal. With a trip on
   and no "between"/"split with" list, "the rest" makes the split the whole trip
-  (`_rest_count`, `_reread`). A fixed
+  (`_rest_count`, `_reread`). A count read loosely gets `CHECK_COUNT_WARNING`, never silence:
+  a payer's dropped count that wasn't in their paying clause and differs from the count they
+  end up with, or a missing count filled from a number in another clause. Every `/help`
+  example (`app/services/help_topics.py`) is also a case in `scripts/check_extraction.py`;
+  change one only with the other. A fixed
   amount or percentage, or a sharer left without a count, gets a warning and no split, never a
   wrong even one. An even split set in the menu
   keeps that warning, reworded, until Confirm. Transfers and YouTrip top-ups are never split.

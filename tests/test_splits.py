@@ -630,3 +630,68 @@ def test_amount_after_a_name_is_not_a_count():
     """"Carol 2717.84" has no count: neither 2717 nor 84 stands alone."""
     from app.services.splits import _count_after
     assert _count_after("Carol", "Carol 2717.84 for the airbnb") is None
+
+
+# ---- "⚠️ Check …" when a count was read loosely ----
+
+def test_payer_count_outside_the_paying_clause_asks_for_a_check():
+    """"Carol paid 600 for the villa, stayed 4 nights": the 4 isn't in the paying clause, so it
+    may be Carol's. It is still dropped (the rule stands), but the card asks for a check."""
+    result = _trip({"kind": "everyone", "uneven": True, "count_unit": "nights",
+                    "people": [{"name": "Carol", "count": 4}]},
+                   "Carol paid 600 for the villa, stayed 4 nights. Rest all 6 nights.")
+    assert result.warnings == ("⚠️ Check Carol's nights.",)
+
+
+def test_payer_count_inside_the_paying_clause_is_dropped_quietly():
+    """The real message: "Carol paid ... for 6 nights" is the bill's length, so no check line."""
+    result = _trip({"kind": "everyone", "count_unit": "nights",
+                    "people": [{"name": "Carol", "count": 6}, {"name": "Reds", "count": 5},
+                               {"name": "Blues", "count": 5}]}, _STAY)
+    assert result.counts == _STAY_COUNTS and not result.warnings
+
+
+def test_count_borrowed_from_another_clause_asks_for_a_check():
+    """"Split between Bob, Dave and Fay. Bob 2, the rest 3": the first number after Dave and
+    Fay is Bob's 2, from another clause, so each of them gets a check line."""
+    result = _trip({"kind": "named", "uneven": True, "count_unit": "nights",
+                    "people": [{"name": "Bob", "count": 2}, {"name": "Dave"}, {"name": "Fay"}]},
+                   "Villa 600 split between Bob, Dave and Fay. Bob 2, the rest 3.")
+    assert result.warnings == ("⚠️ Check Dave's nights.", "⚠️ Check Fay's nights.")
+
+
+def test_count_from_the_same_clause_needs_no_check():
+    """"Carol and Erin 4": Erin's 4 is in her own clause, so filling it in is safe."""
+    result = _trip({"kind": "named", "count_unit": "nights",
+                    "people": [{"name": "Bob", "count": 5}, {"name": "Carol", "count": 4}, {"name": "Erin"}]},
+                   "Airbnb 2300, split by nights: Bob 5, Carol and Erin 4")
+    assert result.counts == {2: 5, 3: 4, 5: 4} and not result.warnings
+
+
+def test_check_line_without_a_unit_says_count():
+    result = _trip({"kind": "everyone", "uneven": True, "people": [{"name": "Carol", "count": 4}]},
+                   "Carol paid 600 for the villa, stayed 4. Rest all 6.")
+    assert result.warnings == ("⚠️ Check Carol's count.",)
+
+
+# The two /help examples (app/services/help_topics.py) that only this branch's rules read.
+@pytest.mark.parametrize("message, reference, counts", [
+    ("Airbnb 900 split by nights. Reds 5 nights, rest all 6 nights.",
+     {"kind": "everyone", "people": [{"name": "Reds", "count": 5}]},
+     {1: 6, 2: 6, 3: 5, 4: 5, 5: 6, 6: 6}),
+    ("Carol paid 600 for her 4 nights. Rest all stay 6 nights.",
+     {"kind": "everyone", "people": [{"name": "Carol", "count": 4}]},
+     {1: 6, 2: 6, 3: 4, 4: 6, 5: 6, 6: 6}),
+])
+def test_help_examples_split_as_the_help_says(message, reference, counts):
+    result = _trip({**reference, "count_unit": "nights"}, message)
+    assert result.counts == counts and not result.warnings
+
+
+def test_payer_count_that_ends_up_the_same_needs_no_check():
+    """The model gave the payer her family's 5, outside her paying clause; she shares at 5
+    anyway, so nothing was lost and the card stays quiet."""
+    result = _trip({"kind": "everyone", "count_unit": "nights",
+                    "people": [{"name": "Carol", "count": 5}, {"name": "Reds", "count": 5},
+                               {"name": "Blues", "count": 5}]}, _STAY)
+    assert result.counts == _STAY_COUNTS and not result.warnings

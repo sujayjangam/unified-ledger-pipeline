@@ -33,6 +33,7 @@ from app.services.trips import (
     member_trip, banner_message_id, set_banner_message_id, format_trip_dates,
 )
 from app.services.balances import trip_balance_lines
+from app.services.help_topics import INTRO as HELP_INTRO, TOPICS as HELP_TOPICS
 
 # use the local windows persmissions
 truststore.inject_into_ssl()
@@ -114,6 +115,50 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print(f"DEBUG: Connection from {username} (ID: {user_id})")
     
     await update.message.reply_text(f"Hello {username}! Your ID is authorized by admin. Send me a voice note to get started.")
+
+
+HELP_UNKNOWN_TOAST = "That help page is gone. Send /help again."
+
+
+def _help_screen(topic: str | None):
+    """The /help message: the intro with one button per topic, or one topic with a Back button.
+    Plain text, sent with no parse_mode, so the examples' apostrophes and quotes need no escaping."""
+    if topic is None:
+        rows = [[InlineKeyboardButton(label, callback_data=f"help:{key}")]
+                for key, (label, _) in HELP_TOPICS.items()]
+        return HELP_INTRO, InlineKeyboardMarkup(rows)
+    return HELP_TOPICS[topic][1], InlineKeyboardMarkup([[InlineKeyboardButton("◀ Back", callback_data="help:menu")]])
+
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/help: how to word an entry, as topic buttons (taps, never typed arguments)."""
+    if await authorize(update) is None:
+        return
+    text, keyboard = _help_screen(None)
+    await update.message.reply_text(text, reply_markup=keyboard)
+
+
+async def handle_help_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """A tap under /help: "help:<topic>" or "help:menu". Only swaps the text; reads nothing and
+    changes nothing. Answered once, before the redraw, as every button handler here is."""
+    query = update.callback_query
+    if await authorize(update) is None:
+        await query.answer()
+        return
+    key = query.data.removeprefix("help:")
+    if key != "menu" and key not in HELP_TOPICS:
+        await query.answer(HELP_UNKNOWN_TOAST)
+        return
+    text, keyboard = _help_screen(None if key == "menu" else key)
+    try:
+        await query.answer()
+    except Exception as e:
+        print(f"Could not answer help tap: {e}")
+    try:
+        await query.edit_message_text(text, reply_markup=keyboard)
+    except Exception as e:
+        # Nothing was changed, so a failed redraw (or "message is not modified") loses nothing.
+        print(f"Could not redraw help: {e}")
 
 def format_period_summary(title: str, expenses: list, transfers: list) -> str:
     """Helper function to build a mobile-readable summary for any date range."""
@@ -282,6 +327,7 @@ def _md(name: str) -> str:
 
 BOT_COMMANDS = [
     BotCommand("start", "Start using the ledger"),
+    BotCommand("help", "How to word an entry"),
     BotCommand("recent", "Recent entries"),
     BotCommand("today", "Today's summary"),
     BotCommand("week", "This week's summary"),
@@ -1695,6 +1741,7 @@ def get_application():
     
     # start handler
     app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("help", help_command))
 
     # queries handler
     app.add_handler(CommandHandler("recent", recent_command))
@@ -1728,6 +1775,7 @@ def get_application():
     app.add_handler(CallbackQueryHandler(handle_bals_button, pattern=r"^bals:"))
     app.add_handler(CallbackQueryHandler(handle_payer_button, pattern=r"^payer:"))
     app.add_handler(CallbackQueryHandler(handle_split_button, pattern=r"^split:"))
+    app.add_handler(CallbackQueryHandler(handle_help_button, pattern=r"^help:"))
     app.add_handler(CallbackQueryHandler(handle_button_click))
 
     return app

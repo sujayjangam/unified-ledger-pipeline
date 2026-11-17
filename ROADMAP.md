@@ -48,8 +48,13 @@ on a shared Google Sheet.
 
 **In review 2026-11-17:** a split by nights that names trip families by their labels
 ("Reds and Blues 5 nights, rest all 6"). Family labels now match, the payer's "for 6 nights"
-is no longer read as their own count, and the rest's count is read from the words. On
-`fix/split-family-labels`; the real message passed 10 of 10 model runs (names swapped).
+is no longer read as their own count, and the rest's count is read from the words. A count
+read loosely (a payer's count from outside their paying clause, or a missing count taken from
+another clause) gets a "⚠️ Check …" card line instead of passing silently. `/help` teaches the
+wordings that work, as topic buttons. On `fix/split-family-labels`; the real message (names
+swapped, no split word) was right in 29 of 30 model runs; the miss was the model reading no
+split at all, which "split by nights" up front avoids (8 of 8). Using the model to double-check
+the meaning of a split message is deferred: stricter wording, taught by `/help`, for now.
 
 **Parked 2026-11-17, until after the trip:** splits PR 2b, everyday groups in the split menu.
 Designed and recorded in
