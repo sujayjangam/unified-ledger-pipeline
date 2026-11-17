@@ -33,16 +33,17 @@ production 2026-11-14 after a Neon-branch rehearsal and a backup). Before 0005, 
 no `account_id` were given a card by hand in SQL, one guarded `UPDATE` per `transaction_id`.
 
 **Next action:** group-trip splitting, below: step 5 (settlement), then step 6 (`/recent` with
-delete). These are what the trip still needs; neither is planned in detail yet. Steps 1 to 3
+delete). These are what the trip still needs; neither is planned in detail yet. Steps 1 to 4
 are done (`docs/superpowers/plans/2026-11-16-splits.md`). After settlement: a finished trip's
 hand-kept sheet is loaded as real bills, as a test on real expenses, and the trip is read from
 the message text for pre-trip costs.
 
-**In review 2026-11-17:** step 4, `/trip_bals`: who owes whom on one trip, per family, with
-suggested payments ([ADR-0044](docs/decisions/0044-trip-balances-from-splits.md)). No
-migration. After the first test on real entries, payments go to the person who paid, not to
-their family; shares inside the payer's own family cancel per bill. Decided with it: the totals keep counting a shared bill in full when the household
-paid it, and the running tab between close family (`/bals`) is a separate, later view, shown
+**Done 2026-11-17:** step 4, `/trip_bals`: who owes whom on one trip, per family, with
+suggested payments ([ADR-0044](docs/decisions/0044-trip-balances-from-splits.md),
+[#108](https://github.com/sujayjangam/unified-ledger-pipeline/pull/108)). No migration. Tested
+on a Neon branch with real entries first; after that test, payments go to the person who paid,
+not to their family, and shares inside the payer's own family cancel per bill. Decided with
+it: the totals keep counting a shared bill in full when the household paid it, and the running tab between close family (`/bals`) is a separate, later view, shown
 on a shared Google Sheet.
 
 **Parked 2026-11-17, until after the trip:** splits PR 2b, everyday groups in the split menu.
@@ -414,7 +415,8 @@ only shared costs they pay get logged. Travel minimum, in build order:
      ([ADR-0044](docs/decisions/0044-trip-balances-from-splits.md)). It shows the active trip,
      or a list of trips to tap. The suggested payments match the largest debtor to the largest
      creditor. Families settle by default and pay back the person who paid, and a person who
-     settles alone has a family label of their own. In review 2026-11-17.
+     settles alone has a family label of their own. Done 2026-11-17,
+     [#108](https://github.com/sujayjangam/unified-ledger-pipeline/pull/108).
      Later, for trips with friends rather than families: each friend (or couple) is a family
      of one today, which works but reads as "Bob family". Show a family of one by the person's
      name, in `/trip_bals` and the split menu. Not planned in detail.
