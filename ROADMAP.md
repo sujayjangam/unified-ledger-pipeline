@@ -299,7 +299,9 @@ sequenced in the phase checklists and aren't repeated here):
 - `reconciliation_status` is hardcoded to `'unsettled'` in both writers. The field Phase 1 is
   meant to populate currently has no writer at all.
 - `benefit_of` and `split_ratio` exist in the schema and in `docs/SCHEMA.md` but are written by no
-  code path — Phase 3 will need them, nothing populates them today.
+  code path. `split_ratio` is replaced by `transaction_splits` (one whole-cent share per person),
+  so it is dead and could be dropped by a migration. `reconciliation_status` (above) says nothing
+  about paybacks: whether a bill is paid off isn't stored anywhere.
 - No income path exists: `transaction_type` is only ever `'Expense'` or `'Transfer'`. Income is
   planned with statement upload (see Phase 1).
 - `app/main.py`'s POST handler omits `currency` entirely, so a row created through the REST API
@@ -394,7 +396,10 @@ only shared costs they pay get logged. Travel minimum, in build order:
      [#106](https://github.com/sujayjangam/unified-ledger-pipeline/pull/106).
      After the trip: PR 2b (everyday groups in the split menu, designed in ADR-0043 and parked
      2026-11-17), aliases per sender, fixed amounts and percentages ("Carol's share is 50, rest split
-     evenly"), which PR 3 leaves as a warning with no split; and a count editor in the split
+     evenly"), which PR 3 leaves as a warning with no split (asked for again 2026-11-17 with
+     "Alice paid 135 split with Bob. Bob's split is 90", which gets that warning in production;
+     once it works, it gets a `/help` example and a matching `scripts/check_extraction` case);
+     and a count editor in the split
      menu, so a newly ticked person's count can be changed without resending.
      - Candidate, after the trip: a trip read from the message text. Pre-trip costs are logged
        with trip mode off ("travel insurance for Sydney trip"), and nobody switches trip mode
@@ -442,6 +447,20 @@ only shared costs they pay get logged. Travel minimum, in build order:
      table, a "Mark paid" tap under each suggested payment, the paid side may be in another
      currency (both amounts stated, no exchange-rate lookup), and an overpayment saves behind a
      "⚠️ Confirm overpayment" button. If time allows: an Edit step on the payback card.
+     - To fix, found 2026-11-17 on the test bot:
+       - **Pay back one bill.** A payback clears a person-to-person debt line, which adds up
+         every bill between the two. Someone who owes for two bills and wants to pay only one
+         can type that bill's share as the amount, and the balance comes out right, but nothing
+         records which bill it was for. So "is this bill paid off?" can't be answered either.
+         Proposed (not yet agreed): an optional link from a payback to one bill (a nullable
+         `transaction_id` on `settlements`, additive), and a "For one bill" button on the payback
+         card that lists the bills behind the line and fills in that person's share. The
+         balance maths doesn't change. Needs an ADR first.
+       - **"Mark paid" buttons are hard to read.** "Mark paid 1", "Mark paid 2" make you match
+         the number against the text above. Proposed: put the payment on the button
+         ("✅ Alice's family → Bob · SGD 120.00"), with long names shortened on the button only.
+         Same callback data, so only the label in `_bals_screen` changes. Possible extra: list the
+         tapper's own payments first.
   6. `/recent` (today the last 5 entries) gets paging and a delete button per entry. A soft delete
      is suggested: the row stays but drops out of balances and totals.
 
