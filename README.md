@@ -152,7 +152,8 @@ its context, rejected alternatives and cost. The ones that shaped the system mos
   shares on the card. On a trip entry with no split, it opens with everyone on the trip ticked.
   Uneven shares work by a count per person, such as nights ("5 nights, everyone except Carol's
   family who only stayed 4"): the model copies the counts, Python checks each number is in the
-  message and works out the cents. A fixed amount or a percentage gets a warning and no split.
+  message and works out the cents. A family can be named by its trip label ("Reds 5 nights,
+  rest all 6"). A fixed amount or a percentage gets a warning and no split.
 - CI on every pull request: clean dependency install, lint, an import smoke check across `app/`,
   and a pytest suite over the money and date invariants — required to pass before a merge to
   `main`, enforced by a repository ruleset rather than merely reported on.

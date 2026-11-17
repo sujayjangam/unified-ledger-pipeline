@@ -125,7 +125,15 @@ Env vars (`.env.example` shows the format):
   [ADR-0042](docs/decisions/0042-uneven-shares-by-count.md)): the model reads each count, a
   count is used only if its number is in the message, and a menu tap keeps the counts (one row
   builder for the message and every tap). Python, not the model, decides that an "except" entry
-  with a count is a sharer at that count; "everyone" counts only when the text says it. A fixed
+  with a count is a sharer at that count; "everyone" counts only when the text says it. A name
+  that matches no person is tried as a trip family label (a person always wins). A paying
+  clause ("X paid ... for 6 nights") gives X no count unless it says "her/his/their N"; X still
+  shares, at a count from the other words. The rest's count ("rest", "others", "everyone else")
+  is read by Python from its own clause, beats the model's, and is skipped when that clause has
+  two numbers or says "2 others" ("the rest of the airbnb" is not a rest word). It is read only
+  beside a named person's count, so "dinner with the others 80" stays personal. With a trip on
+  and no "between"/"split with" list, "the rest" makes the split the whole trip
+  (`_rest_count`, `_reread`). A fixed
   amount or percentage, or a sharer left without a count, gets a warning and no split, never a
   wrong even one. An even split set in the menu
   keeps that warning, reworded, until Confirm. Transfers and YouTrip top-ups are never split.

@@ -133,6 +133,16 @@ class SplitResult:
     unit: str | None = None
 
 
+def _label_key(text: str) -> str:
+    """A family label or a name as said, in the form they are compared in: lower case, single
+    spaces, and no family wording, so "the Lee family", "Lee's family" and "lee" are all "lee".
+    """
+    text = " ".join(text.casefold().split()).removeprefix("the ")
+    text = re.sub(r"\s+famil(?:y|ies)$", "", text)
+    # "Lee's" loses its 's; a label that itself ends in s ("Reds'") loses just the apostrophe.
+    return re.sub(r"['’]s$", "", text).strip("'’ ")
+
+
 def _valid_count(count, message: str | None) -> bool:
     """Check literal counts, never infer them from amounts or other numbers."""
     if type(count) is not int or not 1 <= count <= 999:
@@ -166,6 +176,44 @@ def _numbers(text: str) -> list[int]:
     return values
 
 
+def _mentions(name: str, message: str) -> list[re.Match]:
+    """Every place `name` is said in the message, as a whole word, ignoring case."""
+    return list(re.finditer(rf"(?<!\w){re.escape(name.strip())}(?!\w)", message, re.IGNORECASE))
+
+
+def _is_paying(found: re.Match, message: str) -> bool:
+    """True when this mention of a name says who paid, not who shares: "Carol paid",
+    "Carol pays", "paid by Carol", "paid for by Carol" - the same wordings read_payer reads."""
+    return bool(re.match(r"\s+(?:paid|pays)(?!\w)", message[found.end():], re.IGNORECASE)
+                or re.search(r"(?<!\w)paid\s+(?:for\s+)?by\s+$", message[:found.start()], re.IGNORECASE))
+
+
+def _only_paying(name: str, message: str, count: int) -> bool:
+    """True when the message says this name, but only as the payer ("Carol paid 300 for 6
+    nights"), so nothing in it gives the name a count of its own.
+
+    False when the payer's clause says the count is theirs: "Carol paid for her 4 nights".
+    """
+    found = _mentions(name, message)
+    if not found or not all(_is_paying(f, message) for f in found):
+        return False
+    return count not in _owned_counts(message)
+
+
+def _owned_counts(message: str, start: int = 0) -> list[int]:
+    """Every number said to be someone's own, from `start` on: "her 4", "his own 3".
+
+    Only a number straight after the word: in "for their airbnb for 6 nights" the 6 is still
+    the bill's length.
+    """
+    counts = []
+    for owner in re.finditer(r"(?<!\w)(?:her|his|their)\s+(?:own\s+)?", message[start:], re.IGNORECASE):
+        token = _NUMBER_TOKEN.match(message, start + owner.end())
+        if token:
+            counts += _numbers(token.group(0))
+    return counts
+
+
 def _count_after(name: str, message: str) -> int | None:
     """The first count (1-999, digits or a number word up to thirty) after `name` in the message.
 
@@ -173,11 +221,105 @@ def _count_after(name: str, message: str) -> int | None:
     "Carol and Erin 4" the model gave 4 to Carol and nothing to Erin in 9 of 10 runs
     (2026-11-16); in the message, the 4 is the first number after "Erin". The count still has
     to be in the text, so this never invents one, and the card shows every count before Confirm.
+
+    A mention that says who paid is skipped: in "Carol paid 300 for 6 nights" the 6 is how long
+    the bill runs, not Carol's count. "Carol paid for her 4 nights" still gives her 4.
     """
-    found = re.search(rf"(?<!\w){re.escape(name.strip())}(?!\w)", message, re.IGNORECASE)
+    mentions = _mentions(name, message)
+    found = next((f for f in mentions if not _is_paying(f, message)), None)
+    if not found:
+        # Only paying mentions: a count after one is hers only if said so ("her 4").
+        owned = [n for f in mentions[:1] for n in _owned_counts(message, f.end()) if 1 <= n <= 999]
+        return owned[0] if owned else None
+    return next((n for n in _numbers(message[found.end():]) if 1 <= n <= 999), None)
+
+
+# "The rest", "others", "everyone else": the people the message doesn't name. In "Reds 5 nights.
+# Rest all stay 6 nights." the model left the 6 out in 6 of 10 runs (2026-11-17).
+# "The rest of the airbnb" is part of the bill, not people; "the rest of us" is people.
+_REST_WORD = re.compile(
+    r"(?<!\w)(?:the\s+)?(?:rest(?!\s+of\s+(?!(?:us|them)(?!\w)))|others|everyone\s+else|everybody\s+else)(?!\w)",
+    re.IGNORECASE)
+# Where a clause ends: . ! ? ; , or a new line - but not the point in 2717.84 or the comma
+# in 2,717.84.
+_CLAUSE_END = re.compile(r"[!?;\n]|\.(?!\d)|,(?!\d)|(?<!\d),")
+
+
+def _rest_count(message: str) -> int | None:
+    """The count the message gives "the rest", read from its own clause, or None.
+
+    Narrow on purpose: when this returns None, the model's reading stands. It reads:
+      - the one number in the rest word's clause: "rest all stay 6 nights", "Reds 5, rest 6",
+        "6 nights for the rest". Never one from another clause, so "6 nights for the rest,
+        Reds 5" can't give the rest 5.
+    It returns None for:
+      - no rest word. "The rest of the airbnb" is not one; "the rest of us" is.
+      - a clause with no number, or two ("6 nights for the rest and Carol 4"): either could
+        be the rest's.
+      - "2 others": a bare number touching "others" counts people, not nights each.
+    The caller also reads it only beside a named person's count (see _reread).
+    """
+    found = _REST_WORD.search(message)
     if not found:
         return None
-    return next((n for n in _numbers(message[found.end():]) if 1 <= n <= 999), None)
+    word_before = re.search(r"(\S+)\s+$", message[:found.start()])
+    if (found.group(0).casefold().endswith("others") and word_before
+            and _NUMBER_TOKEN.fullmatch(word_before.group(1))):
+        return None
+    ends = [m.start() for m in _CLAUSE_END.finditer(message)]
+    start = max((e + 1 for e in ends if e < found.start()), default=0)
+    stop = min((e for e in ends if e >= found.end()), default=len(message))
+    numbers = [n for n in _numbers(message[start:stop]) if 1 <= n <= 999]
+    return numbers[0] if len(numbers) == 1 else None
+
+
+def _names_a_count(reference: dict) -> bool:
+    """True when the model gave a count to someone it named, not just to "the rest"."""
+    def name(e):
+        return (e if isinstance(e, str) else e.get("name") or "").strip().casefold()
+    return any(isinstance(e, dict) and e.get("count") is not None and name(e) not in _COLLECTIVE_WORDS
+               for e in (*(reference.get("people") or ()), *(reference.get("except_people") or ())))
+
+
+def _reread(reference: dict, message: str, trip_on: bool) -> dict:
+    """The model's split_reference with two misreadings fixed from the words (2026-11-17).
+
+    Measured on 10 runs of "Carol paid 2717.84 for 6 nights. Reds only staying 5 nights. Rest
+    all stay 6 nights.", where Carol is one of the Reds:
+      1. The payer got the bill's length as a count ("Carol, 6") in 7 runs. A name said only as
+         the payer loses the count the model gave it; the payer still shares if the model
+         listed them, at a count from the other words (their family label, or the rest).
+      2. The rest's 6 was left out in 6 runs. A count read from the rest word's clause becomes
+         the default, over the model's. With a trip on and no "between"/"split with" list of
+         sharers, "the rest" means the whole trip.
+    Returns a copy; the model's dict is never changed.
+    """
+    reference = dict(reference)
+    # Checked before the payer's count is stripped.
+    named_counted = _names_a_count(reference)
+
+    def fixed(entry):
+        name = entry if isinstance(entry, str) else entry.get("name") or ""
+        if (isinstance(entry, dict) and entry.get("count") is not None
+                and _only_paying(name, message, entry["count"])):
+            return {**entry, "count": None}
+        return entry
+
+    reference["people"] = [fixed(e) for e in reference.get("people") or ()]
+    # A rest count only means something beside someone else's count, and alone it never makes
+    # a split: "Dinner 80 split with the others" must not give "the others" 80.
+    rest = _rest_count(message) if named_counted else None
+    if rest is not None:
+        reference["default_count"] = rest
+        # A "rest" entry from the model carries its own count, which would replace this one in
+        # resolve_split. Python's reading wins, so the entry goes.
+        reference["people"] = [e for e in reference["people"] if (
+            e if isinstance(e, str) else e.get("name") or "").strip().casefold() not in _COLLECTIVE_WORDS]
+        # "Split between Carol, Dave and Erin ... the rest 6" lists the sharers in full, so
+        # "the rest" there is the rest of that list, not the trip.
+        if trip_on and reference.get("kind") in ("named", "everyone") and sender_shares(message) is None:
+            reference["kind"] = "everyone"
+    return reference
 
 
 def _number_after_except(message: str) -> bool:
@@ -205,13 +347,18 @@ def resolve_split(reference: dict | None, candidates, sender: Participant,
     """
     if not reference or reference.get("kind", "none") == "none":
         return SplitResult((), ())
+    # "Reds 5, others stay 6" says "everyone" as surely as "all" does - but only beside a named
+    # person's count, so "Dinner with the others 80" stays a personal entry.
+    says_everyone = message is not None and bool(
+        _EVERYONE_WORD.search(message) or (_REST_WORD.search(message) and _names_a_count(reference)))
+    if message is not None:
+        reference = _reread(reference, message, trip_on)
     entries = reference.get("people") or ()
     exceptions = reference.get("except_people") or ()
     default_count = reference.get("default_count")
     by_count = default_count is not None or any(
         isinstance(e, dict) and e.get("count") is not None for e in (*entries, *exceptions))
-    if message is not None and not asks_for_split(message) and not (
-            by_count and _EVERYONE_WORD.search(message)):
+    if message is not None and not asks_for_split(message) and not (by_count and says_everyone):
         # The model read a split the message never asked for. A personal entry, silently: the
         # message decides.
         return SplitResult((), ())
@@ -246,6 +393,13 @@ def resolve_split(reference: dict | None, candidates, sender: Participant,
             name, is_family = family_words.group("name"), True
         person = sender if name.strip().casefold() in _SENDER_WORDS else match_person(name, candidates)
         if person is None:
+            # Not a person's name, so try the trip's family labels: "Reds and Blues 5 nights"
+            # names two families by their labels. A person is always tried first, so this
+            # only ever turns a "Couldn't match" into a match, never changes one.
+            said = _label_key(name)
+            labels = {label for label in families.values() if label and _label_key(label) == said}
+            if len(labels) == 1:
+                return [p for p in candidates if families.get(p.id) in labels]
             warnings.append(NO_MATCH_WARNING.format(name=name))
             return []
         label = families.get(person.id)
@@ -257,7 +411,7 @@ def resolve_split(reference: dict | None, candidates, sender: Participant,
     people = {}
     explicit_counts = {}
     kind = reference.get("kind")
-    if kind == "everyone" and entries and message is not None and not _EVERYONE_WORD.search(message):
+    if kind == "everyone" and entries and message is not None and not says_everyone:
         kind = "named"
     if kind == "everyone":
         if not trip_on:
