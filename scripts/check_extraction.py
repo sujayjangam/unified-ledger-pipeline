@@ -107,7 +107,9 @@ SPLIT_CASES = [
 # the whole trip is visible, and expanding Bob's family must also include Frank.
 SPLIT_PEOPLE = tuple(Participant(i, name, None, None) for i, name in enumerate(
     ('Alice', 'Bob', 'Carol', 'Dave', 'Erin', 'Frank'), start=1))
-SPLIT_FAMILIES = {1: 'Alice', 2: 'Bob', 6: 'Bob', 3: 'Carol', 4: 'Carol'}
+# Two labels are nobody's name, as real trip labels often are, so a message can name a
+# family by its label alone ("Reds and Blues 5 nights").
+SPLIT_FAMILIES = {1: 'Alice', 2: 'Reds', 6: 'Reds', 3: 'Blues', 4: 'Blues'}
 _EVEN_NAMES = [
     (), ('Alice', 'Bob', 'Carol', 'Dave', 'Erin', 'Frank'), ('Alice', 'Bob', 'Frank'),
     (), (), (), (), ('Alice', 'Carol'), ('Carol', 'Dave'), ('Alice', 'Dave', 'Erin'),
@@ -131,6 +133,21 @@ SPLIT_CASES += [
     # A number that isn't a count must leave an even split even.
     {"message": "3 pizzas 60 split with Carol", "outcome": {('Alice', None), ('Carol', None)}},
     {"message": "dinner for 4, 120, split between Carol and Dave", "outcome": {('Carol', None), ('Dave', None)}},
+    # A real message (2026-11-17), names swapped. Families named by label, the payer's "for 6
+    # nights" is the bill's length, not her count, and the rest's 6 is in a later sentence.
+    # Carol is a Blue, so she shares at 5.
+    {"message": "Carol paid 2717.84 fir airbnb for 6 nights. Reds and Blues only staying 5 nights. "
+                "Rest all stay 6 nights.",
+     "outcome": {('Alice', 6), ('Bob', 5), ('Frank', 5), ('Carol', 5), ('Dave', 5), ('Erin', 6)}},
+    # A rest word with no split word and nobody's count: never a whole-trip split.
+    {"message": "Dinner with the others 80", "outcome": "no split"},
+    # "The rest" wordings; the first is a /help example (app/services/help_topics.py). Bob and Frank are the Reds.
+    # Without "split by nights" the model dropped the Reds' 5 in 4 of 8 runs (2026-11-17), so
+    # the help says it.
+    {"message": "Airbnb 900 split by nights. Reds 5 nights, rest all 6 nights.",
+     "outcome": {('Alice', 6), ('Bob', 5), ('Frank', 5), ('Carol', 6), ('Dave', 6), ('Erin', 6)}},
+    {"message": "Carol paid 600 for her 4 nights. Rest all stay 6 nights.",
+     "outcome": {('Alice', 6), ('Bob', 6), ('Frank', 6), ('Carol', 4), ('Dave', 6), ('Erin', 6)}},
 ]
 
 

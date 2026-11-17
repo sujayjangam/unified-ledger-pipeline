@@ -239,6 +239,40 @@ def test_family_expansion(directory, trip_on, ids):
     assert [p.id for p in result.people] == ids
 
 
+@pytest.mark.parametrize("name", ["Reds", "reds", "Reds family", "the Reds family", "Reds'"])
+def test_family_label_names_the_whole_family(directory, name):
+    """A trip family's label, said on its own, stands for every member of that family."""
+    result = _resolve(directory, {"kind": "named", "people": [{"name": name, "is_family": False}]},
+                      True, {2: "Reds", 3: "Reds"})
+    assert [p.id for p in result.people] == [2, 3]
+    assert not result.warnings
+
+
+def test_family_label_carries_its_count(directory):
+    """"Reds only 5 nights, rest all 6": the label's count goes to each member of the family."""
+    reference = {"kind": "everyone", "uneven": True, "default_count": 6, "count_unit": "nights",
+                 "people": [{"name": "Reds", "is_family": False, "count": 5}]}
+    result = resolve_split(reference, directory.participants, directory.participant(1),
+                           {2: "Reds", 3: "Reds"}, True,
+                           "Airbnb 600 for 6 nights. Reds only staying 5 nights. Rest all stay 6 nights.")
+    assert result.counts == {1: 6, 2: 5, 3: 5}
+    assert not result.warnings
+
+
+def test_a_person_is_matched_before_a_family_label(directory):
+    """A label that is also somebody's name still means that one person, as it did before."""
+    result = _resolve(directory, {"kind": "named", "people": [{"name": "Carol", "is_family": False}]},
+                      True, {1: "Carol", 2: "Carol"})
+    assert [p.id for p in result.people] == [3]
+
+
+def test_family_label_needs_a_trip(directory):
+    """With no trip on there are no labels, so a label is an unmatched name, never a guess."""
+    result = _resolve(directory, {"kind": "named", "people": [{"name": "Reds"}, {"name": "Carol"}]})
+    assert [p.id for p in result.people] == [3]
+    assert result.warnings == ("⚠️ Couldn't match 'Reds'",)
+
+
 def test_everyone_except_one(directory):
     """A plain except entry removes that one person, even from inside a family."""
     result = _resolve(directory, {"kind": "everyone", "except_people": [{"name": "Carol", "is_family": False}]},
@@ -438,3 +472,226 @@ def test_counted_exception_without_a_default_refuses(directory):
 def test_numbers_reads_whole_numbers_in_order(text, expected):
     from app.services.splits import _numbers
     assert _numbers(text) == expected
+
+
+# ---- The payer's clause and "the rest" (2026-11-17) ----
+# Six fictional trip members; Carol and Dave are the Reds, Erin is the Blues.
+_TRIP = tuple(Participant(i, n, None, None) for i, n in
+              enumerate(["Alice", "Bob", "Carol", "Dave", "Erin", "Fay"], start=1))
+_TRIP_FAMILIES = {3: "Reds", 4: "Reds", 5: "Blues"}
+_STAY = ("Carol paid 2717.84 for airbnb for 6 nights. Reds and Blues only staying 5 nights. "
+         "Rest all stay 6 nights.")
+_STAY_COUNTS = {1: 6, 2: 6, 3: 5, 4: 5, 5: 5, 6: 6}
+
+
+def _trip(reference, message):
+    return resolve_split(reference, _TRIP, _TRIP[0], _TRIP_FAMILIES, True, message)
+
+
+@pytest.mark.parametrize("people", [
+    [{"name": "Carol", "count": 6}, {"name": "Reds", "count": 5}, {"name": "Blues", "count": 5}],
+    [{"name": "Reds", "count": 5}, {"name": "Blues", "count": 5}, {"name": "Carol", "count": 6}],
+    [{"name": "Reds", "count": 5}, {"name": "Blues", "count": 5}, {"name": "Carol"}],
+])
+def test_payer_clause_gives_no_count(people):
+    """"Carol paid ... for 6 nights": the 6 is the bill's length, so Carol shares at her
+    family's 5, whichever order the model lists the entries in."""
+    result = _trip({"kind": "everyone", "default_count": 6, "count_unit": "nights", "people": people}, _STAY)
+    assert result.counts == _STAY_COUNTS and not result.warnings
+
+
+@pytest.mark.parametrize("reference", [
+    {"kind": "everyone", "people": [{"name": "Carol", "count": 6}, {"name": "Reds", "count": 5},
+                                    {"name": "Blues", "count": 5}]},
+    {"kind": "named", "include_sender": True, "people": [{"name": "Reds", "count": 5}, {"name": "Blues", "count": 5}]},
+    {"kind": "everyone", "default_count": 5,
+     "people": [{"name": "Reds", "count": 5}, {"name": "Blues", "count": 5}, {"name": "rest", "count": 5}]},
+])
+def test_rest_count_read_from_the_words(reference):
+    """The model left out the rest's 6, kept the split "named", or read the wrong default:
+    the rest word's own clause decides, and with a trip on "the rest" is everyone else."""
+    result = _trip(reference, _STAY)
+    assert result.counts == _STAY_COUNTS and result.default_count == 6 and not result.warnings
+
+
+def test_rest_without_all_or_a_split_word():
+    """"Others stay 6 nights" has no split word and no "all", and is still a split."""
+    result = _trip({"kind": "named", "people": [{"name": "Reds", "count": 5}]},
+                   "Carol paid 600 for 6 nights. Reds only staying 5 nights. Others stay 6 nights.")
+    assert result.counts == {1: 6, 2: 6, 3: 5, 4: 5, 5: 6, 6: 6}
+
+
+def test_rest_count_comes_from_its_own_clause():
+    """"6 nights for the rest, Reds 5": the rest get 6, never the 5 from the next clause."""
+    result = _trip({"kind": "everyone", "default_count": 5, "people": [{"name": "Reds", "count": 5}]},
+                   "Airbnb 600, split: 6 nights for the rest, Reds 5")
+    assert result.counts == {1: 6, 2: 6, 3: 5, 4: 5, 5: 6, 6: 6}
+
+
+def test_payer_named_again_as_a_sharer_keeps_that_count():
+    """A count said after the payer's name somewhere else in the message is theirs."""
+    message = "Carol paid 600 for 6 nights, split by nights between Carol 4 and Dave 6"
+    for carol in ({"name": "Carol", "count": 4}, {"name": "Carol"}):
+        result = _trip({"kind": "named", "people": [carol, {"name": "Dave", "count": 6}]}, message)
+        assert result.counts == {3: 4, 4: 6}
+
+
+def test_two_numbers_by_the_rest_keep_the_models_default():
+    """"6 nights for the rest and Carol 4 nights": Python can't tell which number is the rest's,
+    so the model's default stands and Carol keeps her 4."""
+    result = _trip({"kind": "everyone", "default_count": 6, "people": [{"name": "Carol", "count": 4}]},
+                   "Airbnb 600 split 6 nights for the rest and Carol 4 nights")
+    assert result.counts == {1: 6, 2: 6, 3: 4, 4: 6, 5: 6, 6: 6}
+
+
+def test_payer_clause_keeps_her_own_count():
+    """"Carol paid for her 4 nights": the 4 is said to be hers, so it stays."""
+    result = _trip({"kind": "named", "people": [{"name": "Carol", "count": 4}, {"name": "Bob", "count": 6}]},
+                   "Airbnb 600 split by nights: Carol paid for her 4 nights and Bob stayed 6 nights")
+    assert result.counts == {2: 6, 3: 4}
+    dropped = _trip({"kind": "named", "people": [{"name": "Carol"}, {"name": "Bob", "count": 6}]},
+                    "Airbnb 600 split by nights: Carol paid for her 4 nights and Bob stayed 6 nights")
+    assert dropped.counts == {2: 6, 3: 4}  # the model left Carol's 4 out; read back from "her 4"
+
+
+def test_amount_with_a_thousands_comma_is_not_the_rests_count():
+    """"The rest paid 2,717.84": the comma inside the amount doesn't end the clause."""
+    from app.services.splits import _rest_count
+    assert _rest_count("Split by nights: everyone 6 nights, Carol 4 nights. The rest paid 2,717.84") is None
+
+
+def test_their_airbnb_is_not_their_count():
+    """"Their" before a word, not a number, doesn't make the bill's 6 nights Carol's."""
+    result = _trip({"kind": "everyone", "default_count": 6,
+                    "people": [{"name": "Carol", "count": 6}, {"name": "Reds", "count": 5}]},
+                   "Carol paid 600 for their airbnb for 6 nights. Reds 5 nights. Rest all stay 6 nights.")
+    assert result.counts == {1: 6, 2: 6, 3: 5, 4: 5, 5: 6, 6: 6}
+
+
+@pytest.mark.parametrize("reference", [
+    {"kind": "everyone"},
+    {"kind": "everyone", "default_count": 80},
+    {"kind": "named", "people": [{"name": "others", "count": 80}]},
+])
+def test_others_without_a_split_is_no_split(reference):
+    """"Dinner with the others 80": no split word and nobody's count, so a personal entry."""
+    result = _trip(reference, "Dinner with the others 80")
+    assert result.people == () and result.warnings == ()
+
+
+def test_rest_inside_a_between_list_stays_in_the_list():
+    """"Split between Carol, Dave and Erin ... the rest 6": the rest of those three, not the trip."""
+    result = _trip({"kind": "named", "people": [{"name": "Carol", "count": 4}, {"name": "Dave", "count": 6},
+                                                {"name": "Erin", "count": 6}]},
+                   "Airbnb 600 split between Carol, Dave and Erin by nights. Carol 4 nights, the rest 6")
+    assert result.counts == {3: 4, 4: 6, 5: 6}
+
+
+def test_split_with_the_others_alone_is_unchanged():
+    """No named count: the rest word reads nothing, so no new warning appears."""
+    result = resolve_split({"kind": "named", "include_sender": True, "people": [{"name": "others"}]},
+                           _TRIP, _TRIP[0], {}, False, "Dinner 80 split with the others")
+    assert result.counts == {} and result.default_count is None
+
+
+def test_a_number_of_others_is_not_a_count():
+    """"Split with Carol and 2 others" counts people: no whole-trip split at 2 each."""
+    result = _trip({"kind": "named", "people": [{"name": "Carol"}]}, "Dinner 80, split with Carol and 2 others")
+    assert [p.id for p in result.people] == [1, 3] and result.counts == {}
+
+
+def test_payer_in_an_even_split_still_shares():
+    """Only the count is dropped: who shares is decided as before."""
+    result = _trip({"kind": "named", "people": [{"name": "Carol"}, {"name": "Bob"}]},
+                   "Carol paid 90 for dinner, split with Bob")
+    assert [p.id for p in result.people] == [1, 2, 3] and result.counts == {}
+
+
+@pytest.mark.parametrize("message,count", [
+    ("Rest all stay 6 nights", 6),
+    ("6 nights for the rest, Reds 5", 6),
+    ("Reds 5 and 6 for everyone else", None),  # two numbers in one clause: not read
+    ("6 nights for the rest and Carol 4 nights", None),
+    ("Reds 5, rest 6", 6),
+    ("Reds 5. Rest 6.", 6),
+    ("Reds 5, the rest of us 6", 6),
+    ("Paid the rest of the airbnb 450. Reds 5 nights, Blues 6 nights", None),
+    ("Carol and two others 6 nights", None),
+    ("the rest paid 2717.84", None),
+    ("Reds 5. The rest stay", None),
+    ("Reds 5", None),
+])
+def test_rest_count(message, count):
+    from app.services.splits import _rest_count
+    assert _rest_count(message) == count
+
+
+def test_amount_after_a_name_is_not_a_count():
+    """"Carol 2717.84" has no count: neither 2717 nor 84 stands alone."""
+    from app.services.splits import _count_after
+    assert _count_after("Carol", "Carol 2717.84 for the airbnb") is None
+
+
+# ---- "⚠️ Check …" when a count was read loosely ----
+
+def test_payer_count_outside_the_paying_clause_asks_for_a_check():
+    """"Carol paid 600 for the villa, stayed 4 nights": the 4 isn't in the paying clause, so it
+    may be Carol's. It is still dropped (the rule stands), but the card asks for a check."""
+    result = _trip({"kind": "everyone", "uneven": True, "count_unit": "nights",
+                    "people": [{"name": "Carol", "count": 4}]},
+                   "Carol paid 600 for the villa, stayed 4 nights. Rest all 6 nights.")
+    assert result.warnings == ("⚠️ Check Carol's nights.",)
+
+
+def test_payer_count_inside_the_paying_clause_is_dropped_quietly():
+    """The real message: "Carol paid ... for 6 nights" is the bill's length, so no check line."""
+    result = _trip({"kind": "everyone", "count_unit": "nights",
+                    "people": [{"name": "Carol", "count": 6}, {"name": "Reds", "count": 5},
+                               {"name": "Blues", "count": 5}]}, _STAY)
+    assert result.counts == _STAY_COUNTS and not result.warnings
+
+
+def test_count_borrowed_from_another_clause_asks_for_a_check():
+    """"Split between Bob, Dave and Fay. Bob 2, the rest 3": the first number after Dave and
+    Fay is Bob's 2, from another clause, so each of them gets a check line."""
+    result = _trip({"kind": "named", "uneven": True, "count_unit": "nights",
+                    "people": [{"name": "Bob", "count": 2}, {"name": "Dave"}, {"name": "Fay"}]},
+                   "Villa 600 split between Bob, Dave and Fay. Bob 2, the rest 3.")
+    assert result.warnings == ("⚠️ Check Dave's nights.", "⚠️ Check Fay's nights.")
+
+
+def test_count_from_the_same_clause_needs_no_check():
+    """"Carol and Erin 4": Erin's 4 is in her own clause, so filling it in is safe."""
+    result = _trip({"kind": "named", "count_unit": "nights",
+                    "people": [{"name": "Bob", "count": 5}, {"name": "Carol", "count": 4}, {"name": "Erin"}]},
+                   "Airbnb 2300, split by nights: Bob 5, Carol and Erin 4")
+    assert result.counts == {2: 5, 3: 4, 5: 4} and not result.warnings
+
+
+def test_check_line_without_a_unit_says_count():
+    result = _trip({"kind": "everyone", "uneven": True, "people": [{"name": "Carol", "count": 4}]},
+                   "Carol paid 600 for the villa, stayed 4. Rest all 6.")
+    assert result.warnings == ("⚠️ Check Carol's count.",)
+
+
+# Two "rest" wordings (one is a /help example) that only this branch's rules read.
+@pytest.mark.parametrize("message, reference, counts", [
+    ("Airbnb 900 split by nights. Reds 5 nights, rest all 6 nights.",
+     {"kind": "everyone", "people": [{"name": "Reds", "count": 5}]},
+     {1: 6, 2: 6, 3: 5, 4: 5, 5: 6, 6: 6}),
+    ("Carol paid 600 for her 4 nights. Rest all stay 6 nights.",
+     {"kind": "everyone", "people": [{"name": "Carol", "count": 4}]},
+     {1: 6, 2: 6, 3: 4, 4: 6, 5: 6, 6: 6}),
+])
+def test_help_examples_split_as_the_help_says(message, reference, counts):
+    result = _trip({**reference, "count_unit": "nights"}, message)
+    assert result.counts == counts and not result.warnings
+
+
+def test_payer_count_that_ends_up_the_same_needs_no_check():
+    """The model gave the payer her family's 5, outside her paying clause; she shares at 5
+    anyway, so nothing was lost and the card stays quiet."""
+    result = _trip({"kind": "everyone", "count_unit": "nights",
+                    "people": [{"name": "Carol", "count": 5}, {"name": "Reds", "count": 5},
+                               {"name": "Blues", "count": 5}]}, _STAY)
+    assert result.counts == _STAY_COUNTS and not result.warnings

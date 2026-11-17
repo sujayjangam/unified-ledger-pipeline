@@ -295,7 +295,7 @@ async def test_register_commands_is_best_effort(fails):
     await bot_core.register_commands(bot)
     bot.set_my_commands.assert_awaited_once_with(bot_core.BOT_COMMANDS)
     assert [c.command for c in bot_core.BOT_COMMANDS] == [
-        "start", "recent", "today", "week", "month", "cat_today", "cat_week", "cat_month", "trip",
+        "start", "help", "recent", "today", "week", "month", "cat_today", "cat_week", "cat_month", "trip",
         "trip_bals"]
 
 

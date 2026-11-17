@@ -119,6 +119,8 @@ its context, rejected alternatives and cost. The ones that shaped the system mos
   keeps its name; an entry against it asks before saving.
 - Read commands over the ledger (`/recent`, `/today`, `/week`, `/month` and per-category
   variants), aggregated per currency.
+- `/help` shows how to word an entry, as topic buttons (splitting, splitting by nights, who
+  paid, dates), each with example messages that the extraction check runs against the real model.
 - Trips: `/trip` lists your trips as buttons (newest first, with dates, three at a time). Tap one
   and every entry you log is tagged to it until you turn trip mode off; each person has their
   own switch, and a banner is pinned in your chat while it is on. The card shows the trip, with
@@ -152,7 +154,9 @@ its context, rejected alternatives and cost. The ones that shaped the system mos
   shares on the card. On a trip entry with no split, it opens with everyone on the trip ticked.
   Uneven shares work by a count per person, such as nights ("5 nights, everyone except Carol's
   family who only stayed 4"): the model copies the counts, Python checks each number is in the
-  message and works out the cents. A fixed amount or a percentage gets a warning and no split.
+  message and works out the cents. A family can be named by its trip label ("Reds 5 nights,
+  rest all 6"). A count read loosely gets a "⚠️ Check …" line on the card. A fixed amount or a
+  percentage gets a warning and no split.
 - CI on every pull request: clean dependency install, lint, an import smoke check across `app/`,
   and a pytest suite over the money and date invariants — required to pass before a merge to
   `main`, enforced by a repository ruleset rather than merely reported on.
