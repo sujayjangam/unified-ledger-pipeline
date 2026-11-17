@@ -137,6 +137,13 @@ Env vars (`.env.example` shows the format):
   anyone ticked always stays listed. The first opening on a trip card with no split ticks every
   member; never again after that (`split_menu['opened']`). Callback data is an id or a group
   index, never a name.
+- `/trip_bals` ([ADR-0044](docs/decisions/0044-trip-balances-from-splits.md)) only reads. The
+  maths is pure functions in `app/services/balances.py`: whole cents added and subtracted,
+  never rounded, currencies kept apart. It counts only entries tagged to the trip that have
+  split rows. A failed read (`get_trip_split_entries` returns `None`) is shown as an error,
+  never as "nobody owes anything". A split entry still with no payer after the fallback (account owner, else sender) is left out with a ⚠️ line,
+  never guessed. A trip id from a button is loaded only through `member_trip`. The reply is
+  plain text with no `parse_mode`.
 - The duplicate check runs before the card is shown, never inside the insert, and a failed check
   gives a normal card — it must never block a save
   ([ADR-0027](docs/decisions/0027-duplicate-warning-before-the-card.md)).
@@ -200,7 +207,8 @@ Env vars (`.env.example` shows the format):
   ([ADR-0024](docs/decisions/0024-created-at-write-time-column.md)).
 - `paid_by_participant_id` is who paid, apart from who logged it and which account. NULL means
   "not recorded" (old, CLI and API rows) and still counts in totals; the period and category
-  totals skip only a payer who is set and not household.
+  totals skip only a payer who is set and not household. A split entry the household paid
+  counts in full: the totals are what was paid out, not the household's own share (ADR-0044).
 - `entered_by_participant_id` stores the sender's id, never a name. NULL means "not recorded".
   Tests use fictional ids only ([ADR-0033](docs/decisions/0033-entered-by-participant-id.md)).
 - `transactions` records the account and sender as ids only (`account_id`, required, and

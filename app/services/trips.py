@@ -50,6 +50,20 @@ def member_trips(conn, participant_id: int, offset: int, limit: int) -> tuple[li
     return [Trip(*row) for row in rows[:limit]], len(rows) > limit
 
 
+def member_trip(conn, participant_id: int, trip_id: int) -> Trip | None:
+    """One trip, only if this person is a member of it; otherwise None.
+
+    The trip id behind a button arrives from Telegram as text anyone could alter, so the
+    membership check lives in the query itself: a trip you are not on is never loaded.
+    """
+    row = conn.execute(text("""
+        SELECT t.id, t.name, t.start_date, t.end_date
+        FROM trips t JOIN trip_members m ON m.trip_id = t.id
+        WHERE m.participant_id = :participant_id AND t.id = :trip_id
+    """), {"participant_id": participant_id, "trip_id": trip_id}).first()
+    return Trip(*row) if row else None
+
+
 def switch_trip_on(conn, participant_id: int, trip_id: int) -> Trip | None:
     """Atomically check membership and change only this person's switch, then commit."""
     row = conn.execute(text("""

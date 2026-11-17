@@ -32,9 +32,17 @@ columns) and [#91](https://github.com/sujayjangam/unified-ledger-pipeline/pull/9
 production 2026-11-14 after a Neon-branch rehearsal and a backup). Before 0005, the 5 rows with
 no `account_id` were given a card by hand in SQL, one guarded `UPDATE` per `transaction_id`.
 
-**Next action:** group-trip splitting, below: step 4, `/balances`, then step 5 (settlement) and
-step 6 (`/recent` with delete). These are what the trip still needs; none is planned in detail
-yet. Steps 1 to 3 are done (`docs/superpowers/plans/2026-11-16-splits.md`).
+**Next action:** group-trip splitting, below: step 5 (settlement), then step 6 (`/recent` with
+delete). These are what the trip still needs; neither is planned in detail yet. Steps 1 to 3
+are done (`docs/superpowers/plans/2026-11-16-splits.md`). After settlement: a finished trip's
+hand-kept sheet is loaded as real bills, as a test on real expenses, and the trip is read from
+the message text for pre-trip costs.
+
+**In review 2026-11-17:** step 4, `/trip_bals`: who owes whom on one trip, per family, with
+suggested payments ([ADR-0044](docs/decisions/0044-trip-balances-from-splits.md)). No
+migration. Decided with it: the totals keep counting a shared bill in full when the household
+paid it, and the running tab between close family (`/bals`) is a separate, later view, shown
+on a shared Google Sheet.
 
 **Parked 2026-11-17, until after the trip:** splits PR 2b, everyday groups in the split menu.
 Designed and recorded in
@@ -400,11 +408,17 @@ only shared costs they pay get logged. Travel minimum, in build order:
        - "Petrol 90, split between Alice's and Bob's families"
        - "Groceries 150, Carol's share is 50, rest split evenly"
        Add each to `scripts/check_extraction` when this is built.
-  4. `/balances`: per person and per family, in separate currencies (no FX conversion), with a
-     breakdown that can be forwarded to the group ("why do I owe 340?"). The suggested payments are
-     simplified: the fewest payments that settle everyone. Matching the largest debtor to the
-     largest creditor is enough at this size. Families settle by default, and a person marked as
-     settling alone gets their own line.
+  4. `/trip_bals`: one trip's balances per family and per person, in separate currencies (no FX
+     conversion), as plain text that can be forwarded to the group
+     ([ADR-0044](docs/decisions/0044-trip-balances-from-splits.md)). It shows the active trip,
+     or a list of trips to tap. The suggested payments match the largest debtor to the largest
+     creditor. Families settle by default, and a person who settles alone has a family label
+     of their own. In review 2026-11-17.
+     - Still to build: the per-entry breakdown ("why do I owe 340?") and the running tab
+       between close family (`/bals`), where trip and everyday costs mix. Both are planned
+       for a shared Google Sheet that the bot writes and everyone else can only view (anyone
+       with the link), refreshed when the command is used. Python does the maths; the sheet
+       holds finished numbers and is never read back.
   5. Settlement as its own entry type: one person paying another back, in full or in part. It moves
      balances and never counts as spending.
   6. `/recent` (today the last 5 entries) gets paging and a delete button per entry. A soft delete
@@ -416,10 +430,11 @@ only shared costs they pay get logged. Travel minimum, in build order:
   corrected text, reprocessed through `process_expense_text`), and fixing the split and payer
   after saving.
 
-  Must not break: `/today`, `/week`, `/month` and `cat_*` must not count other people's payments or
-  the full amount of a shared bill as household spending. Paid-by (step 2) skips entries paid
-  outside the household; a shared bill a household member paid still counts in full until step 3
-  decides on own-share. Settlements and deleted rows are filtered out of every query, including
+  Must not break: `/today`, `/week`, `/month` and `cat_*` must not count other people's payments
+  as household spending. Paid-by (step 2) skips entries paid outside the household; a shared
+  bill a household member paid counts in full, and stays that way (decided 2026-11-17,
+  ADR-0044: money paid for someone else is the payer's spending until it is paid back).
+  Settlements and deleted rows are filtered out of every query, including
   `find_recent_duplicate`. Entries already logged before this ships get their splits added by hand
   in SQL. Shares that don't add up are rejected in Python, inside the same database transaction
   as the entry (ADR-0039).
