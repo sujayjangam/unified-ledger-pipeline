@@ -375,9 +375,11 @@ only shared costs they pay get logged. Travel minimum, in build order:
        on for one entry. The bot would tag the entry to the upcoming trip whose destination the
        message names, with a button to pick another trip. Trip mode stays for while travelling
        and for splitting across everyone on the trip. Raised 2026-11-17; not designed yet.
-     - Weighted shares, needed for the trip's accommodation: a 5-night booking where some members
-       stay only 4 nights. Ticking people gives only an even split, so the split also needs a
-       weight per person (nights, or any count). Each share is amount × weight ÷ total weight,
+     - Weighted shares, shipped in PR 3
+       ([ADR-0042](docs/decisions/0042-uneven-shares-by-count.md)), for the trip's
+       accommodation: a 5-night booking where some members stay only 4 nights. Ticking people
+       gave only an even split, so the split carries a weight per person (nights, or any
+       count). Each share is amount × weight ÷ total weight,
        handed out in whole cents like every other split; one card charge stays one entry, which
        keeps reconciliation against the statement simple. Logging it as two entries (4 nights
        across everyone, 1 night across the rest) was considered and rejected for that reason.
