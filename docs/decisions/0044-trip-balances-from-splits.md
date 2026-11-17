@@ -52,6 +52,9 @@ Three things were open:
   query fails and an empty list when the trip has no split entries; the reply says which.
 - **Plain text.** The reply is sent with no `parse_mode`, so a name can't break it and it reads
   the same when forwarded. Balances are written in words ("Lee family owes 30.00"), not signs.
+  A report longer than Telegram's 4,096 characters is shortened, never refused: first the
+  people under each family are left out, then whole lines are cut from the end, with a note
+  saying so each time.
 - **The totals do not change.** `/today`, `/week`, `/month` and the category views keep counting
   an entry in full when a household member paid it. Money paid for someone else is the payer's
   spending until it is paid back. This replaces the plan recorded in ADR-0039's Consequences.
