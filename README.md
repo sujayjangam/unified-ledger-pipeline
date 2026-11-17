@@ -145,7 +145,9 @@ its context, rejected alternatives and cost. The ones that shaped the system mos
   split") opens a menu to tick people, or, while the entry is tagged to a trip, a whole family with one
   tap; each tap redraws the
   shares on the card. On a trip entry with no split, it opens with everyone on the trip ticked.
-  Even shares only for now: a message asking for uneven ones gets a warning and no split.
+  Uneven shares work by a count per person, such as nights ("5 nights, everyone except Carol's
+  family who only stayed 4"): the model copies the counts, Python checks each number is in the
+  message and works out the cents. A fixed amount or a percentage gets a warning and no split.
 - CI on every pull request: clean dependency install, lint, an import smoke check across `app/`,
   and a pytest suite over the money and date invariants — required to pass before a merge to
   `main`, enforced by a repository ruleset rather than merely reported on.

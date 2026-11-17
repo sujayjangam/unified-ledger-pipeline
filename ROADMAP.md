@@ -32,18 +32,28 @@ columns) and [#91](https://github.com/sujayjangam/unified-ledger-pipeline/pull/9
 production 2026-11-14 after a Neon-branch rehearsal and a backup). Before 0005, the 5 rows with
 no `account_id` were given a card by hand in SQL, one guarded `UPDATE` per `transaction_id`.
 
-**Next action:** group-trip splitting, below: step 3, splits
-(`docs/superpowers/plans/2026-11-16-splits.md`). PR 3 (uneven shares by count, ADR-0042) is
-passes the model check and the test bot (2026-11-17), PR open; then PR 2b (an
-immediate-family group), then aliases per sender (below; moves to after the trip if time runs
-short). Reordered 2026-11-16: the trip's accommodation needs uneven shares, and
-nothing for the trip depends on PR 2b.
+**Next action:** group-trip splitting, below: step 4, `/balances`, then step 5 (settlement) and
+step 6 (`/recent` with delete). These are what the trip still needs; none is planned in detail
+yet. Steps 1 to 3 are done (`docs/superpowers/plans/2026-11-16-splits.md`).
 
-**PR open 2026-11-16, not merged:** the one-person split wording. A split with one person who
-didn't pay read "Split: only Carol", which looked like Carol splitting with herself; the card now
-says "Carol owes Alice 5.55". A split whose only person is the payer is no split: the card shows
-no split line and no split rows are saved (the tick stays on the pending entry, so changing who
-paid brings the debt back).
+**Parked 2026-11-17, until after the trip:** splits PR 2b, everyday groups in the split menu.
+Designed and recorded in
+[ADR-0043](docs/decisions/0043-everyday-groups-for-the-split-menu.md): one group per person in a
+`participant_groups` table, categories as a later step, no relationships between people. An
+unfinished first pass sits on the local branch `feat/splits-family-group`; the splits plan says
+how to pick it up. Aliases per sender also moved to after the trip.
+
+**Done 2026-11-17:** step 3, splits, PR 3 (uneven shares by a count per person, such as
+nights), merged as PR [#106](https://github.com/sujayjangam/unified-ledger-pipeline/pull/106)
+([ADR-0042](docs/decisions/0042-uneven-shares-by-count.md)). No migration. It passed the model
+check and the test bot before the merge.
+
+**Done 2026-11-16:** the one-person split wording, merged as PR
+[#105](https://github.com/sujayjangam/unified-ledger-pipeline/pull/105). A split with one person
+who didn't pay read "Split: only Carol", which looked like Carol splitting with herself; the card
+now says "Carol owes Alice 5.55". A split whose only person is the payer is no split: the card
+shows no split line and no split rows are saved (the tick stays on the pending entry, so changing
+who paid brings the debt back).
 
 **Done 2026-11-16:** step 3, splits, PR 2 (the split menu, and people menus offering everyone
 off-trip), merged as PR [#103](https://github.com/sujayjangam/unified-ledger-pipeline/pull/103)
@@ -359,9 +369,10 @@ only shared costs they pay get logged. Travel minimum, in build order:
      [#101](https://github.com/sujayjangam/unified-ledger-pipeline/pull/101); PR 2, the split menu,
      done 2026-11-16, [#103](https://github.com/sujayjangam/unified-ledger-pipeline/pull/103).
      The one-person split wording fix merged 2026-11-16 (#105). PR 3, uneven shares by count
-     (nights), written 2026-11-16 (ADR-0042), tested on the test bot 2026-11-17, PR open.
-     Remaining, in this order: PR 2b (an immediate-family group), then aliases per sender if
-     time allows. After those: fixed amounts and percentages ("Carol's share is 50, rest split
+     (nights, ADR-0042), done 2026-11-17,
+     [#106](https://github.com/sujayjangam/unified-ledger-pipeline/pull/106).
+     After the trip: PR 2b (everyday groups in the split menu, designed in ADR-0043 and parked
+     2026-11-17), aliases per sender, fixed amounts and percentages ("Carol's share is 50, rest split
      evenly"), which PR 3 leaves as a warning with no split; and a count editor in the split
      menu, so a newly ticked person's count can be changed without resending.
      - Candidate, after the trip: a trip read from the message text. Pre-trip costs are logged
@@ -369,9 +380,11 @@ only shared costs they pay get logged. Travel minimum, in build order:
        on for one entry. The bot would tag the entry to the upcoming trip whose destination the
        message names, with a button to pick another trip. Trip mode stays for while travelling
        and for splitting across everyone on the trip. Raised 2026-11-17; not designed yet.
-     - Weighted shares, needed for the trip's accommodation: a 5-night booking where some members
-       stay only 4 nights. Ticking people gives only an even split, so the split also needs a
-       weight per person (nights, or any count). Each share is amount × weight ÷ total weight,
+     - Weighted shares, shipped in PR 3
+       ([ADR-0042](docs/decisions/0042-uneven-shares-by-count.md)), for the trip's
+       accommodation: a 5-night booking where some members stay only 4 nights. Ticking people
+       gave only an even split, so the split carries a weight per person (nights, or any
+       count). Each share is amount × weight ÷ total weight,
        handed out in whole cents like every other split; one card charge stays one entry, which
        keeps reconciliation against the statement simple. Logging it as two entries (4 nights
        across everyone, 1 night across the rest) was considered and rejected for that reason.
@@ -415,8 +428,7 @@ only shared costs they pay get logged. Travel minimum, in build order:
   planned for now: more than one payer per bill (log two entries), itemised bills, FX conversion.
   After the trip: a chat flow for creating trips, and the expense dashboard (Phase 4).
 
-  Planned before the trip, after PR 2b, and the first item to move after it if time runs short:
-  aliases per sender. People say "dad" or "mummy", not a display name,
+  Moved to after the trip (decided 2026-11-17): aliases per sender. People say "dad" or "mummy", not a display name,
   and the same word means different people for different senders, so one shared alias list would
   be wrong. An alias belongs to the sender: (sender, alias) → participant, set up from the
   gitignored seed like the directory, and checked by `match_person` after display names. Not the
