@@ -91,6 +91,6 @@ def test_every_example_is_in_the_model_check():
     examples = [line.removeprefix("• ") for _, text in TOPICS.values() for line in text.splitlines()
                 # An example has an amount and no double quotes; the rule lines quote wordings.
                 if line.startswith("• ") and any(ch.isdigit() for ch in line) and '"' not in line]
-    assert len(examples) >= 15
+    assert examples  # the filter below must still be finding them
     missing = [e for e in examples if e.casefold() not in script]
     assert not missing

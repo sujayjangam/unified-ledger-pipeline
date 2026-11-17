@@ -674,7 +674,7 @@ def test_check_line_without_a_unit_says_count():
     assert result.warnings == ("⚠️ Check Carol's count.",)
 
 
-# The two /help examples (app/services/help_topics.py) that only this branch's rules read.
+# Two "rest" wordings (one is a /help example) that only this branch's rules read.
 @pytest.mark.parametrize("message, reference, counts", [
     ("Airbnb 900 split by nights. Reds 5 nights, rest all 6 nights.",
      {"kind": "everyone", "people": [{"name": "Reds", "count": 5}]},

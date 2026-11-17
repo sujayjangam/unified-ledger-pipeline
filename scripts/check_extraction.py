@@ -141,7 +141,7 @@ SPLIT_CASES += [
      "outcome": {('Alice', 6), ('Bob', 5), ('Frank', 5), ('Carol', 5), ('Dave', 5), ('Erin', 6)}},
     # A rest word with no split word and nobody's count: never a whole-trip split.
     {"message": "Dinner with the others 80", "outcome": "no split"},
-    # The /help examples for "the rest" (app/services/help_topics.py). Bob and Frank are the Reds.
+    # "The rest" wordings; the first is a /help example (app/services/help_topics.py). Bob and Frank are the Reds.
     # Without "split by nights" the model dropped the Reds' 5 in 4 of 8 runs (2026-11-17), so
     # the help says it.
     {"message": "Airbnb 900 split by nights. Reds 5 nights, rest all 6 nights.",
