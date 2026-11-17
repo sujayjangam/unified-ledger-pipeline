@@ -33,9 +33,8 @@ production 2026-11-14 after a Neon-branch rehearsal and a backup). Before 0005, 
 no `account_id` were given a card by hand in SQL, one guarded `UPDATE` per `transaction_id`.
 
 **Next action:** step 5 (settlement, ADR-0046) now includes debt lines, pairwise netting
-and gifts at payback time (ADR-0047), built on `feat/settlements`. Before merge:
-apply migration 0009 to a Neon branch, try paybacks on the test bot, then apply 0009 to
-production by hand. Then step 6 (`/recent` with delete). These are what the trip still needs. Steps 1 to 4
+and gifts at payback time (ADR-0047), in review on `feat/settlements`: tried on the test bot
+against a Neon branch, and migration 0009 applied to production by hand on 2026-11-17. Then step 6 (`/recent` with delete). These are what the trip still needs. Steps 1 to 4
 are done (`docs/superpowers/plans/2026-11-16-splits.md`). After settlement: a finished trip's
 hand-kept sheet is loaded as real bills, as a test on real expenses, and the trip is read from
 the message text for pre-trip costs.
