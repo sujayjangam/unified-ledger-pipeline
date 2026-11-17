@@ -33,17 +33,22 @@ production 2026-11-14 after a Neon-branch rehearsal and a backup). Before 0005, 
 no `account_id` were given a card by hand in SQL, one guarded `UPDATE` per `transaction_id`.
 
 **Next action:** group-trip splitting, below: step 3, splits
-(`docs/superpowers/plans/2026-11-16-splits.md`). PR 3 (uneven shares by count, ADR-0042) is
-passes the model check and the test bot (2026-11-17), PR open; then PR 2b (an
-immediate-family group), then aliases per sender (below; moves to after the trip if time runs
-short). Reordered 2026-11-16: the trip's accommodation needs uneven shares, and
-nothing for the trip depends on PR 2b.
+(`docs/superpowers/plans/2026-11-16-splits.md`). Next is PR 2b (an immediate-family group),
+then aliases per sender (below; moves to after the trip if time runs short). Reordered
+2026-11-16: the trip's accommodation needed uneven shares, and nothing for the trip depends on
+PR 2b.
 
-**PR open 2026-11-16, not merged:** the one-person split wording. A split with one person who
-didn't pay read "Split: only Carol", which looked like Carol splitting with herself; the card now
-says "Carol owes Alice 5.55". A split whose only person is the payer is no split: the card shows
-no split line and no split rows are saved (the tick stays on the pending entry, so changing who
-paid brings the debt back).
+**Done 2026-11-17:** step 3, splits, PR 3 (uneven shares by a count per person, such as
+nights), merged as PR [#106](https://github.com/sujayjangam/unified-ledger-pipeline/pull/106)
+([ADR-0042](docs/decisions/0042-uneven-shares-by-count.md)). No migration. It passed the model
+check and the test bot before the merge.
+
+**Done 2026-11-16:** the one-person split wording, merged as PR
+[#105](https://github.com/sujayjangam/unified-ledger-pipeline/pull/105). A split with one person
+who didn't pay read "Split: only Carol", which looked like Carol splitting with herself; the card
+now says "Carol owes Alice 5.55". A split whose only person is the payer is no split: the card
+shows no split line and no split rows are saved (the tick stays on the pending entry, so changing
+who paid brings the debt back).
 
 **Done 2026-11-16:** step 3, splits, PR 2 (the split menu, and people menus offering everyone
 off-trip), merged as PR [#103](https://github.com/sujayjangam/unified-ledger-pipeline/pull/103)
@@ -359,7 +364,8 @@ only shared costs they pay get logged. Travel minimum, in build order:
      [#101](https://github.com/sujayjangam/unified-ledger-pipeline/pull/101); PR 2, the split menu,
      done 2026-11-16, [#103](https://github.com/sujayjangam/unified-ledger-pipeline/pull/103).
      The one-person split wording fix merged 2026-11-16 (#105). PR 3, uneven shares by count
-     (nights), written 2026-11-16 (ADR-0042), tested on the test bot 2026-11-17, PR open.
+     (nights, ADR-0042), done 2026-11-17,
+     [#106](https://github.com/sujayjangam/unified-ledger-pipeline/pull/106).
      Remaining, in this order: PR 2b (an immediate-family group), then aliases per sender if
      time allows. After those: fixed amounts and percentages ("Carol's share is 50, rest split
      evenly"), which PR 3 leaves as a warning with no split; and a count editor in the split
