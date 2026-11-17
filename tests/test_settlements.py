@@ -1,0 +1,403 @@
+"""Paybacks use fictional people and fake connections; no database or Telegram traffic."""
+import asyncio
+from datetime import date
+from unittest.mock import AsyncMock, MagicMock
+from types import SimpleNamespace
+
+import pytest
+
+import app.bot_core as bot
+from app.services import settlements, ledger_queries
+from test_bot_core import ALICE, _context, _update
+from test_trip_bals import BEACH, ENTRIES, _tap, _buttons
+
+
+def card(**changes):
+    """A pending payback from Carol to Alice, with all names invented."""
+    result = dict(trip_id=7, trip_name="Beach", from_id=3, to_id=1,
+                  clears_cents=3000, clears_currency="AUD", paid_cents=3000, paid_currency="AUD",
+                  suggested_cents=3000, debtor_member_ids=(3,), for_id=None, idempotency_key="fictional-key",
+                  date=date(2026, 11, 17), entered_by_participant_id=1, family="Lee",
+                  names={1: "Alice", 2: "Bob", 3: "Carol"}, people=tuple(SimpleNamespace(id=i) for i in (1, 2, 3)), currencies={'AUD', 'SGD', 'IDR'})
+    result.update(changes)
+    return result
+
+
+@pytest.fixture
+def flow(monkeypatch, directory):
+    """Give the handler a report snapshot; any directory reload would fail this test."""
+    monkeypatch.setattr(bot, '_load_directory', MagicMock(side_effect=AssertionError("Do not reload")))
+    monkeypatch.setattr(bot, '_load_bals_trip', MagicMock(return_value=BEACH))
+    monkeypatch.setattr(bot, 'get_trip_split_entries', MagicMock(return_value=ENTRIES))
+    monkeypatch.setattr(bot, 'get_trip_settlements', MagicMock(return_value=[]))
+    monkeypatch.setattr(bot, 'get_sgt_now', lambda: MagicMock(date=lambda: date(2026, 11, 17)))
+    context = _context()
+    context.bot.edit_message_text = AsyncMock()
+    context.user_data['bals_reports'] = {10: directory}
+    return context
+
+
+@pytest.fixture
+def authorized(monkeypatch, directory):
+    """Typed replies go through authorize() first, like every message; let it pass here."""
+    monkeypatch.setattr(bot, 'authorize', AsyncMock(return_value=directory))
+
+
+def tap(data, message_id=20):
+    """Make the awaited Telegram methods behave like a real callback's methods."""
+    update, query = _tap(data)
+    query.message.message_id = message_id
+    query.edit_message_reply_markup = AsyncMock()
+    query.message.reply_text = AsyncMock(return_value=MagicMock(message_id=20))
+    return update, query
+
+
+async def test_new_card_requires_family_choice_and_checks_membership(flow):
+    """A sender outside the owing family must explicitly pick a payer from the trip."""
+    update, query = tap('settle:new:7:1:3000', 10)
+    await bot.handle_settle_button(update, flow)
+    bot._load_bals_trip.assert_called_once_with(1, 7)
+    pending = flow.user_data['pending_settlements'][20]
+    assert pending['from_id'] is None and pending['debtor_member_ids'] == (3,)
+    buttons = _buttons(query.message.reply_text.await_args.kwargs['reply_markup'])
+    assert buttons['Carol'] == 'settle:person:3' and 'Confirm' not in buttons
+    # Alice is owed, and Bob is in her family: money from either is the family paying itself.
+    assert 'Alice' not in buttons and 'Bob' not in buttons
+    query.answer.assert_awaited_once()
+    update, query = tap('settle:person:2')
+    await bot.handle_settle_button(update, flow)
+    assert flow.user_data['pending_settlements'][20]['from_id'] is None
+    update, query = tap('settle:person:999')
+    await bot.handle_settle_button(update, flow)
+    assert flow.user_data['pending_settlements'][20]['from_id'] is None
+    query.edit_message_text.assert_not_awaited()
+    update, query = tap('settle:person:3')
+    await bot.handle_settle_button(update, flow)
+    assert flow.user_data['pending_settlements'][20]['from_id'] == 3
+    assert 'Confirm' in _buttons(query.edit_message_text.await_args.kwargs['reply_markup'])
+
+
+async def test_new_card_defaults_to_sender_in_family(flow, monkeypatch):
+    """Alice can pay for Tan; a person without a family defaults to that person."""
+    from dataclasses import replace
+    monkeypatch.setattr(bot, 'get_trip_split_entries', lambda _: [{'currency': 'AUD', 'paid_by': 3, 'splits': {1: 3000}}])
+    for trip in (BEACH, replace(BEACH, families=())):
+        bot._load_bals_trip.return_value = trip
+        update, query = tap('settle:new:7:1:3000', 10)
+        await bot.handle_settle_button(update, flow)
+        assert flow.user_data['pending_settlements'][20]['from_id'] == 1
+        assert 'Confirm' in _buttons(query.message.reply_text.await_args.kwargs['reply_markup'])
+
+
+def three_families(monkeypatch):
+    """Bob settles alone here (family "Ng"), so he can pay Carol's debt to Alice as a gift.
+
+    The gift giver must come from a third family: the receiver's own family (Alice's) is never
+    offered, because money from inside it is that family paying itself.
+    """
+    from dataclasses import replace
+    bot._load_bals_trip.return_value = replace(BEACH, families=((1, "Tan"), (2, "Ng"), (3, "Lee")))
+    monkeypatch.setattr(bot, 'get_trip_split_entries',
+                        MagicMock(return_value=[{'currency': 'AUD', 'paid_by': 1, 'splits': {3: 3000}}]))
+
+
+async def test_gift_menu_snapshot_switch_and_confirm(flow, monkeypatch):
+    """Trip people outside the receiver's family can pay, debtors first, beneficiary kept."""
+    three_families(monkeypatch)
+    update, query = tap('settle:new:7:1:3000', 10)
+    await bot.handle_settle_button(update, flow)
+    pending = flow.user_data['pending_settlements'][20]
+    assert [p.id for p in pending['people']] == [3, 2]
+    update, query = tap('settle:person:2')
+    await bot.handle_settle_button(update, flow)
+    gift = flow.user_data['pending_settlements'][20]
+    assert gift['for_id'] == 3 and gift['debtor_member_ids'] == (3,)
+    assert 'From: Bob, paying for Lee family (a gift: nobody will owe Bob)' in query.edit_message_text.await_args.args[0]
+    update, query = tap('settle:person:3')
+    await bot.handle_settle_button(update, flow)
+    assert flow.user_data['pending_settlements'][20]['for_id'] is None
+    update, query = tap('settle:person:2')
+    await bot.handle_settle_button(update, flow)
+    writer = MagicMock(return_value=True)
+    monkeypatch.setattr(bot, 'add_settlement', writer)
+    update, query = tap('settle:confirm')
+    await bot.handle_settle_button(update, flow)
+    assert writer.call_args.kwargs['for_id'] == 3
+    assert writer.call_args.kwargs['from_id'] == 2
+
+
+async def test_failed_gift_redraw_keeps_original_card(flow, monkeypatch):
+    """A failed Telegram edit must not silently change the payer or beneficiary."""
+    three_families(monkeypatch)
+    update, query = tap('settle:new:7:1:3000', 10)
+    await bot.handle_settle_button(update, flow)
+    original = flow.user_data['pending_settlements'][20]
+    update, query = tap('settle:person:2')
+    query.edit_message_text.side_effect = RuntimeError('offline')
+    with pytest.raises(RuntimeError):
+        await bot.handle_settle_button(update, flow)
+    assert flow.user_data['pending_settlements'][20] is original
+
+
+async def test_person_in_directory_but_not_trip_is_not_offered(flow):
+    """The directory snapshot supplies names, but only trip members can be payers."""
+    from dataclasses import replace
+
+    bot._load_bals_trip.return_value = replace(BEACH, member_ids=(1, 3))
+    update, query = tap('settle:new:7:1:3000', 10)
+    await bot.handle_settle_button(update, flow)
+    pending = flow.user_data['pending_settlements'][20]
+    assert [p.id for p in pending['people']] == [3]   # Bob isn't on the trip; Alice is owed
+    update, query = tap('settle:person:2')
+    await bot.handle_settle_button(update, flow)
+    query.edit_message_text.assert_not_awaited()
+    assert flow.user_data['pending_settlements'][20] is pending
+
+
+def test_overpaid_gift_names_giver_and_handles_lone_debtor():
+    """Gift labels match report labels and the excess is owed to the giver."""
+    for family, label in [('Lee', 'Lee family'), ('Cedar Grove', 'Cedar Grove'), (None, 'Carol')]:
+        text = settlements.settlement_card_text(card(from_id=2, for_id=3, family=family,
+                                                    clears_cents=4000, paid_cents=4000))
+        assert f'From: Bob, paying for {label} (a gift: nobody will owe Bob)' in text
+        assert 'owed back to Bob.' in text
+
+
+@pytest.mark.parametrize('data', ['settle:new:7:1:2999', 'settle:new:7:2:3000', 'settle:new:7:0:3000'])
+async def test_stale_or_invalid_buttons_change_nothing(flow, data):
+    """Old suggestions cannot silently create a card for a different amount."""
+    update, query = tap(data, 10)
+    await bot.handle_settle_button(update, flow)
+    query.answer.assert_awaited_once()
+    if ':0:' not in data:
+        assert query.answer.await_args.args == (bot.SETTLE_STALE,)
+    query.message.reply_text.assert_not_awaited()
+    assert 'pending_settlements' not in flow.user_data
+
+
+@pytest.mark.parametrize('missing', ['get_trip_split_entries', 'get_trip_settlements'])
+async def test_new_card_read_failure_is_not_a_settled_trip(flow, missing):
+    """Both reads must succeed before a card can be made."""
+    getattr(bot, missing).return_value = None
+    update, query = tap('settle:new:7:1:3000', 10)
+    await bot.handle_settle_button(update, flow)
+    query.answer.assert_awaited_once_with(bot.BALS_ERROR)
+    query.message.reply_text.assert_not_awaited()
+
+
+@pytest.mark.parametrize('inserted', [True, False])
+async def test_confirm_and_double_tap_save_once(flow, monkeypatch, inserted):
+    """Even an already-inserted key is success; a resolved card only gets a toast."""
+    pending = card()
+    flow.user_data['pending_settlements'] = {20: pending}
+    update, query = tap('settle:confirm')
+    def save(**kwargs):
+        """Check that progress reached Telegram before the blocking write."""
+        query.edit_message_reply_markup.assert_awaited_once()
+        assert kwargs['source'] == 'telegram_bot'
+        assert kwargs['entered_by_participant_id'] == 1 and kwargs['date'] == date(2026, 11, 17)
+        assert kwargs['clears_amount'] == '30.00' and kwargs['idempotency_key'] == 'fictional-key'
+        return inserted
+    writer = MagicMock(side_effect=save)
+    monkeypatch.setattr(bot, 'add_settlement', writer)
+    other, other_query = tap('settle:confirm')
+    await asyncio.gather(bot.handle_settle_button(update, flow), bot.handle_settle_button(other, flow))
+    writer.assert_called_once()
+    query.answer.assert_awaited_once()
+    other_query.answer.assert_awaited_once()
+    other_query.edit_message_text.assert_not_awaited()
+    assert query.edit_message_text.await_args.args[0].endswith('✅ Payback saved.')
+    assert query.edit_message_text.await_args.kwargs['reply_markup'] is None
+
+
+async def test_failed_save_restores_same_key_and_buttons(flow, monkeypatch):
+    """A retry keeps the original key even if the failed call reached Postgres."""
+    pending = card(clears_cents=4000, paid_cents=4000)
+    flow.user_data['pending_settlements'] = {20: pending}
+    monkeypatch.setattr(bot, 'add_settlement', MagicMock(side_effect=RuntimeError('offline')))
+    update, query = tap('settle:confirm')
+    await bot.handle_settle_button(update, flow)
+    assert flow.user_data['pending_settlements'][20] is pending
+    assert bot._card_outcome(flow, 20) is None
+    assert '⚠️ Confirm overpayment' in _buttons(query.edit_message_text.await_args.kwargs['reply_markup'])
+    query.answer.assert_awaited_once()
+
+
+async def test_cancel_and_resolved_menu_are_toast_only(flow):
+    """Cancelling removes the buttons and no later tap redraws the card."""
+    flow.user_data['pending_settlements'] = {20: card()}
+    update, query = tap('settle:cancel')
+    await bot.handle_settle_button(update, flow)
+    assert query.edit_message_text.await_args.args[0].endswith('❌ Cancelled.')
+    update, query = tap('settle:who')
+    await bot.handle_settle_button(update, flow)
+    query.answer.assert_awaited_once()
+    query.edit_message_text.assert_not_awaited()
+
+
+@pytest.mark.parametrize('value,side,expected', [('40', 'clears', (4000, 'AUD', 4000)),
+                                                ('50 SGD', 'paid', (3000, 'SGD', 5000)),
+                                                ('20 AUD', 'paid', (2000, 'AUD', 2000))])
+async def test_prompt_reply_routes_before_expenses(flow, authorized, monkeypatch, value, side, expected):
+    """An amount reply changes this card, never creates an expense."""
+    flow.user_data['pending_settlements'] = {20: card()}
+    update, query = tap('settle:' + side)
+    query.message.reply_text.return_value.message_id = 30
+    await bot.handle_settle_button(update, flow)
+    assert query.message.reply_text.await_args.kwargs['reply_markup'].force_reply
+    reply = _update(ALICE, value)
+    reply.message.reply_to_message.message_id = 30
+    extract = AsyncMock()
+    monkeypatch.setattr(bot, 'process_expense_text', extract)
+    await bot.handle_text(reply, flow)
+    updated = flow.user_data['pending_settlements'][20]
+    assert (updated['clears_cents'], updated['paid_currency'], updated['paid_cents']) == expected
+    extract.assert_not_awaited()
+    assert flow.bot.edit_message_text.await_args.kwargs['message_id'] == 20
+
+
+@pytest.mark.parametrize('value', ['banana', '-5', '0', 'NaN', '50 XYZ', '50 SGF', '50 SGD extra'])
+async def test_bad_reply_does_not_change_card_or_reach_model(flow, authorized, monkeypatch, value):
+    """Bad input stays in the payback flow and explains the expected format."""
+    pending = card()
+    flow.user_data.update(pending_settlements={20: pending}, settlement_prompts={30: (20, 'paid')})
+    extract = AsyncMock()
+    monkeypatch.setattr(bot, 'process_expense_text', extract)
+    update = _update(ALICE, value)
+    update.message.reply_to_message.message_id = 30
+    await bot.handle_text(update, flow)
+    assert flow.user_data['pending_settlements'][20] is pending
+    update.message.reply_text.assert_awaited_once()
+    extract.assert_not_awaited()
+
+
+async def test_reply_to_resolved_prompt_never_becomes_expense(flow, authorized, monkeypatch):
+    """Old prompt links remain recognisable after the card is gone."""
+    flow.user_data['settlement_prompts'] = {30: (20, 'paid')}
+    extract = AsyncMock()
+    monkeypatch.setattr(bot, 'process_expense_text', extract)
+    update = _update(ALICE, '50 SGD')
+    update.message.reply_to_message.message_id = 30
+    await bot.handle_text(update, flow)
+    extract.assert_not_awaited()
+    update.message.reply_text.assert_awaited_once_with(bot.SETTLE_GONE)
+
+
+async def test_reply_after_restart_never_becomes_expense(flow, authorized, monkeypatch):
+    """The bot's own prompt text protects replies even when its memory has been lost."""
+    update = _update(ALICE, '50 SGD')
+    update.message.reply_to_message.text = bot.SETTLE_PROMPTS['paid']
+    update.message.reply_to_message.from_user.id = flow.bot.id
+    extract = AsyncMock()
+    monkeypatch.setattr(bot, 'process_expense_text', extract)
+    await bot.handle_text(update, flow)
+    extract.assert_not_awaited()
+    update.message.reply_text.assert_awaited_once_with(bot.SETTLE_GONE)
+
+
+async def test_unauthorized_reply_never_touches_a_card(flow, monkeypatch):
+    """authorize() runs before the payback check, so a refused sender changes nothing."""
+    pending = card()
+    flow.user_data.update(pending_settlements={20: pending}, settlement_prompts={30: (20, 'paid')})
+    monkeypatch.setattr(bot, 'authorize', AsyncMock(return_value=None))
+    update = _update(ALICE, '50 SGD')
+    update.message.reply_to_message.message_id = 30
+    await bot.handle_text(update, flow)
+    assert flow.user_data['pending_settlements'][20] is pending
+    flow.bot.edit_message_text.assert_not_awaited()
+
+
+@pytest.mark.parametrize('value,expected', [('5000 INR', (500000, 'INR')), ('20 usd', (2000, 'USD')),
+                                            ('600,000 IDR', (60000000, 'IDR'))])
+def test_any_real_currency_is_accepted(value, expected):
+    """A payback can be handed over in any real currency, even one no bill on the trip used."""
+    assert settlements.parse_settlement_amount(value, "SGD", set()) == expected
+
+
+def test_amount_with_thousands_commas_is_read():
+    """Rupiah is typed with commas; they are separators, never a decimal point."""
+    assert settlements.parse_settlement_amount("600,000 IDR", "SGD", {"IDR"}) == (60000000, "IDR")
+
+
+async def test_failed_answer_is_never_answered_twice(flow):
+    """An expired callback answer does not enter the read-error handler."""
+    bot._load_bals_trip.return_value = None
+    update, query = tap('settle:new:7:1:3000', 10)
+    query.answer.side_effect = RuntimeError('expired')
+    with pytest.raises(RuntimeError):
+        await bot.handle_settle_button(update, flow)
+    query.answer.assert_awaited_once_with(bot.BALS_NOT_MEMBER)
+
+
+def test_card_text_and_overpayment():
+    """The warning names the actual payer, and is about clears rather than paid."""
+    text = settlements.settlement_card_text(card(paid_cents=5000, paid_currency='SGD'))
+    assert 'From: Carol (Lee family)' in text and 'To: Alice' in text
+    assert 'Clears: 30.00 AUD\nPaid: 50.00 SGD\nDate: 17 Nov' in text
+    assert '⚠️' not in text
+    text = settlements.settlement_card_text(card(clears_cents=4000, paid_cents=4000))
+    assert 'more than the 30.00 AUD owed' in text and 'owed back to Carol.' in text
+
+
+def test_amount_changes_keep_cross_currency_paid_side():
+    """Changing debt does not invent a new exchange rate for money already specified."""
+    original = card(paid_currency='SGD', paid_cents=5000)
+    changed = settlements.change_settlement_amount(original, '40', 'clears')
+    assert changed['paid_cents'] == 5000 and original['clears_cents'] == 3000
+    with pytest.raises(ValueError):
+        settlements.change_settlement_amount(original, '40 SGD', 'clears')
+    assert settlements.parse_settlement_amount('1.005 sgd', 'AUD', {'SGD'}) == (101, 'SGD')
+
+
+def write_args(**changes):
+    """Fictional writer inputs use decimal text, like a sheet loader would."""
+    result = dict(from_id=1, to_id=2, clears_amount='10', clears_currency='AUD',
+                  paid_amount='10', paid_currency='AUD', date=date(2026, 11, 17),
+                  source='test', idempotency_key='fictional-key')
+    result.update(changes)
+    return result
+
+
+@pytest.mark.parametrize('changes', [dict(clears_amount='0'), dict(paid_amount='-1'),
+                                     dict(to_id=1), dict(for_id=2), dict(paid_amount='11')])
+def test_writer_validates_before_connecting(monkeypatch, changes):
+    """Invalid money or people cannot reach a connection, even for a loader."""
+    connect = MagicMock()
+    monkeypatch.setattr(settlements, 'get_connection', connect)
+    with pytest.raises(ValueError):
+        settlements.add_settlement(**write_args(**changes))
+    connect.assert_not_called()
+
+
+def test_writer_idempotency_and_errors(monkeypatch):
+    """Only an inserted row returns True, while a database failure is raised."""
+    manager = MagicMock()
+    conn = manager.__enter__.return_value
+    monkeypatch.setattr(settlements, 'get_connection', lambda: manager)
+    for count in (1, 0):
+        conn.execute.return_value.rowcount = count
+        assert settlements.add_settlement(**write_args(for_id=3)) is bool(count)
+    sql, params = conn.execute.call_args.args
+    assert 'ON CONFLICT (idempotency_key) DO NOTHING' in str(sql)
+    assert params['clears_cents'] == params['paid_cents'] == 1000
+    assert params['for_id'] == 3 and 'for_participant_id' in str(sql)
+    assert 'created_at' not in params and 'id' not in params
+    conn.execute.side_effect = RuntimeError('offline')
+    with pytest.raises(RuntimeError):
+        settlements.add_settlement(**write_args())
+
+
+def test_read_shape_order_and_failure(monkeypatch):
+    """The clears side feeds balances; the paid side survives for the report."""
+    manager = MagicMock()
+    conn = manager.__enter__.return_value
+    row = dict(id=1, date=date(2026, 11, 17), from_id=1, to_id=2, for_id=3, cents=1000,
+               currency='AUD', paid_cents=900, paid_currency='SGD')
+    conn.execute.return_value.mappings.return_value.all.return_value = [row]
+    monkeypatch.setattr(ledger_queries, 'get_connection', lambda: manager)
+    assert ledger_queries.get_trip_settlements(7) == [row]
+    sql, params = conn.execute.call_args.args
+    assert 'for_participant_id AS for_id' in str(sql)
+    assert 'ORDER BY date, created_at, id' in str(sql) and params == {'trip_id': 7}
+    conn.execute.side_effect = RuntimeError('offline')
+    assert ledger_queries.get_trip_settlements(7) is None

@@ -115,6 +115,23 @@ def get_category_summary(start_date: str, end_date: str):
         return []
 
 
+def get_trip_settlements(trip_id: int):
+    """Read paybacks oldest first; None means failure, not an already settled trip."""
+    try:
+        with get_connection() as conn:
+            rows = conn.execute(text('''
+                SELECT id, date, from_participant_id AS from_id, to_participant_id AS to_id,
+                       for_participant_id AS for_id,
+                       clears_cents AS cents, clears_currency AS currency, paid_cents, paid_currency
+                FROM settlements WHERE trip_id = :trip_id
+                ORDER BY date, created_at, id
+            '''), {"trip_id": trip_id}).mappings().all()
+            return [dict(row) for row in rows]
+    except Exception as e:
+        print(f"Could not read trip paybacks: {e}")
+        return None
+
+
 def get_trip_split_entries(trip_id: int):
     """Every split entry tagged to one trip, in the shape app/services/balances.py reads.
 

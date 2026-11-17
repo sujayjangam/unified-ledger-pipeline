@@ -32,8 +32,9 @@ columns) and [#91](https://github.com/sujayjangam/unified-ledger-pipeline/pull/9
 production 2026-11-14 after a Neon-branch rehearsal and a backup). Before 0005, the 5 rows with
 no `account_id` were given a card by hand in SQL, one guarded `UPDATE` per `transaction_id`.
 
-**Next action:** group-trip splitting, below: step 5 (settlement), then step 6 (`/recent` with
-delete). These are what the trip still needs; neither is planned in detail yet. Steps 1 to 4
+**Next action:** step 5 (settlement, ADR-0046) now includes debt lines, pairwise netting
+and gifts at payback time (ADR-0047), in review on `feat/settlements`: tried on the test bot
+against a Neon branch, and migration 0009 applied to production by hand on 2026-11-17. Then step 6 (`/recent` with delete). These are what the trip still needs. Steps 1 to 4
 are done (`docs/superpowers/plans/2026-11-16-splits.md`). After settlement: a finished trip's
 hand-kept sheet is loaded as real bills, as a test on real expenses, and the trip is read from
 the message text for pre-trip costs.
@@ -46,7 +47,7 @@ not to their family, and shares inside the payer's own family cancel per bill. D
 it: the totals keep counting a shared bill in full when the household paid it, and the running tab between close family (`/bals`) is a separate, later view, shown
 on a shared Google Sheet.
 
-**In review 2026-11-17:** a split by nights that names trip families by their labels
+**Done 2026-11-17 ([#110](https://github.com/sujayjangam/unified-ledger-pipeline/pull/110)):** a split by nights that names trip families by their labels
 ("Reds and Blues 5 nights, rest all 6"). Family labels now match, the payer's "for 6 nights"
 is no longer read as their own count, and the rest's count is read from the words. A count
 read loosely (a payer's count from outside their paying clause, or a missing count taken from
@@ -436,7 +437,11 @@ only shared costs they pay get logged. Travel minimum, in build order:
        with the link), refreshed when the command is used. Python does the maths; the sheet
        holds finished numbers and is never read back.
   5. Settlement as its own entry type: one person paying another back, in full or in part. It moves
-     balances and never counts as spending.
+     balances and never counts as spending. Designed 2026-11-17
+     ([ADR-0046](docs/decisions/0046-settlements-as-their-own-records.md)): a `settlements`
+     table, a "Mark paid" tap under each suggested payment, the paid side may be in another
+     currency (both amounts stated, no exchange-rate lookup), and an overpayment saves behind a
+     "⚠️ Confirm overpayment" button. If time allows: an Edit step on the payback card.
   6. `/recent` (today the last 5 entries) gets paging and a delete button per entry. A soft delete
      is suggested: the row stays but drops out of balances and totals.
 
@@ -455,7 +460,7 @@ only shared costs they pay get logged. Travel minimum, in build order:
   in SQL. Shares that don't add up are rejected in Python, inside the same database transaction
   as the entry (ADR-0039).
 
-  Open: a settlement paid in a different currency from the balance it clears (deferred). Not
+  A settlement paid in a different currency from the balance it clears is in step 5 (ADR-0046). Not
   planned for now: more than one payer per bill (log two entries), itemised bills, FX conversion.
   After the trip: a chat flow for creating trips, and the expense dashboard (Phase 4).
 

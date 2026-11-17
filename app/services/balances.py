@@ -1,34 +1,9 @@
-"""Who owes whom on a trip, worked out from the saved splits.
+"""Pure trip debt lines: whole cents, separate currencies, no FX or rounding.
 
-The rule: a family pays as one, but the money goes back to the PERSON who paid the bill,
-never to their family. Three steps:
-
-  1. unit_balances, bill by bill:
-       - a share of someone in the payer's own family is skipped (the family sorts that
-         out itself, and the payer's own share is theirs anyway);
-       - every other share is owed by the sharer's family to the payer in person.
-     Then a family that owes money has that debt taken out of its own members' credits
-     first (largest credit first, ties to the lowest id), so a family never "pays" one of
-     its own members.
-  2. suggest_payments turns the balances into a short list of "X pays Y this much".
-  3. trip_balance_lines writes it all as plain text.
-
-Why bill by bill, and not by adding up each person first: family T is Alice, Bob and Carol.
-Alice pays 300.00 for the three of them, then Bob pays 700.00 for those three and four
-people from other families, 100.00 each. Bill by bill, the first bill moves nothing and the
-four outsiders each owe Bob 100.00. Adding up per person first would leave Alice "owed"
-100.00 by the family, and part of the outsiders' money could end up going to her, though
-she paid for none of them.
-
-A balance is in whole cents. PLUS means a person is owed money; MINUS means a family (or a
-person with no family) owes money. Within one currency the balances always add up to zero:
-every cent someone is owed is a cent somebody else owes.
-
-Only adding and subtracting whole cents happens here, so nothing is ever rounded (ADR-0004).
-Currencies are kept apart: there is no FX conversion.
-
-Nothing in this module touches the database, the model or Telegram, so the tests can run
-it on made-up rows.
+Bills skip shares inside the payer's unit (ADR-0044). Outside shares create lines
+from the sharer's unit to the person who paid. Paybacks reduce one line; excess
+returns to the actual giver. Only opposite lines between two units cancel,
+largest first, then lowest creditor id (ADR-0047). Never route through a third unit.
 """
 
 from dataclasses import dataclass
@@ -38,75 +13,86 @@ from app.add_expense import format_cents
 
 @dataclass(frozen=True)
 class Balances:
-    """Per-bill debts and personal credits after family debt absorption.
+    """Remaining debt lines and their signed display totals.
 
     net:      {currency: {unit: cents}}. Plus = is owed, minus = owes.
+    lines:    {currency: {(debtor unit, creditor person id): cents}}.
     no_payer: the split entries that had no payer recorded. They are left out of `net`, and
               handed back here so the caller can show a warning rather than lose them quietly.
     """
     net: dict
+    lines: dict
     no_payer: tuple = ()
 
 
 @dataclass(frozen=True)
 class Payment:
-    """One repayment: e.g. family T pays person Bob 100 cents after absorption."""
+    """One repayment: e.g. family T pays person Bob 100 cents on a remaining line."""
     from_unit: object
     to_unit: object
     cents: int
 
 
-def unit_balances(entries, families: dict) -> Balances:
-    """Debit outside sharers' units and credit each bill's payer, in whole cents.
+def unit_balances(entries, families: dict, settlements=()) -> Balances:
+    """Build bill lines, subtract paybacks, then cancel only between pairs of units.
 
-    Each entry is a dict with:
-      currency: "SGD", "AUD"...
-      paid_by:  the participant id of who paid, or None when it wasn't recorded
-      splits:   {participant id: share in cents}, the rows of `transaction_splits`
-
-    Shares within the payer's unit cancel on that bill, before totals are made.
-    A family's debt consumes its members' credits, largest first, ties to lowest id.
-    For example, Bob in T is owed 400.00 and T owes 150.00 elsewhere: Bob keeps
-    250.00 credit and T owes nothing. Unlabelled people net on their personal key.
-
-    An entry with no splits is the payer's alone ("not split"), so it moves nothing.
+    Entries contain currency, paid_by and splits ({person id: whole cents}).
+    Settlements contain from_id, to_id, cents, currency and optional for_id.
+    Keep empty currencies to distinguish settled bills from no bills.
     """
-    net: dict = {}
+    by_currency: dict = {}
     no_payer = []
     for entry in entries:
-        splits = entry.get("splits") or {}
-        if not splits:
+        if not entry.get("splits"):
             continue
         payer = entry.get("paid_by")
         if payer is None:
-            # Without a payer there is nobody to owe the shares to. Never guess one here.
             no_payer.append(entry)
             continue
-        units = net.setdefault(entry["currency"], {})
-        payer_unit = unit_of(payer, families)
-        credit = ("person", payer)
-        for participant_id, share_cents in splits.items():
-            debtor = unit_of(participant_id, families)
-            if debtor == payer_unit:
-                # Same family as the payer: nothing to settle with the rest of the group.
-                continue
-            units[debtor] = units.get(debtor, 0) - share_cents
-            units[credit] = units.get(credit, 0) + share_cents
-    for currency, units in net.items():
-        for family in [unit for unit in units if unit[0] == "family" and units[unit] < 0]:
-            members = [unit for unit in units if unit[0] == "person" and units[unit] > 0
-                       and unit_of(unit[1], families) == family]
-            # The family's debt comes out of what its own members are owed first, so the
-            # report never says "T family pays Bob" when Bob is in T.
-            for member in sorted(members, key=lambda unit: (-units[unit], unit[1])):
-                absorbed = min(-units[family], units[member])
-                units[family] += absorbed
-                units[member] -= absorbed
-                if units[family] == 0:
-                    break
-        # Keep empty currencies to distinguish a settled split trip from an unsplit trip.
+        lines = by_currency.setdefault(entry["currency"], {})
+        for sharer, cents in entry["splits"].items():
+            debtor = unit_of(sharer, families)
+            if debtor != unit_of(payer, families):
+                key = (debtor, payer)
+                lines[key] = lines.get(key, 0) + cents
+    for settlement in settlements:
+        payer, receiver = settlement["from_id"], settlement["to_id"]
+        beneficiary = settlement.get("for_id")
+        debtor = unit_of(payer if beneficiary is None else beneficiary, families)
+        receiver_unit = unit_of(receiver, families)
+        lines = by_currency.setdefault(settlement["currency"], {})
+        if debtor == receiver_unit:
+            continue
+        remaining = lines.pop((debtor, receiver), 0) - settlement["cents"]
+        if remaining > 0:
+            lines[(debtor, receiver)] = remaining
+        elif remaining < 0:
+            # Even a gift's excess belongs to whoever actually handed it over.
+            reverse = (receiver_unit, payer)
+            lines[reverse] = lines.get(reverse, 0) - remaining
+    net = {}
+    for currency, lines in by_currency.items():
+        pairs = {tuple(sorted((debtor, unit_of(creditor, families))))
+                 for debtor, creditor in lines}
+        for left, right in sorted(pairs):
+            sides = [[key for key in lines if key[0] == debtor
+                      and unit_of(key[1], families) == creditor]
+                     for debtor, creditor in ((left, right), (right, left))]
+            cancel = min(sum(lines[key] for key in side) for side in sides)
+            for side in sides:
+                remaining = cancel
+                for key in sorted(side, key=lambda key: (-lines[key], key[1])):
+                    reduction = min(remaining, lines[key])
+                    lines[key] -= reduction
+                    remaining -= reduction
+        by_currency[currency] = {key: cents for key, cents in lines.items() if cents}
+        units = {}
+        for (debtor, creditor), cents in by_currency[currency].items():
+            units[debtor] = units.get(debtor, 0) - cents
+            person = ("person", creditor)
+            units[person] = units.get(person, 0) + cents
         net[currency] = {unit: cents for unit, cents in units.items() if cents}
-    return Balances(net=net, no_payer=tuple(no_payer))
+    return Balances(net=net, lines=by_currency, no_payer=tuple(no_payer))
 
 
 def unit_of(participant_id: int, families: dict) -> tuple:
@@ -122,45 +108,14 @@ def unit_of(participant_id: int, families: dict) -> tuple:
     return ("family", family) if family else ("person", participant_id)
 
 
-def suggest_payments(net: dict) -> list[Payment]:
-    """A short list of payments that brings every balance in `net` to zero.
-
-    `net` is {unit: cents} for ONE currency from unit_balances after debt absorption.
-    The rule: whoever owes the most pays whoever is owed the most, as much as
-    both sides allow; repeat until nobody owes anything. Each payment clears at least one
-    side completely, so there are never more payments than (number of units - 1).
-
-    That is a simple, predictable rule, not a guarantee of the very fewest payments possible;
-    for a group of this size the difference is at most a payment or so (ROADMAP, step 4).
-
-    For example, T owing 100 cents pays Bob personally when Bob is owed 100 cents.
-    Ties go to the unit that sorts first, so the same balances always give the same list.
-    Raises ValueError when the balances don't add up to zero: then some money is unaccounted
-    for, and any list of payments would be wrong.
-    """
-    if sum(net.values()) != 0:
-        raise ValueError("Balances must add up to zero before payments can be suggested")
-    # Two piles, both as positive cents: what each debtor still owes, what each creditor is
-    # still owed. Units at exactly zero are already settled and are in neither.
-    owes = {unit: -cents for unit, cents in net.items() if cents < 0}
-    owed = {unit: cents for unit, cents in net.items() if cents > 0}
-    payments = []
-    while owes:
-        # min() with a minus sign picks the LARGEST amount; the unit itself breaks a tie.
-        debtor = min(owes, key=lambda unit: (-owes[unit], unit))
-        creditor = min(owed, key=lambda unit: (-owed[unit], unit))
-        cents = min(owes[debtor], owed[creditor])
-        payments.append(Payment(from_unit=debtor, to_unit=creditor, cents=cents))
-        owes[debtor] -= cents
-        owed[creditor] -= cents
-        if owes[debtor] == 0:
-            del owes[debtor]
-        if owed[creditor] == 0:
-            del owed[creditor]
-    return payments
-
-
 # --- Words for people to read. ---
+
+def trip_payments(entries, families: dict, settlements=()) -> list[tuple[str, Payment]]:
+    """Number currencies alphabetically, then use the same stable rule within each one."""
+    result = unit_balances(entries, families, settlements)
+    return [(currency, Payment(debtor, ("person", creditor), cents)) for currency in sorted(result.lines)
+            for (debtor, creditor), cents in sorted(result.lines[currency].items(),
+                key=lambda item: (-item[1], item[0][0], item[0][1]))]
 
 NO_SPLITS_LINE = "No split entries on this trip yet."
 NO_PAYER_LINE = "⚠️ {count} split {entries} no payer recorded, so {they} not counted."
@@ -177,7 +132,8 @@ def _says(name: str, cents: int) -> str:
     return f"{name} is settled"
 
 
-def trip_balance_lines(entries, names: dict, families: dict, show_members: bool = True) -> list[str]:
+def trip_balance_lines(entries, names: dict, families: dict, show_members: bool = True,
+                       settlements=()) -> list[str]:
     """The balances of one trip as plain lines of text.
 
     entries:  what get_trip_split_entries returns (or any rows unit_balances can read)
@@ -208,7 +164,9 @@ def trip_balance_lines(entries, names: dict, families: dict, show_members: bool 
         # ("Alice and Bob", "Tan family") is already a phrase and is shown as stored.
         return f"{value} family" if len(value.split()) == 1 else value
 
-    result = unit_balances(entries, families)
+    entries, settlements = tuple(entries), tuple(settlements)
+    result = unit_balances(entries, families, settlements)
+    numbered = list(enumerate(trip_payments(entries, families, settlements), 1))
     lines = []
     for currency in sorted(result.net):
         units = result.net[currency]
@@ -229,13 +187,26 @@ def trip_balance_lines(entries, names: dict, families: dict, show_members: bool 
             if show_members and display[unit] > 0:
                 for pid in sorted(members.get(unit, []), key=lambda pid: (person(pid).lower(), pid)):
                     lines.append("    " + _says(person(pid), units[("person", pid)]))
-        payments = suggest_payments(units)
+        payments = [(n, p) for n, (c, p) in numbered if c == currency]
         if payments:
             lines.append("To settle:")
-            lines.extend(f" • {unit_name(p.from_unit)} pays {unit_name(p.to_unit)} {format_cents(p.cents)}"
-                         for p in payments)
+            lines.extend(f"{n}. {unit_name(p.from_unit)} pays {unit_name(p.to_unit)} {format_cents(p.cents)}"
+                         for n, p in payments)
         else:
             lines.append("Everyone is settled.")
+        paid_back = [s for s in settlements if s["currency"] == currency]
+        if paid_back:
+            lines.append("Already paid back:")
+            for s in paid_back:
+                handed = (f" (as {format_cents(s['paid_cents'])} {s['paid_currency']})"
+                          if s.get("paid_currency", currency) != currency else "")
+                beneficiary = s.get('for_id')
+                gift = (f" for {unit_name(unit_of(beneficiary, families))}"
+                        if beneficiary is not None and
+                        unit_of(beneficiary, families) != unit_of(s['from_id'], families) else "")
+                when = f", {s['date'].day} {s['date']:%b}" if s.get("date") else ""
+                lines.append(f" • {person(s['from_id'])} paid {person(s['to_id'])} "
+                             f"{format_cents(s['cents'])} {currency}{gift}{handed}{when}")
     if not lines:
         lines.append(NO_SPLITS_LINE)
     if result.no_payer:

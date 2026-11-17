@@ -27,6 +27,7 @@ def bals(monkeypatch, directory):
     """Swaps every read /trip_bals makes for a fake, and returns them to set up and inspect."""
     fakes = {"_load_bals_trip": MagicMock(return_value=None),
              "_load_bals_choices": MagicMock(return_value=([BEACH, CITY], False)),
+             "get_trip_settlements": MagicMock(return_value=[]),
              "get_trip_split_entries": MagicMock(return_value=ENTRIES)}
     monkeypatch.setattr(bot_core, "_load_directory", lambda: directory)
     monkeypatch.setattr(bot_core, "get_sgt_now", lambda: MagicMock(date=lambda: date(2026, 12, 9)))
@@ -67,11 +68,11 @@ async def test_command_shows_the_active_trip_straight_away(bals):
         # and it goes to Alice, the person who paid, not to her family.
         "    Alice is owed 30.00",
         "To settle:",
-        " • Lee family pays Alice 30.00",
+        "1. Lee family pays Alice 30.00",
     ])
     # Plain text: the _ in the trip's name needs no escaping and can't break the message.
     assert "parse_mode" not in reply.kwargs
-    assert _buttons(reply.kwargs["reply_markup"]) == {"Other trip": "bals:page:0"}
+    assert _buttons(reply.kwargs["reply_markup"]) == {"Mark paid 1": "settle:new:7:1:3000", "Other trip": "bals:page:0"}
 
 
 async def test_command_with_trip_mode_off_shows_a_picker(bals):
@@ -105,6 +106,17 @@ async def test_a_failed_entries_read_is_an_error_never_an_empty_trip(bals):
     assert bot_core.BALS_ERROR in text and "settled" not in text and "No split entries" not in text
 
 
+async def test_failed_settlements_read_is_an_error(bals):
+    """A payback read failure must not present the original bills as current debts."""
+    bals['_load_bals_trip'].return_value = BEACH
+    bals['get_trip_settlements'].return_value = None
+    update = _update(ALICE)
+    await bot_core.trip_bals_command(update, _context())
+    reply = update.effective_message.reply_text.await_args
+    assert bot_core.BALS_ERROR in reply.args[0]
+    assert _buttons(reply.kwargs['reply_markup']) == {'Other trip': 'bals:page:0'}
+
+
 async def test_a_trip_with_no_split_entries_says_so(bals):
     bals["_load_bals_trip"].return_value = BEACH
     bals["get_trip_split_entries"].return_value = []
@@ -129,7 +141,7 @@ async def test_tapping_a_trip_shows_its_balances_and_answers_once(bals):
     text = query.edit_message_text.await_args.args[0]
     # With no families, every person is their own line.
     assert "Alice is owed 60.00" in text and "Bob owes 30.00" in text and "Carol owes 30.00" in text
-    assert " • Bob pays Alice 30.00" in text and " • Carol pays Alice 30.00" in text
+    assert "1. Bob pays Alice 30.00" in text and "2. Carol pays Alice 30.00" in text
 
 
 async def test_tapping_a_trip_you_are_not_on_toasts_and_shows_the_picker(bals):

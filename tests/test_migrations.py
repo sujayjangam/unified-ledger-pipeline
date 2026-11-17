@@ -43,7 +43,7 @@ def test_revision_chain_has_exactly_one_head():
     # ...and exactly one revision is nobody's parent. Two heads means two migrations were
     # written against the same parent, e.g. a future 0003 that also revises 0001.
     assert len(ids - parents) == 1
-    assert ids - parents == {"0008_add_transaction_splits"}
+    assert ids - parents == {"0009_add_settlements"}
 
 
 def test_exactly_one_revision_is_the_root():
