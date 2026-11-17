@@ -139,8 +139,10 @@ Env vars (`.env.example` shows the format):
   index, never a name.
 - `/trip_bals` ([ADR-0044](docs/decisions/0044-trip-balances-from-splits.md)) only reads. The
   maths is pure functions in `app/services/balances.py`: whole cents added and subtracted,
-  never rounded, currencies kept apart. It counts only entries tagged to the trip that have
-  split rows. A failed read (`get_trip_split_entries` returns `None`) is shown as an error,
+  never rounded, currencies kept apart. Worked out per bill: shares inside the payer's own
+  family cancel, other families (or people with no family) owe the payer in person, never the payer's family; a family's
+  debt comes out of its own members' credits first. Never net per person before that. It
+  counts only entries tagged to the trip that have split rows. A failed read (`get_trip_split_entries` returns `None`) is shown as an error,
   never as "nobody owes anything". A split entry still with no payer after the fallback (account owner, else sender) is left out with a ⚠️ line,
   never guessed. A trip id from a button is loaded only through `member_trip`. The reply is
   plain text with no `parse_mode`.

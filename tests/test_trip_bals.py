@@ -17,7 +17,8 @@ from test_bot_core import ALICE, _context, _update
 BEACH = trips.Trip(7, "Beach_Trip", date(2026, 12, 1), date(2026, 12, 7),
                    member_ids=(1, 2, 3), families=((1, "Tan"), (2, "Tan"), (3, "Lee")))
 CITY = trips.Trip(8, "City Trip", date(2026, 6, 1), date(2026, 6, 3))
-# Dinner 90.00 paid by Alice, three ways: Carol owes the Tan family 30.00.
+# Dinner 90.00 paid by Alice, three ways: Carol (Lee family) owes Alice 30.00. Bob's share
+# is inside Alice's own family, so it cancels.
 ENTRIES = [{"currency": "AUD", "paid_by": 1, "splits": {1: 3000, 2: 3000, 3: 3000}}]
 
 
@@ -62,10 +63,11 @@ async def test_command_shows_the_active_trip_straight_away(bals):
         "AUD",
         "Lee family owes 30.00",
         "Tan family is owed 30.00",
-        "    Alice is owed 60.00",
-        "    Bob owes 30.00",
+        # Bob's share is inside Alice's own family, so it cancels; only Carol's share is owed,
+        # and it goes to Alice, the person who paid, not to her family.
+        "    Alice is owed 30.00",
         "To settle:",
-        " • Lee family pays Tan family 30.00",
+        " • Lee family pays Alice 30.00",
     ])
     # Plain text: the _ in the trip's name needs no escaping and can't break the message.
     assert "parse_mode" not in reply.kwargs
@@ -215,7 +217,8 @@ async def test_a_report_too_long_for_one_message_is_shortened_not_lost(bals):
     text = update.effective_message.reply_text.await_args.args[0]
     # Families only: every currency and payment is still there, the people under a family aren't.
     assert len(text) <= bot_core.TELEGRAM_MESSAGE_LIMIT and bot_core.BALS_FAMILIES_ONLY in text
-    assert text.count("Lee family pays Tan family 30.00") == 35 and "Alice" not in text
+    # Alice is still named in each payment; only the indented line under her family is gone.
+    assert text.count("Lee family pays Alice 30.00") == 35 and "    Alice" not in text
 
     # Even the short form is too long: whole lines from the top, and a plain note that it was cut.
     bals["get_trip_split_entries"].return_value = [dict(ENTRIES[0], currency=c) for c in currencies]

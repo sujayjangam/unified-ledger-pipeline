@@ -552,7 +552,7 @@ BALS_NOT_MEMBER = "You're not on that trip."
 # Telegram refuses a message longer than this, and a refused reply would look like a dead
 # command. So a long report is shortened here rather than sent and lost.
 TELEGRAM_MESSAGE_LIMIT = 4096
-BALS_FAMILIES_ONLY = "(Too long to list each person, so families only.)"
+BALS_FAMILIES_ONLY = "(Too long to list who is owed under each family, so totals and payments only.)"
 BALS_CUT_SHORT = "… (Too long to show in full.)"
 
 

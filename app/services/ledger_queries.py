@@ -129,7 +129,7 @@ def get_trip_split_entries(trip_id: int):
     paid_by: who paid. When paid_by_participant_id is NULL ("not recorded": an old row given
     its splits by hand in SQL) it is read the way docs/SCHEMA.md says: the account's owner,
     or the sender for an unowned account such as Cash. It can still come back None, and
-    net_balances then hands that entry back instead of counting it.
+    unit_balances then hands that entry back instead of counting it.
 
     Money stays in the entry's own currency (amount, not base_amount): no FX conversion.
     """

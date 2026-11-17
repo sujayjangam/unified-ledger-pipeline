@@ -40,7 +40,8 @@ the message text for pre-trip costs.
 
 **In review 2026-11-17:** step 4, `/trip_bals`: who owes whom on one trip, per family, with
 suggested payments ([ADR-0044](docs/decisions/0044-trip-balances-from-splits.md)). No
-migration. Decided with it: the totals keep counting a shared bill in full when the household
+migration. After the first test on real entries, payments go to the person who paid, not to
+their family; shares inside the payer's own family cancel per bill. Decided with it: the totals keep counting a shared bill in full when the household
 paid it, and the running tab between close family (`/bals`) is a separate, later view, shown
 on a shared Google Sheet.
 
@@ -412,8 +413,11 @@ only shared costs they pay get logged. Travel minimum, in build order:
      conversion), as plain text that can be forwarded to the group
      ([ADR-0044](docs/decisions/0044-trip-balances-from-splits.md)). It shows the active trip,
      or a list of trips to tap. The suggested payments match the largest debtor to the largest
-     creditor. Families settle by default, and a person who settles alone has a family label
-     of their own. In review 2026-11-17.
+     creditor. Families settle by default and pay back the person who paid, and a person who
+     settles alone has a family label of their own. In review 2026-11-17.
+     Later, for trips with friends rather than families: each friend (or couple) is a family
+     of one today, which works but reads as "Bob family". Show a family of one by the person's
+     name, in `/trip_bals` and the split menu. Not planned in detail.
      - Still to build: the per-entry breakdown ("why do I owe 340?") and the running tab
        between close family (`/bals`), where trip and everyday costs mix. Both are planned
        for a shared Google Sheet that the bot writes and everyone else can only view (anyone

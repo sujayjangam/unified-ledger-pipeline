@@ -125,8 +125,9 @@ its context, rejected alternatives and cost. The ones that shaped the system mos
   a button to mark a single entry as not part of it. Trips and their members, grouped in families, come from the
   same gitignored seed file.
 - Trip balances: `/trip_bals` shows who owes whom on a trip, worked out from the saved splits:
-  a balance per family, with each person under a family of more than one, per currency, and a short list of payments
-  that settles it. It shows the trip you have switched on, or your trips as buttons. Plain
+  a balance per family (with whoever is owed money listed under it), per currency, and a short
+  list of payments that settles it. A family
+  pays as one, and the money goes back to the person who paid the bill, not to their family. It shows the trip you have switched on, or your trips as buttons. Plain
   text, so it can be forwarded.
 - Who paid: each entry records a payer, read from the message ("Bob paid", "paid by Carol") by
   tested Python against the household, or the trip's members while a trip is on. When Python's

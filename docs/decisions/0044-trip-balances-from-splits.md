@@ -33,16 +33,25 @@ Three things were open:
   away, with an "Other trip" button. With trip mode off, the reply is a list of the sender's
   trips as buttons, paged like `/trip`. Nothing is typed after the command. A trip id from a
   button is loaded only through `member_trip`, which checks membership in the query.
-- **The maths is three pure functions** in `app/services/balances.py`, with no database, model
-  or Telegram:
-  - `net_balances`: for each entry the payer is owed every share and each sharer owes their own.
-    Plus means "is owed", minus means "owes". An entry with no split rows moves nothing.
-  - `by_family`: a family's balance is its members' balances added up, using the trip's
-    `trip_members.family` labels. A person with no family row on the trip is their own unit, so
-    someone who settles alone is given a family label of their own in the seed file. No
-    "settles alone" column and no migration.
-  - `suggest_payments`: the unit that owes the most pays the unit that is owed the most, as much
-    as both allow, repeated until nothing is owed. Ties go to the unit that sorts first.
+- **Families owe; the person who paid is owed.** A family pays as one, but the money goes back
+  to the person who fronted it ("Lee family pays Alice 30.00"), never to their family. Changed
+  on 2026-11-17, before merge, after the first test on real entries showed family-to-family
+  payments.
+- **The maths is pure functions** in `app/services/balances.py`, with no database, model or
+  Telegram:
+  - `unit_balances`, worked out **per bill**: a share of someone in the payer's own family
+    cancels (the family sorts that out itself); every other share is owed by the sharer's
+    family to the payer in person. Per bill, not by adding up each person first: netting per
+    person first can hand outsiders' money to a relative who paid only for the family. Then a
+    family that owes has that debt taken out of its own members' credits, the largest credit
+    first, ties to the lowest participant id, so a family never pays its own member. Plus
+    means "is owed", minus means "owes". An entry with no split rows moves nothing.
+  - Families are the trip's `trip_members.family` labels. A person with no family row on the
+    trip is their own unit, so someone who settles alone is given a family label of their own
+    in the seed file. No "settles alone" column and no migration.
+  - `suggest_payments`: the unit that owes the most pays the person or unit that is owed the
+    most, as much as both allow, repeated until nothing is owed. Ties go to the unit that
+    sorts first.
 - **Currencies are kept apart.** Balances use `amount` and `currency`, never `base_amount`.
   There is no FX conversion.
 - **Nobody is guessed.** A split entry whose payer is not recorded falls back as `docs/SCHEMA.md`
