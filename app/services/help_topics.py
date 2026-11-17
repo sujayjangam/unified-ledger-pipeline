@@ -26,7 +26,7 @@ TOPICS = {
         "Family names and \"rest\" need trip mode on. If you see ⚠️ Check, send it again more plainly."
     )),
     "payer": ("💳 Who paid", (
-        "If you don't say, it's you.\n\n"
+        "If you don't say, it's you, or whoever owns the card you name.\n\n"
         "• Carol covered dinner 90\n\n"
         "Wrong? Tap \"Change who paid\" on the card."
     )),
