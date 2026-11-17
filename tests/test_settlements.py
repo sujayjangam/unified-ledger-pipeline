@@ -30,7 +30,6 @@ def flow(monkeypatch, directory):
     monkeypatch.setattr(bot, '_load_bals_trip', MagicMock(return_value=BEACH))
     monkeypatch.setattr(bot, 'get_trip_split_entries', MagicMock(return_value=ENTRIES))
     monkeypatch.setattr(bot, 'get_trip_settlements', MagicMock(return_value=[]))
-    monkeypatch.setattr(bot, 'get_trip_currencies', MagicMock(return_value={'AUD', 'IDR'}))
     monkeypatch.setattr(bot, 'get_sgt_now', lambda: MagicMock(date=lambda: date(2026, 11, 17)))
     context = _context()
     context.bot.edit_message_text = AsyncMock()
@@ -62,7 +61,12 @@ async def test_new_card_requires_family_choice_and_checks_membership(flow):
     assert pending['from_id'] is None and pending['debtor_member_ids'] == (3,)
     buttons = _buttons(query.message.reply_text.await_args.kwargs['reply_markup'])
     assert buttons['Carol'] == 'settle:person:3' and 'Confirm' not in buttons
+    # Alice is owed, and Bob is in her family: money from either is the family paying itself.
+    assert 'Alice' not in buttons and 'Bob' not in buttons
     query.answer.assert_awaited_once()
+    update, query = tap('settle:person:2')
+    await bot.handle_settle_button(update, flow)
+    assert flow.user_data['pending_settlements'][20]['from_id'] is None
     update, query = tap('settle:person:999')
     await bot.handle_settle_button(update, flow)
     assert flow.user_data['pending_settlements'][20]['from_id'] is None
@@ -85,12 +89,25 @@ async def test_new_card_defaults_to_sender_in_family(flow, monkeypatch):
         assert 'Confirm' in _buttons(query.message.reply_text.await_args.kwargs['reply_markup'])
 
 
+def three_families(monkeypatch):
+    """Bob settles alone here (family "Ng"), so he can pay Carol's debt to Alice as a gift.
+
+    The gift giver must come from a third family: the receiver's own family (Alice's) is never
+    offered, because money from inside it is that family paying itself.
+    """
+    from dataclasses import replace
+    bot._load_bals_trip.return_value = replace(BEACH, families=((1, "Tan"), (2, "Ng"), (3, "Lee")))
+    monkeypatch.setattr(bot, 'get_trip_split_entries',
+                        MagicMock(return_value=[{'currency': 'AUD', 'paid_by': 1, 'splits': {3: 3000}}]))
+
+
 async def test_gift_menu_snapshot_switch_and_confirm(flow, monkeypatch):
-    """All trip people can pay, with debtors first and the gift beneficiary preserved."""
+    """Trip people outside the receiver's family can pay, debtors first, beneficiary kept."""
+    three_families(monkeypatch)
     update, query = tap('settle:new:7:1:3000', 10)
     await bot.handle_settle_button(update, flow)
     pending = flow.user_data['pending_settlements'][20]
-    assert [p.id for p in pending['people']] == [3, 1, 2]
+    assert [p.id for p in pending['people']] == [3, 2]
     update, query = tap('settle:person:2')
     await bot.handle_settle_button(update, flow)
     gift = flow.user_data['pending_settlements'][20]
@@ -109,8 +126,9 @@ async def test_gift_menu_snapshot_switch_and_confirm(flow, monkeypatch):
     assert writer.call_args.kwargs['from_id'] == 2
 
 
-async def test_failed_gift_redraw_keeps_original_card(flow):
+async def test_failed_gift_redraw_keeps_original_card(flow, monkeypatch):
     """A failed Telegram edit must not silently change the payer or beneficiary."""
+    three_families(monkeypatch)
     update, query = tap('settle:new:7:1:3000', 10)
     await bot.handle_settle_button(update, flow)
     original = flow.user_data['pending_settlements'][20]
@@ -129,7 +147,7 @@ async def test_person_in_directory_but_not_trip_is_not_offered(flow):
     update, query = tap('settle:new:7:1:3000', 10)
     await bot.handle_settle_button(update, flow)
     pending = flow.user_data['pending_settlements'][20]
-    assert [p.id for p in pending['people']] == [3, 1]
+    assert [p.id for p in pending['people']] == [3]   # Bob isn't on the trip; Alice is owed
     update, query = tap('settle:person:2')
     await bot.handle_settle_button(update, flow)
     query.edit_message_text.assert_not_awaited()
@@ -157,7 +175,7 @@ async def test_stale_or_invalid_buttons_change_nothing(flow, data):
     assert 'pending_settlements' not in flow.user_data
 
 
-@pytest.mark.parametrize('missing', ['get_trip_split_entries', 'get_trip_settlements', 'get_trip_currencies'])
+@pytest.mark.parametrize('missing', ['get_trip_split_entries', 'get_trip_settlements'])
 async def test_new_card_read_failure_is_not_a_settled_trip(flow, missing):
     """Both reads must succeed before a card can be made."""
     getattr(bot, missing).return_value = None
@@ -238,7 +256,7 @@ async def test_prompt_reply_routes_before_expenses(flow, authorized, monkeypatch
     assert flow.bot.edit_message_text.await_args.kwargs['message_id'] == 20
 
 
-@pytest.mark.parametrize('value', ['banana', '-5', '0', 'NaN', '50 USD', '50 SGD extra'])
+@pytest.mark.parametrize('value', ['banana', '-5', '0', 'NaN', '50 XYZ', '50 SGF', '50 SGD extra'])
 async def test_bad_reply_does_not_change_card_or_reach_model(flow, authorized, monkeypatch, value):
     """Bad input stays in the payback flow and explains the expected format."""
     pending = card()
@@ -287,6 +305,13 @@ async def test_unauthorized_reply_never_touches_a_card(flow, monkeypatch):
     await bot.handle_text(update, flow)
     assert flow.user_data['pending_settlements'][20] is pending
     flow.bot.edit_message_text.assert_not_awaited()
+
+
+@pytest.mark.parametrize('value,expected', [('5000 INR', (500000, 'INR')), ('20 usd', (2000, 'USD')),
+                                            ('600,000 IDR', (60000000, 'IDR'))])
+def test_any_real_currency_is_accepted(value, expected):
+    """A payback can be handed over in any real currency, even one no bill on the trip used."""
+    assert settlements.parse_settlement_amount(value, "SGD", set()) == expected
 
 
 def test_amount_with_thousands_commas_is_read():

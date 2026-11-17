@@ -159,8 +159,9 @@ Env vars (`.env.example` shows the format):
   Debt lines link each owing unit to the person who paid (ADR-0047); only opposite lines
   between the same two units cancel, largest first, then lowest creditor id. No pooling.
   A payback pays down one line; excess is owed back to whoever handed over the money.
-  Anyone on the trip can pay another unit's line as a gift, recorded only at payback time;
-  nobody owes the giver. The paid side records money handed over, never spending totals.
+  Anyone on the trip outside the receiver's own family can pay another unit's line as a gift,
+  recorded only at payback time; nobody owes the giver. The paid side records money handed
+  over, never spending totals, and may be any ISO 4217 currency (`app/services/currencies.py`).
   An overpayment gets a warning and a Confirm overpayment button, never a refusal.
   Pure whole-cent maths in `app/services/balances.py` keeps currencies apart. Shares inside
   the payer's unit cancel per bill (ADR-0044); outside shares owe the payer in person. It

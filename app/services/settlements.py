@@ -5,6 +5,7 @@ from sqlalchemy import text
 
 from app.add_expense import dollars_to_cents, format_cents
 from app.database import get_connection
+from app.services.currencies import ISO_4217
 
 
 def add_settlement(*, from_id, to_id, clears_amount, clears_currency, paid_amount,
@@ -75,8 +76,10 @@ def parse_settlement_amount(value: str, default_currency: str, currencies) -> tu
     if not match:
         raise ValueError("Use an amount such as 250000 or 50 SGD")
     currency = (match[2] or default_currency).upper()
-    if currency not in currencies:
-        raise ValueError("Use a currency already on this trip, or SGD")
+    # Any real currency is fine (INR, IDR, ...). A code already used on the trip is always
+    # accepted too, so an unusual one in the bills can never be refused here.
+    if currency not in ISO_4217 and currency not in currencies:
+        raise ValueError(f"{currency} isn't a currency code. Use one like SGD, IDR or INR.")
     return dollars_to_cents(match[1]), currency
 
 

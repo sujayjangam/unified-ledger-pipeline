@@ -14,7 +14,7 @@ from app.add_expense import add_expense, dollars_to_cents, format_cents
 from app.services.utils import get_sgt_now, get_week_start, get_month_start
 from app.services.ledger_queries import (
     get_recent_entries, get_period_summary, get_category_summary, find_recent_duplicate,
-    get_trip_split_entries, get_trip_settlements, get_trip_currencies,
+    get_trip_split_entries, get_trip_settlements,
 )
 from app.services.dates import apply_date_resolution
 from app.database import get_connection
@@ -1410,10 +1410,8 @@ async def _new_settlement(update, context):
         payments = trip_payments(entries, families, settlements)
         if number > len(payments) or payments[number - 1][1].cents != cents:
             raise _SettlementUnavailable(SETTLE_STALE)
-        currencies = get_trip_currencies(trip.id)
-        if currencies is None:
-            raise _SettlementUnavailable(BALS_ERROR)
         currency, payment = payments[number - 1]
+        receiver_unit = unit_of(payment.to_unit[1], families)
         member_ids = ((payment.from_unit[1],) if payment.from_unit[0] == 'person' else
                       tuple(pid for pid in trip.member_ids if unit_of(pid, families) == payment.from_unit))
         payer = (payment.from_unit[1] if payment.from_unit[0] == 'person' else
@@ -1425,10 +1423,16 @@ async def _new_settlement(update, context):
                     date=get_sgt_now().date(), entered_by_participant_id=sender.id,
                     family=payment.from_unit[1] if payment.from_unit[0] == 'family' else None,
                     names={p.id: p.display_name for p in directory.participants},
-                    people=tuple(sorted((p for p in directory.participants if p.id in trip.member_ids),
+                    # Who can hand the money over: anyone on the trip except the receiver's
+                    # own family. Money from inside that family isn't a payback, it's the
+                    # family paying itself. Owing family first, then everyone else by name.
+                    people=tuple(sorted((p for p in directory.participants if p.id in trip.member_ids
+                                         and unit_of(p.id, families) != receiver_unit),
                                         key=lambda p: (p.id not in member_ids, p.display_name.lower(), p.id))),
-                    currencies=currencies | {e['currency'] for e in entries} | {s['currency'] for s in settlements}
-                    | {s['paid_currency'] for s in settlements} | {'SGD'})
+                    # Currencies already on the trip are always accepted; any real ISO code is
+                    # accepted too (app/services/currencies.py), so no extra database read.
+                    currencies={e['currency'] for e in entries} | {s['currency'] for s in settlements}
+                    | {s['paid_currency'] for s in settlements})
     except _SettlementUnavailable as e:
         toast = str(e)
     except Exception as e:

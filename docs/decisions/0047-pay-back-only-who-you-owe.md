@@ -40,7 +40,8 @@ Varsha pays what Sudha Ajji owes Laura. Nobody then owes Varsha anything.
   more than the line, the line flips: the receiver's family now owes the extra back to whoever
   handed it over.
 - **Paying on someone's behalf is a gift.** On the payback card, "Who paid" can be anyone on the
-  trip. If it's someone outside the family that owes, the card says so ("Varsha pays for Bhagwat
+  trip except the receiver's own family (money from inside it would be that family paying
+  itself). If it's someone outside the family that owes, the card says so ("Varsha pays for Bhagwat
   family, as a gift"), and the payback clears that family's line. Nobody ends up owing the
   person who paid. It's stored as `settlements.for_participant_id`: a member of the family whose
   debt it clears (NULL means the payer's own family).

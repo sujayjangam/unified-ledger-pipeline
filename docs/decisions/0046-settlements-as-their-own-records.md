@@ -36,7 +36,9 @@ don't handle well for us:
   that is what the balances use. `paid_cents` + `paid_currency` is the money that actually
   changed hands; that is for the future dashboard's "money in". In one currency, both sides are
   the same (a database check says so). In two currencies, the person states both. There is no
-  exchange-rate lookup: the rate is whatever the two people agreed.
+  exchange-rate lookup: the rate is whatever the two people agreed. The paid side can be any
+  real currency (an ISO 4217 code, kept in `app/services/currencies.py`), e.g. INR for an SGD
+  debt, even if no bill on the trip used it.
 - **Person to person.** A payback always names the person who handed over the money and the
   person who got it. It lowers what the receiver is owed and lowers the debt of the payer's
   family (or the payer, if they settle alone), using the same family rules as the bills.

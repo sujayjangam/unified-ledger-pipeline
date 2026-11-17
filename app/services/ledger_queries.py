@@ -115,18 +115,6 @@ def get_category_summary(start_date: str, end_date: str):
         return []
 
 
-def get_trip_currencies(trip_id: int):
-    """Include unsplit trip bills when deciding which currency a payback may use."""
-    try:
-        with get_connection() as conn:
-            return set(conn.execute(text('''
-                SELECT DISTINCT currency FROM transactions WHERE trip_id = :trip_id
-            '''), {"trip_id": trip_id}).scalars().all())
-    except Exception as e:
-        print(f"Could not read trip currencies: {e}")
-        return None
-
-
 def get_trip_settlements(trip_id: int):
     """Read paybacks oldest first; None means failure, not an already settled trip."""
     try:
