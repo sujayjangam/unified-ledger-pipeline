@@ -13,197 +13,146 @@ What has shipped is in git history, the closed issues and the ADRs, not here.
 
 ## Current status
 
-**Phase:** Phase 0 — Foundation & ownership closed on 2026-11-10, when its last item (the
-date warning, #74) shipped. Phase 1 — Reconciliation engine has started; its first item, #53, closed on 2026-11-14. Phase 0's
-scope was extended on 2026-08-20 to cover capture friction
-([ADR-0017](docs/decisions/0017-extend-phase-0-for-capture-friction.md)), and its end was fixed on
-2026-09-23 ([ADR-0029](docs/decisions/0029-close-phase-0-on-date-parsing.md)).
+**Where we are.** Phase 0 (foundation) closed on 2026-11-10
+([ADR-0029](docs/decisions/0029-close-phase-0-on-date-parsing.md)). Phase 1 (the reconciliation
+engine) is open, but its group-trip work goes first. There's a real group trip with a fixed date,
+kept out of this public repo, so on 2026-11-14 trips, splitting and settling up were pulled
+forward from Phase 3. The scope is under "Group-trip splitting" in Phase 1 below.
 
-**Done 2026-11-14:** [#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53),
-participants and accounts as Postgres tables, replacing the env vars
-([ADR-0032](docs/decisions/0032-participants-and-accounts-in-postgres.md),
-[ADR-0033](docs/decisions/0033-entered-by-participant-id.md); design and plan in
-`docs/superpowers/`). It landed in three steps, each recorded in its PR:
-[#84](https://github.com/sujayjangam/unified-ledger-pipeline/pull/84) (migration 0004, the seed
-script, reading the tables and writing both ids and text),
-[#90](https://github.com/sujayjangam/unified-ledger-pipeline/pull/90) (stop writing the text
-columns) and [#91](https://github.com/sujayjangam/unified-ledger-pipeline/pull/91) (migration
-0005: `account_id` required, `account_desc`, `account_owner` and `entered_by` dropped; applied to
-production 2026-11-14 after a Neon-branch rehearsal and a backup). Before 0005, the 5 rows with
-no `account_id` were given a card by hand in SQL, one guarded `UPDATE` per `transaction_id`.
+**Deploy freeze.** A merge to `main` deploys the bot straight away, and a broken bot mid-trip
+means nothing gets logged. So nothing merges in the last two days before the trip. Anything new
+is tried on a Neon branch with a fictional trip-sized directory first.
 
-**Next action:** step 6, `/recent` with delete
-([#115](https://github.com/sujayjangam/unified-ledger-pipeline/issues/115)), which the trip
-still needs. After that: paying back one bill
-([#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113)), then clearer "Mark
-paid" buttons ([#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114)). Later:
-a finished trip's hand-kept sheet loaded as real bills, and the trip read from the message text
-for pre-trip costs.
+**Next up**, in this order:
 
-**In review 2026-11-18:** a trimmed extraction prompt
-([#120](https://github.com/sujayjangam/unified-ledger-pipeline/issues/120),
-[ADR-0049](docs/decisions/0049-prompt-holds-only-what-python-cant-read.md)), about a third
-smaller, running at temperature 0. Waits for the full `check_extraction` run before merging,
-and must land before the 26 Nov trip freeze or wait until after it.
+1. Undo a saved entry: `/recent` gets paging and a delete button
+   ([#115](https://github.com/sujayjangam/unified-ledger-pipeline/issues/115)). The trip needs
+   this most.
+2. Record which bill a payback was for, so a bill can be marked paid off
+   ([#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113)).
+3. Clearer "Mark paid" buttons than "Mark paid 1, 2, 3"
+   ([#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114)).
 
-**After the trip:** a Python-only split reader
-([#122](https://github.com/sujayjangam/unified-ledger-pipeline/issues/122)), scored offline
-against the check cases and the trip's real messages before it replaces the model's split
-fields.
+Later: load a finished trip's hand-kept spreadsheet as real bills, and work out the trip from the
+message itself for costs logged before it starts.
 
-**Done 2026-11-18:** exact amounts per person for a split
-([#112](https://github.com/sujayjangam/unified-ledger-pipeline/issues/112),
-[ADR-0048](docs/decisions/0048-exact-split-amounts-by-reply.md)): "Set amounts" in the split
-menu sends a reply prompt, read in Python, with `rest` for whoever takes what's left. No
-migration. Tried on the test bot before merging.
+**After the trip:**
 
-**Done 2026-11-18:** step 5, settlement: paybacks as their own records, debt lines, pairwise
-netting and gifts at payback time ([ADR-0046](docs/decisions/0046-settlements-as-their-own-records.md),
-[ADR-0047](docs/decisions/0047-pay-back-only-who-you-owe.md),
-[#111](https://github.com/sujayjangam/unified-ledger-pipeline/pull/111)). Tried on the test bot
-against a Neon branch; migration 0009 applied to production by hand on 2026-11-17. ADR-0042 was
-edited the same day: uneven shares are not counts only.
+- A split reader written only in Python
+  ([#122](https://github.com/sujayjangam/unified-ledger-pipeline/issues/122)). It gets scored
+  offline against the check cases and the trip's real messages before it replaces the model's
+  split fields.
+- Everyday groups in the split menu ("splits PR 2b"), designed in
+  [ADR-0043](docs/decisions/0043-everyday-groups-for-the-split-menu.md) and parked. An unfinished
+  first pass sits on the local branch `feat/splits-family-group`; the splits plan says how to pick
+  it up.
+- Aliases per sender ("dad", "mummy"; see Phase 1 below).
 
-**Done 2026-11-17:** step 4, `/trip_bals`: who owes whom on one trip, per family, with
-suggested payments ([ADR-0044](docs/decisions/0044-trip-balances-from-splits.md),
-[#108](https://github.com/sujayjangam/unified-ledger-pipeline/pull/108)). No migration. Tested
-on a Neon branch with real entries first; after that test, payments go to the person who paid,
-not to their family, and shares inside the payer's own family cancel per bill. Decided with
-it: the totals keep counting a shared bill in full when the household paid it, and the running tab between close family (`/bals`) is a separate, later view, shown
-on a shared Google Sheet.
+**Recently shipped**, newest first. Each PR and ADR has the full story.
 
-**Done 2026-11-17 ([#110](https://github.com/sujayjangam/unified-ledger-pipeline/pull/110)):** a split by nights that names trip families by their labels
-("Reds and Blues 5 nights, rest all 6"). Family labels now match, the payer's "for 6 nights"
-is no longer read as their own count, and the rest's count is read from the words. A count
-read loosely (a payer's count from outside their paying clause, or a missing count taken from
-another clause) gets a "⚠️ Check …" card line instead of passing silently. `/help` teaches the
-wordings that work, as topic buttons. On `fix/split-family-labels`; the real message (names
-swapped, no split word) was right in 29 of 30 model runs; the miss was the model reading no
-split at all, which "split by nights" up front avoids (8 of 8). Using the model to double-check
-the meaning of a split message is deferred: stricter wording, taught by `/help`, for now.
+- **2026-11-18: a smaller extraction prompt, run at temperature 0**
+  ([#120](https://github.com/sujayjangam/unified-ledger-pipeline/issues/120), PR
+  [#121](https://github.com/sujayjangam/unified-ledger-pipeline/pull/121),
+  [ADR-0049](docs/decisions/0049-prompt-holds-only-what-python-cant-read.md)). The model now reads
+  about 8,300 characters per message instead of 12,600. The unused `needs_review` flag and the
+  model's "uneven" flag are gone; Python reads uneven wording from the message instead.
+  `check_extraction` gained `--only` and `--margins`. Checked against the real model before the
+  merge.
+- **2026-11-18: exact amounts per person in a split**
+  ([#112](https://github.com/sujayjangam/unified-ledger-pipeline/issues/112), PR
+  [#118](https://github.com/sujayjangam/unified-ledger-pipeline/pull/118),
+  [ADR-0048](docs/decisions/0048-exact-split-amounts-by-reply.md)). "Set amounts" sends a reply
+  prompt, Python reads replies like "Bob 90", and anyone not set shares what's left. No
+  migration. Tried on the test bot first.
+- **2026-11-18: paybacks** (PR
+  [#111](https://github.com/sujayjangam/unified-ledger-pipeline/pull/111),
+  [ADR-0046](docs/decisions/0046-settlements-as-their-own-records.md),
+  [ADR-0047](docs/decisions/0047-pay-back-only-who-you-owe.md)). A "Mark paid" button under each
+  suggested payment opens a payback card, saved only on Confirm. Paybacks are their own records,
+  never spending. Tried on the test bot against a Neon branch; migration 0009 was applied to
+  production by hand on 2026-11-17.
+- **2026-11-17: `/trip_bals`**, who owes whom on one trip (PR
+  [#108](https://github.com/sujayjangam/unified-ledger-pipeline/pull/108),
+  [ADR-0044](docs/decisions/0044-trip-balances-from-splits.md)). Money goes back to the person who
+  paid, not their family, and shares inside the payer's own family cancel out. The totals still
+  count a shared bill in full when the household paid it. No migration.
+- **2026-11-17: splits by nights that name trip families, and `/help`** (PR
+  [#110](https://github.com/sujayjangam/unified-ledger-pipeline/pull/110),
+  [ADR-0045](docs/decisions/0045-family-labels-the-rest-and-stricter-wording.md)). "Reds and Blues
+  5 nights, rest all 6" now works. A count read loosely gets a "⚠️ Check …" line on the card.
+  `/help` teaches the wordings that work, so stricter wording stands in for a second model check.
+- **2026-11-17: uneven shares by a count per person**, such as nights (PR
+  [#106](https://github.com/sujayjangam/unified-ledger-pipeline/pull/106),
+  [ADR-0042](docs/decisions/0042-uneven-shares-by-count.md)). No migration.
+- **2026-11-16: one-person split wording** (PR
+  [#105](https://github.com/sujayjangam/unified-ledger-pipeline/pull/105)). The card says "Carol
+  owes Alice 5.55" instead of "Split: only Carol". A split whose only person is the payer isn't a
+  split, so nothing is shown or saved.
+- **2026-11-16: the split menu**, and people menus offering everyone when no trip is on (PR
+  [#103](https://github.com/sujayjangam/unified-ledger-pipeline/pull/103),
+  [ADR-0041](docs/decisions/0041-split-menu-and-wider-people-menus.md)).
+- **2026-11-16: even splits read, stored and shown** (PR
+  [#101](https://github.com/sujayjangam/unified-ledger-pipeline/pull/101),
+  [ADR-0039](docs/decisions/0039-splits-read-by-the-model-worked-out-by-python.md),
+  [ADR-0040](docs/decisions/0040-model-as-second-reader-for-the-payer.md)). Migration 0008
+  (`transaction_splits`) applied to production by hand after a backup.
+- **2026-11-16: the "Change who paid" button** (PR
+  [#99](https://github.com/sujayjangam/unified-ledger-pipeline/pull/99),
+  [ADR-0038](docs/decisions/0038-paid-by-button-starts-from-the-message.md)), with a lock per card
+  so a Confirm can't land in the middle of a redraw.
+- **2026-11-15: who paid** (PR
+  [#97](https://github.com/sujayjangam/unified-ledger-pipeline/pull/97),
+  [ADR-0037](docs/decisions/0037-paid-by-person-read-from-text.md)). Migration 0007, the payer read
+  from the message in Python, and totals that leave out outside payers.
+- **2026-11-15: trips and trip mode** (PR
+  [#95](https://github.com/sujayjangam/unified-ledger-pipeline/pull/95),
+  [ADR-0035](docs/decisions/0035-trips-tagged-at-log-time.md),
+  [ADR-0036](docs/decisions/0036-trip-switch-per-person.md)). Migration 0006.
+- **2026-11-15: a closed card no longer wins over an open one the message names** (PR
+  [#96](https://github.com/sujayjangam/unified-ledger-pipeline/pull/96)).
+- **2026-11-14: the "Saved to Ledger!" message shows the account and its owner**
+  ([#92](https://github.com/sujayjangam/unified-ledger-pipeline/issues/92)).
+- **2026-11-14: participants and accounts live in Postgres**, not env vars
+  ([#53](https://github.com/sujayjangam/unified-ledger-pipeline/issues/53), PRs
+  [#84](https://github.com/sujayjangam/unified-ledger-pipeline/pull/84),
+  [#90](https://github.com/sujayjangam/unified-ledger-pipeline/pull/90),
+  [#91](https://github.com/sujayjangam/unified-ledger-pipeline/pull/91);
+  [ADR-0032](docs/decisions/0032-participants-and-accounts-in-postgres.md),
+  [ADR-0033](docs/decisions/0033-entered-by-participant-id.md)). Migration 0005 dropped the old
+  text columns.
 
-**Parked 2026-11-17, until after the trip:** splits PR 2b, everyday groups in the split menu.
-Designed and recorded in
-[ADR-0043](docs/decisions/0043-everyday-groups-for-the-split-menu.md): one group per person in a
-`participant_groups` table, categories as a later step, no relationships between people. An
-unfinished first pass sits on the local branch `feat/splits-family-group`; the splits plan says
-how to pick it up. Aliases per sender also moved to after the trip.
+**Loose ends:**
 
-**Done 2026-11-17:** step 3, splits, PR 3 (uneven shares by a count per person, such as
-nights), merged as PR [#106](https://github.com/sujayjangam/unified-ledger-pipeline/pull/106)
-([ADR-0042](docs/decisions/0042-uneven-shares-by-count.md)). No migration. It passed the model
-check and the test bot before the merge.
-
-**Done 2026-11-16:** the one-person split wording, merged as PR
-[#105](https://github.com/sujayjangam/unified-ledger-pipeline/pull/105). A split with one person
-who didn't pay read "Split: only Carol", which looked like Carol splitting with herself; the card
-now says "Carol owes Alice 5.55". A split whose only person is the payer is no split: the card
-shows no split line and no split rows are saved (the tick stays on the pending entry, so changing
-who paid brings the debt back).
-
-**Done 2026-11-16:** step 3, splits, PR 2 (the split menu, and people menus offering everyone
-off-trip), merged as PR [#103](https://github.com/sujayjangam/unified-ledger-pipeline/pull/103)
-and deployed ([ADR-0041](docs/decisions/0041-split-menu-and-wider-people-menus.md)). No
-migration. The test-bot run on the Neon branch gave the right card for a split read from text
-(with an unmatched name), the family toggles, "only" one person, both people menus after "Not
-trip" (household first, then A-Z), the uneven warning, "Remove split", the first-opening tick-all
-happening once, no split button on a YouTrip top-up, trip mode off, a voice message, and the
-shares saved in `transaction_splits`. Every test participant was a trip member, so someone outside
-the trip appearing in the menus was covered by unit tests only; the first real entries after
-deploy check it live.
-
-**Done 2026-11-16:** step 3, splits, PR 1 (read, store and show an even split), merged as PR
-[#101](https://github.com/sujayjangam/unified-ledger-pipeline/pull/101) and deployed
-([ADR-0039](docs/decisions/0039-splits-read-by-the-model-worked-out-by-python.md),
-[ADR-0040](docs/decisions/0040-model-as-second-reader-for-the-payer.md)). Migration 0008
-(`transaction_splits`) was applied to production by hand after a backup, before the merge. Shipped:
-the model's `split_reference` and `payer_name`, name matching and whole-cent shares in Python, share
-lines on the card, shares saved with the entry, and the model as a second reader for the payer.
-`scripts/check_extraction` gave 35 of 35 messages right in 20 of 20 runs, after three readings moved
-from the model to Python (is there a split word; does "between" leave the sender out; is there a
-paying word before the model's payer is believed).
-
-**Done 2026-11-16:** step 2, paid-by, PR 2, merged as PR
-[#99](https://github.com/sujayjangam/unified-ledger-pipeline/pull/99) and deployed
-([ADR-0038](docs/decisions/0038-paid-by-button-starts-from-the-message.md)): the "Change who paid"
-button and its menu, the rule for a tapped payer, and a lock per card so a Confirm can't land in
-the middle of a redraw. No migration. The test-bot run on the Neon branch gave the right card for
-the menu, an outside payer and a household payer.
-
-With trip mode off, the payer is read from the household only. Splits PR 2 widened the "Change
-who paid" menu to every participant; the text reading stays as it is (ADR-0041).
-
-**Done 2026-11-15:** step 2, paid-by, PR 1, merged as PR
-[#97](https://github.com/sujayjangam/unified-ledger-pipeline/pull/97) and deployed
-([ADR-0037](docs/decisions/0037-paid-by-person-read-from-text.md)): migration 0007
-(`participants.is_household`, `transactions.paid_by_participant_id`), Python reading the payer
-from the message (a whole name, or one word of it no other candidate shares), the payer rules in
-`resolve_payment`, the card's "Paid by" line and warnings, and totals that skip outside payers.
-The test-bot run on the Neon branch, with fictional trip guests, gave the right card for every
-payer case. It also found `/today`, `/week`, `/month` and the category views crashing on Postgres
-Decimal sums (older than the branch, fixed in it). Before the merge, production got a fresh
-backup, migration 0007 by hand, and the "Paid by someone else" account seeded. An "X paid" entry
-logged on production with trip mode on, 2026-11-16, gave the right card.
-
-**Done 2026-11-15:** step 1, trips, merged as PR
-[#95](https://github.com/sujayjangam/unified-ledger-pipeline/pull/95) and deployed
-([ADR-0035](docs/decisions/0035-trips-tagged-at-log-time.md),
-[ADR-0036](docs/decisions/0036-trip-switch-per-person.md)): migration 0006, dated trips in the seed
-file, a trip-mode switch per person picked from `/trip`'s buttons (three per page, newest first),
-a pinned banner while it is on, and a trip line and toggle on the card. A tapped `/trip` menu
-becomes a plain status line once a switch is made. Before the merge, 0006 was applied to
-production by hand and the real trip seeded (non-household members are participants with no
-Telegram ID); the test-bot run covered switching, saving and the "trip ended" banner fallback.
-An entry logged on production right after the deploy was tagged to the trip.
-
-**Done 2026-11-15:** a closed-card fix, merged as PR
-[#96](https://github.com/sujayjangam/unified-ledger-pipeline/pull/96). On production,
-"Zebra test exp $25 cash" was put on a closed "Zebra Test Card" instead of Cash: the model may
-pick a closed card, and nothing checked the message named it. Now, when the model picks a closed card
-whose whole name isn't in the raw message and the message names an open card, the open card wins.
-With no open card named, the closed card stays, with its warning, so a loosely said late refund
-isn't moved onto the default card unseen. The bad entry was deleted by hand (one guarded `DELETE`).
-
-Menu speed, measured from the laptop against the Neon test branch (us-east-2): one round trip is
-about 295ms. Each database block costs three extra round trips besides its queries (the pool's
-ping, BEGIN and ROLLBACK), so `/trip` makes about 10 round trips for 4 queries, about 3s.
-Autocommit for read-only blocks cuts a query from 2 round trips to 1 and the release to 0.
-Candidate fix, not started: autocommit for read-only reads, and fewer separate blocks per message.
-Production (Cloud Run in asia-southeast1, Neon in us-east-2) now logs the same timing lines; read
-them before choosing. Moving the two into one region is the structural fix, but a bigger job.
-
-Candidate follow-up: when a person's switch is off but an entry's date falls inside one of their
-trips, the card offers "Tag to <trip>?" (a suggestion, never an automatic tag; ADR-0036).
-
-Unpushed: branch `chore/check-extraction-zebra` (the misread message below, as a
-`check_extraction` case).
-
-**Group-trip splitting** (decided 2026-11-14). There's a real group trip with a fixed
-deadline, kept out of this public repo. It pulls trips, splitting and settling up forward from
-Phase 3, ahead of the rest of Phase 1. The scope is under "Group-trip splitting" in Phase 1
-below. Deploy freeze: nothing merges to `main` for the last two days
-before the deadline, because a merge auto-deploys and a broken bot mid-trip means nothing gets
-logged. Test on a Neon branch with a fictional trip-sized directory first.
-
-Follow-up: "test 1 zebra test card" comes back with no amount (the model reads "test 1" as part
-of a name). It is a case in `scripts/check_extraction.py` on the unpushed branch
-`chore/check-extraction-zebra`, where it fails 10 times out of 10 (2026-11-14). The prompt fix is
-still open.
-
-Adding and closing cards from Telegram is
-[#83](https://github.com/sujayjangam/unified-ledger-pipeline/issues/83). The "Saved to Ledger!"
-message, and the error card a failed save leaves, now show the account and its owner
-([#92](https://github.com/sujayjangam/unified-ledger-pipeline/issues/92), done 2026-11-14).
-
-Every Phase 0 item that was still open when the phase closed had already moved to a later phase
-(decided 2026-09-23, [ADR-0029](docs/decisions/0029-close-phase-0-on-date-parsing.md)).
+- "test 1 zebra test card" comes back with no amount: the model reads "test 1" as part of a
+  name. The check case is on the unpushed branch `chore/check-extraction-zebra`, where it failed
+  10 times out of 10 on 2026-11-14, before the prompt was trimmed. Not rerun since; the fix is
+  still open.
+- Someone outside the trip showing up in the people menus is covered by unit tests only. Every
+  test participant on the test bot was a trip member.
+- Menus are slow. From the laptop to the Neon test branch, one round trip is about 295ms, and
+  each database block adds three more besides its queries (the pool's ping, BEGIN and ROLLBACK).
+  So `/trip` makes about 10 round trips for 4 queries, around 3 seconds. Not started: autocommit
+  for read-only reads, and fewer blocks per message. Production logs the same timing lines, so
+  read those before choosing. Putting Cloud Run and Neon in the same region is the real fix, but
+  a bigger job.
+- Idea: when someone's trip mode is off but an entry's date falls inside one of their trips, the
+  card could offer "Tag to <trip>?". Only ever a suggestion, never an automatic tag (ADR-0036).
+- Adding and closing cards from Telegram is
+  [#83](https://github.com/sujayjangam/unified-ledger-pipeline/issues/83).
+- Pinning dependencies ([#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27))
+  has a first pass on the local branch `chore/pin-dependencies-27`.
 
 **Open top-level issues:**
+[#115](https://github.com/sujayjangam/unified-ledger-pipeline/issues/115),
+[#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113) and
+[#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114) trip follow-ups (next up) ·
+[#122](https://github.com/sujayjangam/unified-ledger-pipeline/issues/122) Python-only split reader (after the trip) ·
+[#83](https://github.com/sujayjangam/unified-ledger-pipeline/issues/83) cards from Telegram ·
 [#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27) unpinned dependencies (Phase 1) ·
-[#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22) entries can't be corrected (Phase 1) ·
+[#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22) saved entries can't be corrected (Phase 1) ·
 [#17](https://github.com/sujayjangam/unified-ledger-pipeline/issues/17) unused REST API (Phase 5) ·
 [#61](https://github.com/sujayjangam/unified-ledger-pipeline/issues/61) git-history purge (Phase 5).
-Read the list without sub-issue noise with `gh issue list --search "no:parent-issue"`.
+To see the list without sub-issues: `gh issue list --search "no:parent-issue"`.
 
 ### Where things are written down
 
@@ -299,8 +248,6 @@ with the CLI and `app/main.py` to report on a call that no longer happens is the
 ungated. Found while fixing #29; deliberately not widened into that PR. It matters much less
 since webhook deliveries are authenticated ([ADR-0025](docs/decisions/0025-webhook-secret-token.md)): a button press can now only arrive
 through Telegram.
-- `needs_review` is extracted by `app/services/extraction.py` but never acted on anywhere — the
-human-in-the-loop claim doesn't hold until this actually gates bot behavior.
 - `.venv/` and `data/ledger.db` are untracked as of 2026-08-01 but **still present in git
 history** — purging needs a rewrite + force-push, deliberately deferred. Tracked as
 [#61](https://github.com/sujayjangam/unified-ledger-pipeline/issues/61).
@@ -335,10 +282,9 @@ sequenced in the phase checklists and aren't repeated here):
   not `main` — but it's a live landmine for whenever the API is deployed.
 - No index on `date`. Irrelevant at current row counts; matters once Phase 1's statement staging
   table lands and date-window matching starts scanning.
-- Chat commands had no discoverability — `/month` and `/cat_month` were forgotten by their own
-  author despite existing. Since the trips work, every command is registered in Telegram's "/"
-  menu at startup (`register_commands`). What's left belongs with the capture-friction work: a
-  ledger nobody can navigate is a ledger nobody keeps feeding.
+- Commands used to be hard to find: `/month` and `/cat_month` were forgotten by their own author.
+  Now every command is in Telegram's "/" menu (`register_commands`), and `/help` shows how to word
+  an entry. Typing an entry from scratch is still the slow part.
   Candidate fix worth prototyping alongside text ingestion: a bot command that pre-fills the
   message box with a field template (date already filled in, remaining fields blank) so an entry
   is edit-and-send rather than type-from-scratch. Telegram exposes two mechanisms for this —
@@ -418,7 +364,9 @@ only shared costs they pay get logged. Travel minimum, in build order:
      done 2026-11-16, [#103](https://github.com/sujayjangam/unified-ledger-pipeline/pull/103).
      The one-person split wording fix merged 2026-11-16 (#105). PR 3, uneven shares by count
      (nights, ADR-0042), done 2026-11-17,
-     [#106](https://github.com/sujayjangam/unified-ledger-pipeline/pull/106).
+     [#106](https://github.com/sujayjangam/unified-ledger-pipeline/pull/106). Exact amounts per
+     person, typed as a reply after "Set amounts" (ADR-0048), done 2026-11-18,
+     [#118](https://github.com/sujayjangam/unified-ledger-pipeline/pull/118).
      After the trip: PR 2b (everyday groups in the split menu, designed in ADR-0043 and parked
      2026-11-17), aliases per sender, percentages, and a count editor in the split
      menu, so a newly ticked person's count can be changed without resending.
@@ -446,7 +394,9 @@ only shared costs they pay get logged. Travel minimum, in build order:
        - "Dinner 480 cash, split evenly between all"
        - "Petrol 90, split between Alice's and Bob's families"
        - "Groceries 150, Carol's share is 50, rest split evenly"
-       Add each to `scripts/check_extraction` when this is built.
+       All five are cases in `scripts/check_extraction`. The last one isn't read as a fixed
+       share: the card ticks the names evenly, with a warning and a "Set amounts" button
+       (ADR-0048).
   4. `/trip_bals`: one trip's balances per family and per person, in separate currencies (no FX
      conversion), as plain text that can be forwarded to the group
      ([ADR-0044](docs/decisions/0044-trip-balances-from-splits.md)). It shows the active trip,
@@ -476,11 +426,9 @@ only shared costs they pay get logged. Travel minimum, in build order:
      is suggested: the row stays but drops out of balances and totals
      ([#115](https://github.com/sujayjangam/unified-ledger-pipeline/issues/115)).
 
-  Stretch: split instructions in the message text ("split between me, Alice and Bob").
-  The model picks names from the member list only, "me" resolves in Python from the sender, and
-  Python works out the cents. Also an "Edit" button on the card before saving (reply with the
-  corrected text, reprocessed through `process_expense_text`), and fixing the split and payer
-  after saving.
+  Stretch: an "Edit" button on the card before saving (reply with the corrected text,
+  reprocessed through `process_expense_text`), and fixing the split and payer after saving.
+  Splits read from the message text, once a stretch goal, shipped in step 3.
 
   Must not break: `/today`, `/week`, `/month` and `cat_*` must not count other people's payments
   as household spending. Paid-by (step 2) skips entries paid outside the household; a shared
@@ -518,8 +466,9 @@ statement upload is live. Today only `'Expense'` and `'Transfer'` exist.
 - [ ] Deterministic matcher: amount + date window against existing ledger entries
 - [ ] Tie-breaking rule: auto-match only on a unique candidate; 0 or 2+ candidates → `needs_review`
 - [ ] Wire matcher output into the `reconciliation_status` field
-- [ ] Wire `needs_review` so it actually gates bot behavior — the matcher is what produces review
-cases, and the human-in-the-loop framing doesn't hold up until this exists *(from Phase 0)*
+- [ ] A review state that actually changes what the bot does. The matcher is what produces cases
+to review. The model's old `needs_review` flag was removed in #120 because nothing read it, so
+this starts from the matcher, not the model *(from Phase 0)*
 - [ ] `base_amount` correctness — currently written as the raw amount regardless of currency,
 contradicting `docs/SCHEMA.md`. Prefer absent (`NULL`) over silently incorrect; statements are the
 first source of converted amounts *(from Phase 0)*.
@@ -575,15 +524,16 @@ weren't pulled forward.
 2026-11-16 in migration 0008 (#101), storing whole-cent shares only. The `split_type` enum was not
 built: the kind of split is worked out in Python and not stored. Uneven shares (PR 3,
 ADR-0042) store cents only too, so it is not needed for now.*
-- [ ] Application logic: who-owes-who calculation. *Moved to Phase 1, Group-trip splitting, with
-uneven splits from the start.*
+- [x] Application logic: who-owes-who calculation. *Moved to Phase 1, Group-trip splitting;
+shipped 2026-11-17 as `/trip_bals` (#108), for one trip. The running tab between close family
+(`/bals`) is still to build.*
 - [ ] Extend as real usage surfaces the need for more flexible splitting
-- [ ] Split in whole cents, so the parts always add up to the entry's amount (reconciliation
+- [x] *Shipped 2026-11-16 in #101 (`share_out` in `app/services/splits.py`).* Split in whole cents, so the parts always add up to the entry's amount (reconciliation
 depends on it; the rule is recorded in [ADR-0028](docs/decisions/0028-exact-cent-conversion-half-up.md)). Store each person's share as integer
 cents in `transaction_splits`, with a check that the shares sum to the entry. Work the shares out by
 rounding every share down and handing the leftover cents out one at a time, never by rounding each
 share: SGD 5.55 split two ways would otherwise be 2.78 + 2.78 = 5.56. This replaces the
-`split_ratio` Decimal column, which nothing writes today. Who gets a leftover cent must be a fixed
+`split_ratio` Decimal column, which nothing writes, and which a later migration could drop. Who gets a leftover cent must be a fixed
 rule, not random, so the same entry always splits the same way. Decided 2026-11-16: the largest
 remainders first, ties to the lowest participant id (`docs/superpowers/plans/2026-11-16-splits.md`).
 - [ ] A database view that shows each entry's sender by name: `entered_by_participant_id` joined to
