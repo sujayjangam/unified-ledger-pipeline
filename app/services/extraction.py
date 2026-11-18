@@ -70,10 +70,9 @@ class DateReference(BaseModel):
 class SplitPerson(BaseModel):
     name: str = Field(description="The name as said, without possessive or family wording: Carol's family -> Carol.")
     # "Carol and Dave 4" once came back with Carol as a family, which would add her whole
-    # family; this sentence used to sit in the system prompt as well (#120).
+    # family. The rule against that is in the system prompt, with the counts (#120).
     is_family: bool = Field(description=(
-        "True for '<name>'s family', 'the <name>s', or '<name> family'; false for one person. "
-        "'Carol and Dave 4' is two people, not families."))
+        "True for '<name>'s family', 'the <name>s', or '<name> family'; false for one person."))
     count: Optional[int] = Field(default=None, description=(
         "Count said for this person or each family member: 'Carol and Dave 4' means 4 each. "
         "Null if not said. Never money or a percentage."))
@@ -97,10 +96,14 @@ class SplitReference(BaseModel):
     include_sender: bool = Field(description=(
         "True when the sender is one of the sharers ('me and Carol', 'split with Carol'); "
         "false when only others are named. True for everyone; false for none."))
+    # The last sentence was cut in #120 and put back: without it a "Carol ... 4 nights, rest
+    # all 6" message lost Carol's 4 and came back with no split (1 of 1 run at temperature 0;
+    # main read it right).
     people: List[SplitPerson] = Field(description=(
         "Each person or family named as sharing. The sender is include_sender, not an entry, "
         "except when a count is said for them: 'me 3 and Carol 2' -> a 'me' entry with count 3. "
-        "Empty for none and everyone."))
+        "Empty for none and everyone. Each entry copies a count if said for that person or "
+        "family, else null."))
     # The same shape as people, so "everyone except Carol's family" can leave out a whole family.
     # The example is the measured one: the model put Carol's family at 4 in either list in 5 of
     # 5 runs, which resolve_split accepts (2026-11-16).
@@ -211,8 +214,14 @@ def system_prompt(today: date, allowed_accounts: List[str]) -> str:
         "and do not pick the only card that happens to look plausible.\n"
         "For the date, record only what the user said in date_reference - never calculate a date "
         "yourself. Typed shorthand: 'yday' and 'ytd' both mean yesterday.\n"
-        "Record who shares, and any count said per person or family, only in split_reference, "
-        "only when the message asks to split or share the cost; never work out a share yourself."
+        "Record who shares only in split_reference, only when the message asks to split or share "
+        "the cost; never work out a share yourself.\n"
+        # A separate sentence on purpose (#120): merged into the one above, "any count" became
+        # conditional on a split word, and "rest all 6 nights" messages with no split word came
+        # back with no split. main kept them apart and read them. The example pair is main's,
+        # word for word: with only half of it (in is_family), one still lost every count.
+        "Read counts per person or family, default_count and count_unit. 'Carol and Dave 4' is "
+        "two people, each count 4, not families; 'Carol's family 4' is a family with count 4."
     )
 
 

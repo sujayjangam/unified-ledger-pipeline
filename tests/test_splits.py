@@ -584,6 +584,32 @@ def test_payer_clause_gives_no_count(people):
     assert result.counts == _STAY_COUNTS and not result.warnings
 
 
+@pytest.mark.parametrize("kind", ["everyone", "named"])
+def test_two_labels_read_as_one_name_are_both_matched(kind):
+    """"Reds and Blues" came back as one name about half the time (logprobs, 2026-11-18, #120)
+    and matched nobody, so the whole split was lost. Each part matches, so it is both families,
+    whichever way the model also read "everyone" or "named" (a 49%/49% tie)."""
+    result = _trip({"kind": kind, "include_sender": True, "default_count": 6, "count_unit": "nights",
+                    "people": [{"name": "Carol", "is_family": False, "count": None},
+                               {"name": "Reds and Blues", "is_family": True, "count": 5}]}, _STAY)
+    assert result.counts == _STAY_COUNTS and not result.warnings
+
+
+@pytest.mark.parametrize("joined", ["Carol & Dave", "Carol, Dave", "Carol and Dave"])
+def test_two_people_read_as_one_name_are_both_matched(joined):
+    result = _trip({"kind": "named", "include_sender": False, "people": [{"name": joined}]},
+                   "lunch 60 split between Carol and Dave")
+    assert [p.id for p in result.people] == [3, 4] and not result.warnings
+
+
+def test_a_joined_name_with_an_unmatched_part_matches_nobody():
+    """One unknown part: nothing is guessed, and the warning names what was said."""
+    result = _trip({"kind": "named", "include_sender": False, "people": [{"name": "Reds and Zed"}]},
+                   "lunch 60 split between Reds and Zed")
+    assert result.people == ()
+    assert result.warnings == ("⚠️ Couldn't match 'Reds and Zed'",)
+
+
 @pytest.mark.parametrize("reference", [
     {"kind": "everyone", "people": [{"name": "Carol", "count": 6}, {"name": "Reds", "count": 5},
                                     {"name": "Blues", "count": 5}]},
@@ -763,7 +789,9 @@ def test_check_line_without_a_unit_says_count():
     ("Airbnb 900 split by nights. Reds 5 nights, rest all 6 nights.",
      {"kind": "everyone", "people": [{"name": "Reds", "count": 5}]},
      {1: 6, 2: 6, 3: 5, 4: 5, 5: 6, 6: 6}),
-    ("Carol paid 600 for her 4 nights. Rest all stay 6 nights.",
+    # Replaced "Carol paid 600 for her 4 nights. Rest all stay 6 nights.", which could fairly
+    # mean the 600 was Carol's own stay (#120). This wording says the 600 is for everyone.
+    ("Carol paid 600 for all. Carol stayed 4 nights, rest all 6 nights",
      {"kind": "everyone", "people": [{"name": "Carol", "count": 4}]},
      {1: 6, 2: 6, 3: 4, 4: 6, 5: 6, 6: 6}),
 ])

@@ -138,7 +138,9 @@ Env vars (`.env.example` shows the format):
   count is used only if its number is in the message, and a menu tap keeps the counts (one row
   builder for the message and every tap). Python, not the model, decides that an "except" entry
   with a count is a sharer at that count; "everyone" counts only when the text says it. A name
-  that matches no person is tried as a trip family label (a person always wins). A paying
+  that matches no person is tried as a trip family label (a person always wins). A name
+  that still matches nothing ("Reds and Blues") is split on "and", "&" or ",", used only if
+  every part matches. A paying
   clause ("X paid ... for 6 nights") gives X no count unless it says "her/his/their N"; X still
   shares, at a count from the other words. The rest's count ("rest", "others", "everyone else")
   is read by Python from its own clause, beats the model's, and is skipped when that clause has

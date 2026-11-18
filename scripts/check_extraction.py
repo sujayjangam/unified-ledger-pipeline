@@ -178,7 +178,10 @@ SPLIT_CASES += [
     # the help says it.
     {"message": "Airbnb 900 split by nights. Reds 5 nights, rest all 6 nights.", "amount": 900,
      "outcome": {('Alice', 6), ('Bob', 5), ('Frank', 5), ('Carol', 6), ('Dave', 6), ('Erin', 6)}},
-    {"message": "Carol paid 600 for her 4 nights. Rest all stay 6 nights.", "amount": 600,
+    # Says the 600 is for everyone. It replaced "Carol paid 600 for her 4 nights. Rest all stay
+    # 6 nights.", which could fairly mean the 600 was Carol's own stay (#120). "She stayed 4"
+    # would not work: a count is read only beside the name, and "Carol paid" is a paying clause.
+    {"message": "Carol paid 600 for all. Carol stayed 4 nights, rest all 6 nights", "amount": 600,
      "outcome": {('Alice', 6), ('Bob', 6), ('Frank', 6), ('Carol', 4), ('Dave', 6), ('Erin', 6)}},
 ]
 

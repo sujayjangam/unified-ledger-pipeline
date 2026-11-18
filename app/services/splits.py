@@ -75,6 +75,8 @@ _UNEVEN_WORD = re.compile(
 # time has. A slash with small numbers is always read as a date.
 _RATIO = re.compile(r"(?<![\d.])(\d{1,2})\s*[/:]\s*(\d{1,2})(?![\d.])")
 _SMALL_RATIO = re.compile(r"(?<![\d.:])(\d{1,2})\s*:\s*(\d)(?![\d.:])")
+# What joins two names the model returned as one: "Reds and Blues", "Carol & Dave", "Carol, Dave".
+_NAME_JOINER = re.compile(r"\s*(?:,|&|(?<!\w)and(?!\w))\s*", re.IGNORECASE)
 _EXCEPT_WORD = re.compile(r"(?<!\w)(?:except|excluding|but\s+not|apart\s+from|other\s+than)(?!\w)", re.IGNORECASE)
 _EVERYONE_WORD = re.compile(r"(?<!\w)(?:everyone|everybody|all|all\s+of\s+us|whole\s+group|the\s+group)(?!\w)", re.IGNORECASE)
 
@@ -506,17 +508,33 @@ def resolve_split(reference: dict | None, candidates, sender: Participant,
         family_words = _FAMILY_SUFFIX.match(name.strip())
         if family_words:
             name, is_family = family_words.group("name"), True
+        matched = match_one(name, is_family)
+        if matched is None:
+            # "Reds and Blues" as one name: the model splits it or not about half the time
+            # (53% vs 47% at that point, logprobs run 2026-11-18, #120), and as one name it
+            # matches nobody, so the whole split was lost. When every part matches on its own,
+            # it is those parts; one unmatched part keeps the warning for the whole name. Each
+            # part is an exact match, so nothing is guessed.
+            parts = [part for part in _NAME_JOINER.split(name) if part.strip()]
+            found = [match_one(part, is_family) for part in parts] if len(parts) > 1 else [None]
+            if any(f is None for f in found):
+                warnings.append(NO_MATCH_WARNING.format(name=name))
+                return []
+            matched = [p for group in found for p in group]
+        return matched
+
+    def match_one(name: str, is_family: bool) -> list[Participant] | None:
+        """One name: a person (or their family), else one trip family label. None if neither."""
         person = sender if name.strip().casefold() in _SENDER_WORDS else match_person(name, candidates)
         if person is None:
-            # Not a person's name, so try the trip's family labels: "Reds and Blues 5 nights"
-            # names two families by their labels. A person is always tried first, so this
-            # only ever turns a "Couldn't match" into a match, never changes one.
+            # Not a person's name, so try the trip's family labels: "Reds 5 nights" names a
+            # family by its label. A person is always tried first, so this only ever turns a
+            # "Couldn't match" into a match, never changes one.
             said = _label_key(name)
             labels = {label for label in families.values() if label and _label_key(label) == said}
             if len(labels) == 1:
                 return [p for p in candidates if families.get(p.id) in labels]
-            warnings.append(NO_MATCH_WARNING.format(name=name))
-            return []
+            return None
         label = families.get(person.id)
         if is_family and label:
             return [p for p in candidates if families.get(p.id) == label]
