@@ -3,7 +3,7 @@
 **Status:** Proposed
 **Date:** 2026-11-18
 **Issue:** [#115](https://github.com/sujayjangam/unified-ledger-pipeline/issues/115)
-**Code:** `alembic/versions/0010_*`, `app/services/ledger_queries.py`, `app/bot_core.py::recent_command`
+**Code:** `alembic/versions/0010_*`, `app/services/ledger_queries.py`, `app/bot_core.py::recent_command`, `scripts/` (test-entry purge)
 
 ## Problem
 
@@ -30,10 +30,21 @@ flowchart LR
 - Split rows stay where they are. Every reader joins them to `transactions`, so a deleted
   entry's shares drop out with it. Foreign keys follow the rename to the real table.
 - A deleted row keeps its `idempotency_key`, so a late retry of its Confirm can't bring it back.
-- Test entries are cleared by hand from `raw_transactions`; the split rows still cascade.
+  The unique index is on the real table, so the retry still conflicts; it returns no row through
+  the view, and `add_expense` reads that as "already saved". The bot says saved, and the entry
+  stays deleted: the delete was deliberate.
+- Test entries are hard-deleted from `raw_transactions` by a checked-in script, dry run unless
+  `--write`, never by typed SQL; the split rows still cascade.
+- Delete and undo are Telegram only. The REST API and CLI stay add-only: there is nobody to ask
+  "are you sure?", the same reason they refuse a closed account.
 - A new column goes on `raw_transactions`, then into the view's column list.
+  `CREATE OR REPLACE VIEW` can only add columns at the end, so dropping, renaming or retyping a
+  column means dropping and recreating the view in the same migration.
 - The rename and the view are created in one migration, so `transactions` always exists. Old
   code reading `transactions` reads the view, so the migration can be applied before the merge.
+- The migration is tried on a Neon branch before production: an insert through the view must
+  still take `ON CONFLICT (idempotency_key) DO NOTHING`, report its row count, and get the
+  `created_at` default.
 
 ## Rejected
 
