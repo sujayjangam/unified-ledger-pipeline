@@ -120,7 +120,8 @@ async def test_split_refusals(monkeypatch, directory, reference, warning):
 async def test_unread_uneven_ticks_names_and_offers_set_amounts(monkeypatch, directory):
     """Uneven shares the bot can't read keep the names ticked, evenly, with the warning and a
     Set amounts button on the card, so fixing it is one tap (ADR-0048)."""
-    _, pending, text = await _card(monkeypatch, directory, {**WITH_CAROL, 'uneven': True}, trip=False)
+    _, pending, text = await _card(monkeypatch, directory, WITH_CAROL, trip=False,
+                                   message="dinner 30 split unevenly with Carol")
     assert len(pending['split']) == 2
     assert 'Shown as an even split' in text
     rows = [[b.callback_data for b in row] for row in bot_core._keyboard_for(pending).inline_keyboard]
@@ -130,9 +131,11 @@ async def test_unread_uneven_ticks_names_and_offers_set_amounts(monkeypatch, dir
 @pytest.mark.parametrize("fields", [{'category': 'YouTrip top-up'}, {'transaction_type': 'Transfer'}])
 async def test_transfers_never_split(monkeypatch, directory, fields):
     """Moving money never creates shares or split warnings."""
-    _, pending, text = await _card(monkeypatch, directory, {**WITH_CAROL, 'uneven': True}, **fields)
+    _, pending, text = await _card(monkeypatch, directory, WITH_CAROL,
+                                   message="top-up 30 split unevenly with Carol", **fields)
     assert pending['split'] == pending['split_warnings'] == ()
-    assert 'Split' not in text and 'uneven' not in text
+    # The raw message is on the card, so look for the warning line, not the word.
+    assert 'Split' not in text and 'Uneven shares' not in text
 
 
 @pytest.mark.parametrize("message,model_payer,payer,account,warning", [

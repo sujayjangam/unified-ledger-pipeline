@@ -53,6 +53,28 @@ _FIXED_SHARE = re.compile(
 _SHARE_AMOUNT = re.compile(
     r"(?<!\w)(?:(?:share|portion|part)\s+(?:is|was|of|=)|split\s+(?:is|was|=)|owes?\s+(?:me\s+|us\s+)?)"
     r"\s*\$?(\d+(?:\.\d+)?)", re.IGNORECASE)
+# Words that say the shares are not equal: "split unevenly", "not equally", "split by nights".
+# The model used to set an `uneven` flag for these; whether the words are there is a question
+# Python answers exactly, as it does for split words and "last week", so it is read here
+# (#120). It only adds the "Set amounts" warning when no count was read; it never changes a
+# share. "Per night" is left out on purpose: "hotel 200 per night split with Carol" is even.
+# "Uneven" and "unequal" count only beside a split word, so "uneven roads, go halves" is even.
+_SPLIT_VERB = r"(?:split|splits|splitting|share|shares|shared|sharing|divide|divided|dividing)"
+_UNEVEN_ADVERB = r"(?:un-?even(?:ly)?|un-?equal(?:ly)?|not\s+(?:equally|evenly))"
+_UNEVEN_WORD = re.compile(
+    # "split unevenly", "shared with Carol, not equally": at most three words between.
+    rf"(?<!\w){_SPLIT_VERB}(?:\s+\S+){{0,3}}?\s+{_UNEVEN_ADVERB}(?!\w)"
+    # "uneven split", "unequal shares", "not split equally".
+    rf"|(?<!\w){_UNEVEN_ADVERB}(?:\s+\S+)?\s+{_SPLIT_VERB}(?!\w)"
+    r"|(?<!\w)not\s+split\s+(?:equally|evenly)(?!\w)"
+    # "by nights", "by number of nights", "split by the night".
+    r"|(?<!\w)by\s+(?:the\s+)?(?:number\s+of\s+)?(?:nights|days|counts?)(?!\w)"
+    rf"|(?<!\w){_SPLIT_VERB}\s+by\s+(?:the\s+)?(?:night|day)(?!\w)", re.IGNORECASE)
+# A ratio of shares: "60/40" or "70:30", two whole numbers that add up to 100, which keeps a
+# date ("3/7") and a time ("10:30") out; or "2:1", a colon with one digit after it, which no
+# time has. A slash with small numbers is always read as a date.
+_RATIO = re.compile(r"(?<![\d.])(\d{1,2})\s*[/:]\s*(\d{1,2})(?![\d.])")
+_SMALL_RATIO = re.compile(r"(?<![\d.:])(\d{1,2})\s*:\s*(\d)(?![\d.:])")
 _EXCEPT_WORD = re.compile(r"(?<!\w)(?:except|excluding|but\s+not|apart\s+from|other\s+than)(?!\w)", re.IGNORECASE)
 _EVERYONE_WORD = re.compile(r"(?<!\w)(?:everyone|everybody|all|all\s+of\s+us|whole\s+group|the\s+group)(?!\w)", re.IGNORECASE)
 
@@ -81,6 +103,19 @@ _PAID_BY_ME = re.compile(r"(?<!\w)(?:paid\s+(?:for\s+)?)?by\s+(?:me|myself)(?!\w
 def asks_for_split(message: str) -> bool:
     """True when the message contains a split word ("split", "shared", "between"...)."""
     return _SPLIT_WORD.search(message) is not None
+
+
+def says_uneven(message: str) -> bool:
+    """True when the message says the shares aren't equal ("unevenly", "by nights", "60/40",
+    "2:1").
+
+    50/50 and 1:1 are even splits, so a ratio counts only when its two numbers differ.
+    """
+    if _UNEVEN_WORD.search(message):
+        return True
+    if any(int(a) + int(b) == 100 and int(a) != int(b) for a, b in _RATIO.findall(message)):
+        return True
+    return any(int(a) != int(b) for a, b in _SMALL_RATIO.findall(message))
 
 
 def sender_shares(message: str) -> bool | None:
@@ -439,9 +474,11 @@ def resolve_split(reference: dict | None, candidates, sender: Participant,
     # warning pointing to "Set amounts" (ADR-0048): one tap to fix, and the warning stays until
     # amounts are set. The warning never blocks a save, so an unfixed card saves even shares.
     # The model turns "Carol's share is 50" into a count of 50 for Carol alone (5 of 10 runs,
-    # 2026-11-16), so for a fixed share every count is dropped, never trusted.
-    uneven_unread = bool((reference.get("uneven") and not by_count)
-                         or (message is not None and _FIXED_SHARE.search(message)))
+    # 2026-11-16), so for a fixed share every count is dropped, never trusted. Both are read
+    # from the words (says_uneven replaced the model's `uneven` flag, #120), so with no
+    # message there is no uneven reading, like every other text check here.
+    uneven_unread = message is not None and bool(
+        (not by_count and says_uneven(message)) or _FIXED_SHARE.search(message))
     if uneven_unread:
         entries = tuple({**e, 'count': None} if isinstance(e, dict) else e for e in entries)
         exceptions = tuple({**e, 'count': None} if isinstance(e, dict) else e for e in exceptions)

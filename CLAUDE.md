@@ -57,7 +57,12 @@ committing doc changes or when picking work back up after a gap; otherwise check
 - After any change to the prompt or schema descriptions in `app/services/extraction.py`,
   `python -m scripts.check_extraction` (real model, no database) must be run by the user (see
   above), and any real message the model misread added to its list
-  ([ADR-0031](docs/decisions/0031-last-week-from-message-text.md)).
+  ([ADR-0031](docs/decisions/0031-last-week-from-message-text.md)). `--only "<text>"` reruns just
+  the matching messages; the script prints its call count first.
+- The prompt holds only what Python can't read from the words
+  ([ADR-0049](docs/decisions/0049-prompt-holds-only-what-python-cant-read.md)). Class docstrings
+  on the schema models are sent to the model, so notes go in `#` comments; each rule is written
+  once, in its field; `tests/test_extraction.py` caps the size. Raise the cap only with a run.
 - `scripts/migrate_to_postgres.py` can't run again but is kept on purpose as a reference. Don't
   delete it.
 
@@ -145,7 +150,8 @@ Env vars (`.env.example` shows the format):
   end up with, or a missing count filled from a number in another clause. Every `/help`
   example (`app/services/help_topics.py`) is also a case in `scripts/check_extraction.py`;
   change one only with the other. A sharer left without a count gets a warning and no split,
-  never a wrong even one. A fixed amount or percentage, or "uneven" with no count read, keeps
+  never a wrong even one. A fixed amount or percentage, or uneven wording with no count read
+  ("unevenly", "by nights", "60/40": read by `says_uneven`, never the model), keeps
   the names ticked evenly with `UNEVEN_EVEN_SPLIT_WARNING` pointing to "Set amounts" (ADR-0048);
   every count the model read is dropped then, never trusted. An even split set in the menu
   keeps that warning, reworded, until Confirm or amounts are set. Transfers and YouTrip top-ups are never split.

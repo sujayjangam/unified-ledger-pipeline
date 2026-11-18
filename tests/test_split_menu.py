@@ -256,9 +256,9 @@ async def test_stale_people_from_everyone_rejected_on_trip(monkeypatch, director
 @pytest.mark.parametrize('uneven', [False, True])
 async def test_reading_warnings_clear_only_when_ticks_change(monkeypatch, directory, uneven):
     """Opening an everyday menu keeps readings; a changed choice retains only uneven advice."""
-    reference = {**WITH_CAROL, 'people': [{'name': 'Zed'}], 'include_sender': False, 'uneven': uneven}
-    context, pending, _ = await _card(monkeypatch, directory, reference, trip=False,
-                                     message='dinner 30 split between Zed')
+    reference = {**WITH_CAROL, 'people': [{'name': 'Zed'}], 'include_sender': False}
+    message = 'dinner 30 split unevenly between Zed' if uneven else 'dinner 30 split between Zed'
+    context, pending, _ = await _card(monkeypatch, directory, reference, trip=False, message=message)
     warnings = pending['split_warnings']
     assert warnings
     await _press(context, 'split:menu')
@@ -272,7 +272,8 @@ async def test_reading_warnings_clear_only_when_ticks_change(monkeypatch, direct
 
 async def test_auto_tick_changes_uneven_warning(monkeypatch, directory):
     """Trip auto-selection is a real change and must not leave a no-split warning above shares."""
-    context, pending, _ = await _card(monkeypatch, directory, {**WITH_CAROL, 'uneven': True})
+    context, pending, _ = await _card(monkeypatch, directory, WITH_CAROL,
+                                     message='dinner 30 split unevenly with Carol')
     await _press(context, 'split:menu')
     assert pending['split_warnings'] == (UNEVEN_EVEN_SPLIT_WARNING,)
 

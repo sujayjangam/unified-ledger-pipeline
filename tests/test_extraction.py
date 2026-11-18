@@ -22,12 +22,12 @@ def test_split_count_fields_and_old_defaults():
     """New count fields are optional so existing references keep their even semantics."""
     old = extraction.SplitReference(kind='named', include_sender=False,
                                     people=[{'name': 'Carol', 'is_family': False}],
-                                    except_people=[], uneven=False)
+                                    except_people=[])
     assert old.people[0].count is None
     assert old.default_count is None and old.count_unit is None
     counted = extraction.SplitReference(kind='everyone', include_sender=True,
         people=[{'name': 'Carol', 'is_family': True, 'count': 4}],
-        except_people=[], uneven=True, default_count=5, count_unit='nights')
+        except_people=[], default_count=5, count_unit='nights')
     assert counted.people[0].count == 4
     assert counted.default_count == 5 and counted.count_unit == 'nights'
 
@@ -40,9 +40,8 @@ def test_valid_full_payload_parses():
         payment_method="Bank A Platinum",
         category="Food",
         date_reference={"kind": "unstated"},
-        split_reference={"kind": "none", "include_sender": False, "people": [], "except_people": [], "uneven": False},
+        split_reference={"kind": "none", "include_sender": False, "people": [], "except_people": []},
         payer_name=None,
-        needs_review=False,
     )
     assert txn.amount == 12.50
     assert txn.category == ExpenseCategory.FOOD
@@ -54,12 +53,10 @@ def test_amount_none_is_allowed():
         transaction_type="Expense",
         category="Other",
         date_reference={"kind": "unstated"},
-        split_reference={"kind": "none", "include_sender": False, "people": [], "except_people": [], "uneven": False},
+        split_reference={"kind": "none", "include_sender": False, "people": [], "except_people": []},
         payer_name=None,
-        needs_review=True,
     )
     assert txn.amount is None
-    assert txn.needs_review is True
 
 
 def test_invalid_category_rejected():
@@ -69,9 +66,8 @@ def test_invalid_category_rejected():
             transaction_type="Expense",
             category="Foods",
             date_reference={"kind": "unstated"},
-            split_reference={"kind": "none", "include_sender": False, "people": [], "except_people": [], "uneven": False},
+            split_reference={"kind": "none", "include_sender": False, "people": [], "except_people": []},
             payer_name=None,
-            needs_review=False,
         )
 
 
@@ -82,9 +78,8 @@ def test_invalid_transaction_type_rejected():
             transaction_type="Refund",
             category="Food",
             date_reference={"kind": "unstated"},
-            split_reference={"kind": "none", "include_sender": False, "people": [], "except_people": [], "uneven": False},
+            split_reference={"kind": "none", "include_sender": False, "people": [], "except_people": []},
             payer_name=None,
-            needs_review=False,
         )
 
 
@@ -94,9 +89,8 @@ def test_currency_defaults_to_sgd():
         transaction_type="Expense",
         category="Food",
         date_reference={"kind": "unstated"},
-        split_reference={"kind": "none", "include_sender": False, "people": [], "except_people": [], "uneven": False},
+        split_reference={"kind": "none", "include_sender": False, "people": [], "except_people": []},
         payer_name=None,
-        needs_review=False,
     )
     assert txn.currency == "SGD"
 
@@ -109,18 +103,16 @@ def test_transaction_list_wraps_multiple_transactions():
                 "transaction_type": "Expense",
                 "category": "Food",
                 "date_reference": {"kind": "unstated"},
-                "split_reference": {"kind": "none", "include_sender": False, "people": [], "except_people": [], "uneven": False},
+                "split_reference": {"kind": "none", "include_sender": False, "people": [], "except_people": []},
                 "payer_name": None,
-                "needs_review": False,
             },
             {
                 "amount": 5.00,
                 "transaction_type": "Expense",
                 "category": "Transport",
                 "date_reference": {"kind": "unstated"},
-                "split_reference": {"kind": "none", "include_sender": False, "people": [], "except_people": [], "uneven": False},
+                "split_reference": {"kind": "none", "include_sender": False, "people": [], "except_people": []},
                 "payer_name": None,
-                "needs_review": False,
             },
         ]
     )
@@ -162,9 +154,8 @@ def test_transaction_requires_a_date_reference():
             amount=12.50,
             transaction_type="Expense",
             category="Food",
-            split_reference={"kind": "none", "include_sender": False, "people": [], "except_people": [], "uneven": False},
+            split_reference={"kind": "none", "include_sender": False, "people": [], "except_people": []},
             payer_name=None,
-            needs_review=False,
         )
 
 
@@ -182,3 +173,49 @@ async def test_prompt_lists_exactly_the_accounts_passed_in(monkeypatch):
     await extraction.extract_transactions("lunch 12", date(2026, 11, 11), ["Card A", "Cash"])
     system = parse.call_args.kwargs["messages"][0]["content"]
     assert "The only valid payment methods are: Card A, Cash." in system
+
+
+# --- What the model reads with every message (#120) -----------------------------------------
+#
+# The prompt nearly doubled while splits were built, and price-first amounts started slipping
+# soon after. These tests keep that growth visible: they can't say whether the model reads
+# well (only scripts/check_extraction.py can), but they fail when the text grows past the cap,
+# so raising it is a deliberate change in a reviewed diff.
+
+def _descriptions(node):
+    """Every description string in a JSON schema, at any depth."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "description" and isinstance(value, str):
+                yield value
+            else:
+                yield from _descriptions(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _descriptions(value)
+
+
+def test_no_model_has_a_docstring_sent_to_the_model():
+    """Pydantic sends a model class's docstring as its schema description, so a note for
+    developers there is read by the model with every message. Notes go in # comments."""
+    schema = TransactionList.model_json_schema()
+    described = [name for name, model in schema["$defs"].items() if "description" in model]
+    assert described == []
+    assert "description" not in {k for k in schema if k != "properties"}
+
+
+def test_prompt_text_has_no_indentation():
+    """Indentation inside the strings is sent to the model too."""
+    texts = [*_descriptions(TransactionList.model_json_schema()),
+             extraction.system_prompt(date(2026, 11, 11), ["Card A"])]
+    assert not [t for t in texts if "  " in t]
+
+
+def test_prompt_stays_under_its_size_cap():
+    """Descriptions plus system prompt: about 4,800 characters after #120, down from 8,900
+    (1,900 of that was indentation). The whole request, schema structure included, went from
+    about 12,600 to 8,300. Raise the cap only with a check_extraction run showing the new
+    text is worth it."""
+    size = (sum(len(t) for t in _descriptions(TransactionList.model_json_schema()))
+            + len(extraction.system_prompt(date(2026, 11, 11), ["Card A"])))
+    assert size <= 5_200
