@@ -33,7 +33,8 @@ load_dotenv()
 from app.services.dates import apply_date_resolution  # noqa: E402 - load_dotenv() first
 from app.services.extraction import extract_transactions  # noqa: E402 - load_dotenv() first
 from app.services.participants import Participant, mentions_paying  # noqa: E402 - load_dotenv() first
-from app.services.splits import resolve_split, sender_shares, UNEVEN_EVEN_SPLIT_WARNING  # noqa: E402 - load_dotenv() first
+from app.services.splits import (  # noqa: E402 - load_dotenv() first
+    resolve_split, sender_shares, drop_share_entries, UNEVEN_EVEN_SPLIT_WARNING)
 
 # The payment methods offered to the model. Fictional, and fixed here rather than loaded from the
 # database: this script must never touch the database (#53), and the messages below test amounts
@@ -61,6 +62,10 @@ CASES = [
     # Spoken style, as a Whisper transcript reads
     ("I spent fifteen dollars on lunch yesterday", 15, YESTERDAY),
     ("50 ringgit for dinner", 50, TODAY),
+    # Price first, then a sentence about the food. The first came back with no amount on
+    # production (2026-11-18, 3 of 32 runs); the second in 15 of 24 runs on an early #112 prompt.
+    ("5 for lunch. Hainanese curry rice", 5, TODAY),
+    ("8 for dinner. chicken rice and teh", 8, TODAY),
     # Relative and calendar dates (#15). On Wednesday 23 Sep, "last Tuesday" is 22 Sep and
     # "Tuesday last week" is 15 Sep.
     ("grab 12.80 day before yesterday", 12.8, date(2026, 9, 21)),
@@ -209,10 +214,12 @@ async def run_once(message: str, semaphore: asyncio.Semaphore):
         result = await extract_transactions(message, TODAY, FICTIONAL_ACCOUNTS)
     if not result or not result.get("transactions"):
         return {}
-    txn = result["transactions"][0]
-    # Only the first entry is read, so the count is kept: a share sentence read as a second
-    # expense makes the bot refuse the message, and must fail here too (2026-11-18).
-    txn["_count"] = len(result["transactions"])
+    # The same first step process_expense_text takes: drop a share read as a second expense.
+    transactions = drop_share_entries(result["transactions"], message)
+    txn = transactions[0]
+    # Only the first entry is read, so the count is kept: two entries make the bot refuse the
+    # message, and must fail here too (2026-11-18).
+    txn["_count"] = len(transactions)
     # The same two steps process_expense_text takes: the raw message becomes the description,
     # then the date is resolved from the reference plus that text.
     txn["description"] = message

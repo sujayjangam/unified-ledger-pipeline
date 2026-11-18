@@ -144,6 +144,10 @@ Env vars (`.env.example` shows the format):
   the names ticked evenly with `UNEVEN_EVEN_SPLIT_WARNING` pointing to "Set amounts" (ADR-0048);
   every count the model read is dropped then, never trusted. An even split set in the menu
   keeps that warning, reworded, until Confirm or amounts are set. Transfers and YouTrip top-ups are never split.
+  An extra entry the model makes of a share ("Bob's split is 90") is dropped by
+  `drop_share_entries` before the one-expense guard: only the number in a share phrase, same
+  currency, less than the first entry. Never merge entries any other way, and never fix this
+  with a prompt rule (it cost the nights readings; ADR-0048).
 - The split menu (`handle_split_button`, ADR-0041) follows the payer button's rules: card lock,
   answer once and last, toast only on resolved cards, never load the directory, redraw from a
   copy and change the pending entry only after the redraw worked. State changes are pure

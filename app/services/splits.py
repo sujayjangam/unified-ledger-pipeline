@@ -48,6 +48,11 @@ _FIXED_SHARE = re.compile(
     r"|(?<!\w)split\s+(?:is|was|=)\s*\$?\d"
     r"|\d\s*(?:%|percent(?!\w))"
     r"|(?<!\w)owes?\s+(?:me\s+|us\s+)?\$?\d", re.IGNORECASE)
+# The money number in a fixed-share phrase: "Bob's split is 90" -> 90, "Carol owes 30" -> 30.
+# The same phrases as _FIXED_SHARE, without percentages: a percentage is never an amount.
+_SHARE_AMOUNT = re.compile(
+    r"(?<!\w)(?:(?:share|portion|part)\s+(?:is|was|of|=)|split\s+(?:is|was|=)|owes?\s+(?:me\s+|us\s+)?)"
+    r"\s*\$?(\d+(?:\.\d+)?)", re.IGNORECASE)
 _EXCEPT_WORD = re.compile(r"(?<!\w)(?:except|excluding|but\s+not|apart\s+from|other\s+than)(?!\w)", re.IGNORECASE)
 _EVERYONE_WORD = re.compile(r"(?<!\w)(?:everyone|everybody|all|all\s+of\s+us|whole\s+group|the\s+group)(?!\w)", re.IGNORECASE)
 
@@ -355,6 +360,44 @@ def _number_after_except(message: str) -> bool:
     if not found:
         return False
     return bool(_numbers(message[found.end():]))
+
+
+def _cents_or_none(value) -> int | None:
+    """dollars_to_cents for a value that may be missing or bad: None instead of raising."""
+    try:
+        return dollars_to_cents(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def drop_share_entries(transactions: list[dict], message: str) -> list[dict]:
+    """Remove extra entries the model made out of a share of the first one.
+
+    "I paid 135 split with Bob. Bob's split is 90" came back as two expenses (135 and 90) in
+    10 of 24 runs (2026-11-18), and the one-expense guard refused it. Prompt wording fixed that
+    but cost the nights readings, so Python undoes it instead, reading the message as it does
+    for dates and the payer. A later entry goes only when all three hold:
+      - the message has a fixed-share phrase with a money number ("split is 90", "share is 50");
+      - the entry's amount is that number, in the same currency as the first entry;
+      - it is less than the first entry's amount.
+    Real separate expenses ("Dinner 80 split with Carol. Taxi 20.") have no share phrase, so
+    they are never merged - which keeps this right once several expenses per message are allowed.
+    Returns a new list; the input is not changed.
+    """
+    if len(transactions) < 2:
+        return list(transactions)
+    shares = {_cents_or_none(m.group(1)) for m in _SHARE_AMOUNT.finditer(message or "")} - {None}
+    first = transactions[0]
+    first_cents = _cents_or_none(first.get("amount"))
+    if not shares or first_cents is None:
+        return list(transactions)
+
+    def is_share(entry):
+        cents = _cents_or_none(entry.get("amount"))
+        return (cents in shares and cents < first_cents
+                and entry.get("currency") == first.get("currency"))
+
+    return [first, *(t for t in transactions[1:] if not is_share(t))]
 
 
 def resolve_split(reference: dict | None, candidates, sender: Participant,

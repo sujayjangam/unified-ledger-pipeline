@@ -58,10 +58,12 @@ sequenceDiagram
   "Set amounts". Every count the model read is dropped (it reads "share is 50" as a count of
   50). The warning doesn't block Confirm, so an unfixed card saves even shares. Splits by
   count (nights) are unchanged.
-- **A share sentence is part of its expense.** The model read "… Bob's split is 90" as a second
-  expense in 3 of 8 runs, so the one-expense guard refused it. The prompt now says a share
-  belongs to its cost (12/12 after); `check_extraction` fails on a wrong expense count and keeps
-  two real expenses as two, ready for several expenses per message.
+- **A share sentence is part of its expense, decided by Python.** The model read "… Bob's split
+  is 90" as a second expense in 10 of 24 runs, so the one-expense guard refused it.
+  `drop_share_entries` drops a later entry only when its amount is the number in a share phrase
+  ("split is 90"), in the same currency and less than the first (12/12 after). Real expenses
+  have no share phrase, so they stay apart when several per message are allowed.
+  `check_extraction` fails on a wrong expense count.
 - **Only cents are saved.** No migration.
 
 ## Rejected
@@ -71,6 +73,8 @@ sequenceDiagram
 - **A Mini App with input boxes:** needs a hosted page and login checks.
 - **Every person in one reply, total must match:** first trial on the test bot (2026-11-18)
   piled up messages and needed a full retype for every change.
+- **A prompt rule that a share is not an expense:** fixed the share case but cost the nights
+  readings (one fell from 24/24 to 16/24) and price-first amounts ("8 for dinner." 9/24).
 - **Clear all amounts on any tick change:** they still fit when the new person takes what's left.
 - **No split for a fixed share until ticked by hand:** the names were already right; it cost
   three taps to tick them again.

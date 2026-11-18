@@ -105,11 +105,15 @@ class TransactionSchema(BaseModel):
     # when to return null, and the model read terse typed messages like "Lunch 15 yday" as
     # "price not stated" - measured null in 13 of 13 runs. Re-check any wording change here
     # with scripts/check_extraction.py; the test suite can't call the model.
+    # The price-first example was added 2026-11-18: after the split fields grew the prompt,
+    # "5 for lunch. Hainanese curry rice" lost its amount on production (3 of 32 runs; 0 of 32
+    # before the split fields), and "8 for dinner. chicken rice and teh" in 15 of 24 runs.
     amount: Optional[float] = Field(default=None, description="""The price paid, as a number only.
                                     In a short typed message the price is usually a bare number with no
                                     currency sign and no decimals - that number IS the amount:
                                     'Lunch 15 yday' -> 15, 'coffee 5' -> 5, 'grab 12.80' -> 12.8,
-                                    '50 ringgit' -> 50. A number that is part of the date ('3/7',
+                                    '50 ringgit' -> 50. The number may come first, before what it
+                                    was for, and a note may follow: '5 for lunch. Curry rice' -> 5. A number that is part of the date ('3/7',
                                     '12 Sep', '3 days ago') is not the amount. Null ONLY when the
                                     message contains no price at all ('hello', 'lunch yesterday').""")
     
@@ -157,9 +161,9 @@ class TransactionSchema(BaseModel):
 # creating TransactionList to make life easier in future ticket to handle multiple transactions in 1 voice note
 class TransactionList(BaseModel):
     # The share sentence was added after "Alice paid 135 split with Bob. Bob's split is 90" came
-    # back as two expenses on the test bot (2026-11-18), so the one-expense guard refused it.
-    # It is worded for the day several expenses per message are allowed: a share still belongs
-    # to the expense it is part of, never becomes its own entry.
+    # back as two expenses on the test bot (2026-11-18). It only helps; the fix that holds is
+    # drop_share_entries in splits.py. A stronger rule in the system prompt cost the nights
+    # readings and price-first amounts, so it was taken out (ADR-0048).
     transactions: List[TransactionSchema] = Field(description="""A list of extracted expenses.
         If the user mentions multiple distinct expenses, create a separate object for each.
         A sentence that gives someone's share of a cost already mentioned ('Bob's split is 90',
@@ -209,11 +213,7 @@ async def extract_transactions(transcript_text: str, today: date, allowed_accoun
                                                 'Carol and Dave 4' is two people, each count 4, not families;
                                                 'Carol's family 4' is a family with count 4.
                                                 Fixed amounts/percentages set uneven
-                                                true but are never counts.
-                                                A share of a cost is part of that cost, not another
-                                                expense: 'I paid 135 split with Bob. Bob's split is 90'
-                                                is ONE expense of 135.
-                                                Record who paid in payer_name, null unless the message says someone
+                                                true but are never counts.                                                Record who paid in payer_name, null unless the message says someone
                                                 other than the sender paid; sharing with someone does not mean they paid.
                                                 Numeric dates are day first: 3/7 is 3 July."""},
                 {"role": "user", "content": transcript_text}

@@ -27,7 +27,7 @@ from app.services.participants import (
 from app.services.splits import (
     resolve_split, menu_people, split_groups, split_people, split_rows,
     open_split, toggle_split_person, toggle_split_family, remove_split,
-    amounts_prompt, parse_split_amounts, AMOUNTS_PROMPT_LINE,
+    amounts_prompt, parse_split_amounts, AMOUNTS_PROMPT_LINE, drop_share_entries,
 )
 from app.services.trips import (
     Trip, load_active_trip, trip_families, switch_trip_off, switch_trip_on, member_trips,
@@ -1188,8 +1188,9 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
         await status_msg.edit_text("❌ Failed to extract structured data from your message.")
         return
 
-    # Extract the actual list from the wrapper and the spender
-    transactions_list = structured_data["transactions"]
+    # Extract the actual list from the wrapper and the spender. An entry the model made out
+    # of a share ("Bob's split is 90") is dropped first, so the guard below doesn't refuse it.
+    transactions_list = drop_share_entries(structured_data["transactions"], raw_text)
     user_id = str(update.effective_user.id)
     # authorize() already checked this sender is a participant, so this is never None.
     sender = directory.participant_by_telegram_id(user_id)
