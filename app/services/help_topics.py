@@ -18,7 +18,10 @@ TOPICS = {
         "Say \"split\" and who with:\n\n"
         "• Dinner 80 split with Carol\n"
         "• Lunch 60 split between Carol and Dave\n\n"
-        "\"With\" includes you, \"between\" doesn't."
+        "\"With\" includes you, \"between\" doesn't.\n\n"
+        "For exact shares, tick the people in the split menu, then tap Set amounts. "
+        "Reply one person at a time, for example, \"Bob 90\". "
+        "Anyone not set shares what's left; send a name and \"rest\" to put someone back."
     )),
     "nights": ("🛏 By nights", (
         "Start with \"split by nights\", and put each number right after the name:\n\n"

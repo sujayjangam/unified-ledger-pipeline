@@ -122,7 +122,6 @@ Env vars (`.env.example` shows the format):
   (`sender_shares`), both read by Python. Nobody is guessed: an unmatched name, or
   "everyone" with no trip on, is a ⚠️ card line. Split warnings are never stored and never block a
   save. Uneven shares read from the message are counts (nights, or any count per person;
-  exact amounts per person are #112, typed into a reply prompt, not read from the message;
   [ADR-0042](docs/decisions/0042-uneven-shares-by-count.md)): the model reads each count, a
   count is used only if its number is in the message, and a menu tap keeps the counts (one row
   builder for the message and every tap). Python, not the model, decides that an "except" entry
@@ -140,10 +139,11 @@ Env vars (`.env.example` shows the format):
   a payer's dropped count that wasn't in their paying clause and differs from the count they
   end up with, or a missing count filled from a number in another clause. Every `/help`
   example (`app/services/help_topics.py`) is also a case in `scripts/check_extraction.py`;
-  change one only with the other. A fixed
-  amount or percentage, or a sharer left without a count, gets a warning and no split, never a
-  wrong even one. An even split set in the menu
-  keeps that warning, reworded, until Confirm. Transfers and YouTrip top-ups are never split.
+  change one only with the other. A sharer left without a count gets a warning and no split,
+  never a wrong even one. A fixed amount or percentage, or "uneven" with no count read, keeps
+  the names ticked evenly with `UNEVEN_EVEN_SPLIT_WARNING` pointing to "Set amounts" (ADR-0048);
+  every count the model read is dropped then, never trusted. An even split set in the menu
+  keeps that warning, reworded, until Confirm or amounts are set. Transfers and YouTrip top-ups are never split.
 - The split menu (`handle_split_button`, ADR-0041) follows the payer button's rules: card lock,
   answer once and last, toast only on resolved cards, never load the directory, redraw from a
   copy and change the pending entry only after the redraw worked. State changes are pure
@@ -152,6 +152,18 @@ Env vars (`.env.example` shows the format):
   anyone ticked always stays listed. The first opening on a trip card with no split ticks every
   member; never again after that (`split_menu['opened']`). Callback data is an id or a group
   index, never a name.
+- Exact split amounts are typed, never read from the message
+  ([ADR-0048](docs/decisions/0048-exact-split-amounts-by-reply.md)). "Set amounts" (2+ ticked;
+  on the card and first in the split menu) sends a ForceReply prompt, replaced on a tick change
+  (Telegram can't edit a ForceReply message), linked to the card in `split_prompts`; the reply is caught in
+  `handle_text` before extraction, inside the card's lock, and read by `parse_split_amounts`
+  (no model): names only from the ticked people, amounts only through `dollars_to_cents`. A reply
+  merges into `split_menu['amounts']` (set people only); unset people share what's left by
+  `share_out`, by count if any, so the card always adds up. `amounts_misfit` is the only
+  refusal: a misfit reply changes nothing; a tick change that misfits clears the amounts into
+  `cleared_amounts` with a ⚠️ line. Each reply and the old prompt are deleted once read, the
+  last prompt on Confirm or Cancel; a failed delete is only printed, never blocks a save. The
+  expense message is never deleted.
 - `/trip_bals` ([ADR-0044](docs/decisions/0044-trip-balances-from-splits.md)) reads bills and
   settlements. Its numbered "Mark paid" buttons open separate payback cards (ADR-0046), saved
   only on Confirm. Payback taps use the directory snapshot kept with the report or card,

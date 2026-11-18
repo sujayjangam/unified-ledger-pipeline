@@ -156,7 +156,14 @@ class TransactionSchema(BaseModel):
 
 # creating TransactionList to make life easier in future ticket to handle multiple transactions in 1 voice note
 class TransactionList(BaseModel):
-    transactions: List[TransactionSchema] = Field(description="A list of extracted expenses. If the user mentions multiple distinct expenses, create a separate object for each.")
+    # The share sentence was added after "Alice paid 135 split with Bob. Bob's split is 90" came
+    # back as two expenses on the test bot (2026-11-18), so the one-expense guard refused it.
+    # It is worded for the day several expenses per message are allowed: a share still belongs
+    # to the expense it is part of, never becomes its own entry.
+    transactions: List[TransactionSchema] = Field(description="""A list of extracted expenses.
+        If the user mentions multiple distinct expenses, create a separate object for each.
+        A sentence that gives someone's share of a cost already mentioned ('Bob's split is 90',
+        'Carol's share is 50', 'Dave pays 30%') is part of that expense, never a new one.""")
 
 # 3. The Extraction Function
 async def extract_transactions(transcript_text: str, today: date, allowed_accounts: List[str]) -> dict | None:
@@ -203,6 +210,9 @@ async def extract_transactions(transcript_text: str, today: date, allowed_accoun
                                                 'Carol's family 4' is a family with count 4.
                                                 Fixed amounts/percentages set uneven
                                                 true but are never counts.
+                                                A share of a cost is part of that cost, not another
+                                                expense: 'I paid 135 split with Bob. Bob's split is 90'
+                                                is ONE expense of 135.
                                                 Record who paid in payer_name, null unless the message says someone
                                                 other than the sender paid; sharing with someone does not mean they paid.
                                                 Numeric dates are day first: 3/7 is 3 July."""},

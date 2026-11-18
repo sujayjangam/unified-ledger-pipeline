@@ -118,7 +118,7 @@ async def test_button_only_on_splittable_cards(monkeypatch, directory, fields, o
 async def test_change_label_for_read_split(monkeypatch, directory):
     """A split read from text offers Change instead of suggesting no split exists."""
     _, pending, _ = await _card(monkeypatch, directory, WITH_CAROL)
-    assert ['👥 Change split'] in _labels(bot_core._keyboard_for(pending))
+    assert ['👥 Change split', '✏️ Set amounts'] in _labels(bot_core._keyboard_for(pending))
 
 
 async def test_first_trip_open_and_remove_reopen(monkeypatch, directory):
@@ -129,6 +129,7 @@ async def test_first_trip_open_and_remove_reopen(monkeypatch, directory):
     assert pending['split_menu']['opened'] is True
     assert sum(r['share_cents'] for r in pending['split']) == 555
     assert _labels(query.edit_message_text.await_args.kwargs['reply_markup']) == [
+        ['✏️ Set amounts'],
         ["✅ Alice's family"], ['✅ Alice', '✅ Bob'], ["✅ Carol's family"], ['✅ Carol'],
         ['Remove split', 'Done'],
     ]
@@ -181,7 +182,7 @@ async def test_no_trip_open_and_person_shares(monkeypatch, directory):
     assert [(r['participant_id'], r['share_cents']) for r in pending['split']] == [(1, 278), (3, 277)]
     assert 'Alice: 2.78' in query.edit_message_text.await_args.args[0]
     assert 'Carol: 2.77' in query.edit_message_text.await_args.args[0]
-    assert ['👥 Change split'] in _labels(bot_core._keyboard_for(pending))
+    assert ['👥 Change split', '✏️ Set amounts'] in _labels(bot_core._keyboard_for(pending))
     await _press(context, 'split:p:1')
     assert 'Carol owes Alice 5.55' in bot_core._split_lines(pending)
     await _press(context, 'split:p:3')
@@ -210,10 +211,11 @@ async def test_not_trip_order_and_retained_tick(monkeypatch, directory):
     await bot_core.handle_button_click(update, context)
     query.answer.assert_awaited_once()
     assert [p.display_name for p in bot_core._payer_people(pending)] == ['Alice', 'Bob', 'amy', 'Carol', 'Zoe']
-    assert _labels(bot_core._split_keyboard(pending))[:-1] == [['✅ Alice', '✅ Bob'], ['amy', '✅ Carol'], ['Zoe']]
+    # [1:-1] skips "Set amounts" at the top and Remove split/Done at the bottom.
+    assert _labels(bot_core._split_keyboard(pending))[1:-1] == [['✅ Alice', '✅ Bob'], ['amy', '✅ Carol'], ['Zoe']]
     pending['split_menu'] = {**pending['split_menu'], 'everyone': tuple(
         p for p in pending['split_menu']['everyone'] if p.id != 3)}
-    assert _data(bot_core._split_keyboard(pending))[:-1] == [
+    assert _data(bot_core._split_keyboard(pending))[1:-1] == [
         ['split:p:1', 'split:p:2'], ['split:p:4', 'split:p:5'], ['split:p:3'],
     ]
     await _press(context, 'split:p:3')

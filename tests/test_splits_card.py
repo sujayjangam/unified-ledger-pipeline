@@ -110,12 +110,21 @@ async def test_warning_only_on_live_cards(monkeypatch, directory):
 
 @pytest.mark.parametrize("reference,warning", [
     ({'kind': 'everyone'}, 'needs a trip switched on'),
-    ({**WITH_CAROL, 'uneven': True}, 'uneven shares'),
 ])
 async def test_split_refusals(monkeypatch, directory, reference, warning):
     """Refused splits warn while leaving the ordinary entry confirmable."""
     _, pending, text = await _card(monkeypatch, directory, reference, trip=False)
     assert pending['split'] == () and warning in text
+
+
+async def test_unread_uneven_ticks_names_and_offers_set_amounts(monkeypatch, directory):
+    """Uneven shares the bot can't read keep the names ticked, evenly, with the warning and a
+    Set amounts button on the card, so fixing it is one tap (ADR-0048)."""
+    _, pending, text = await _card(monkeypatch, directory, {**WITH_CAROL, 'uneven': True}, trip=False)
+    assert len(pending['split']) == 2
+    assert 'Shown as an even split' in text
+    rows = [[b.callback_data for b in row] for row in bot_core._keyboard_for(pending).inline_keyboard]
+    assert ['split:menu', 'split:amounts'] in rows
 
 
 @pytest.mark.parametrize("fields", [{'category': 'YouTrip top-up'}, {'transaction_type': 'Transfer'}])

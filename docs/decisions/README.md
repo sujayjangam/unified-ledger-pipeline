@@ -55,7 +55,7 @@ supersedes the old one rather than editing history.
 | [0045](0045-family-labels-the-rest-and-stricter-wording.md) | Family labels, "the rest", and stricter wording over a model double-check | Accepted | 2026-11-17 |
 | [0046](0046-settlements-as-their-own-records.md) | Paybacks are their own records, and can be in a different currency | Accepted | 2026-11-17 |
 | [0047](0047-pay-back-only-who-you-owe.md) | Pay back only who you owe, and paying on someone's behalf | Accepted | 2026-11-17 |
-| [0048](0048-exact-split-amounts-by-reply.md) | Exact split amounts, typed as a reply | Proposed | 2026-11-18 |
+| [0048](0048-exact-split-amounts-by-reply.md) | Exact split amounts, typed as a reply | Accepted | 2026-11-18 |
 
 ## Writing a new one
 
