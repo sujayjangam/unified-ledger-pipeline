@@ -27,9 +27,9 @@ is tried on a Neon branch with a fictional trip-sized directory first.
 
 1. Undo a saved entry: `/recent` gets paging and a delete button
    ([#115](https://github.com/sujayjangam/unified-ledger-pipeline/issues/115),
-   [ADR-0050](docs/decisions/0050-soft-delete-behind-a-view.md)). Built, PR open. Before it
-   merges: run `alembic upgrade head` (migration 0010) on production by hand, after a backup,
-   then try it on the test bot.
+   [ADR-0050](docs/decisions/0050-soft-delete-behind-a-view.md)). Built, PR open. Migration
+   0010 applied to production on 2026-11-18, after a backup. Before it merges: try it on the
+   test bot.
 2. Record which bill a payback was for, so a bill can be marked paid off
    ([#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113)).
 3. Clearer "Mark paid" buttons than "Mark paid 1, 2, 3"
