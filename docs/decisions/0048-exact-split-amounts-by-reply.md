@@ -16,8 +16,8 @@ sequenceDiagram
     actor U as You
     participant B as Bot
     U->>B: message "Alice paid 135 split with Bob. Bob's share is 90"
-    B->>U: confirm card, ⚠️ "set exact amounts with 👥 Change split"
-    U->>B: tap "👥 Change split" (or "👥 Add split")
+    B->>U: confirm card, no split yet, ⚠️ "tap 👥 Add split to set amounts"
+    U->>B: tap "👥 Add split" ("👥 Change split" if a split is already on the card)
     B->>U: split menu: ticked people, plus "Set amounts"
     U->>B: tap "Set amounts"
     B-->>U: popup: "Reply with each person's amount"
