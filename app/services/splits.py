@@ -53,6 +53,30 @@ _FIXED_SHARE = re.compile(
 _SHARE_AMOUNT = re.compile(
     r"(?<!\w)(?:(?:share|portion|part)\s+(?:is|was|of|=)|split\s+(?:is|was|=)|owes?\s+(?:me\s+|us\s+)?)"
     r"\s*\$?(\d+(?:\.\d+)?)", re.IGNORECASE)
+# Words that say the shares are not equal: "split unevenly", "not equally", "split by nights".
+# The model used to set an `uneven` flag for these; whether the words are there is a question
+# Python answers exactly, as it does for split words and "last week", so it is read here
+# (#120). It only adds the "Set amounts" warning when no count was read; it never changes a
+# share. "Per night" is left out on purpose: "hotel 200 per night split with Carol" is even.
+# "Uneven" and "unequal" count only beside a split word, so "uneven roads, go halves" is even.
+_SPLIT_VERB = r"(?:split|splits|splitting|share|shares|shared|sharing|divide|divided|dividing)"
+_UNEVEN_ADVERB = r"(?:un-?even(?:ly)?|un-?equal(?:ly)?|not\s+(?:equally|evenly))"
+_UNEVEN_WORD = re.compile(
+    # "split unevenly", "shared with Carol, not equally": at most three words between.
+    rf"(?<!\w){_SPLIT_VERB}(?:\s+\S+){{0,3}}?\s+{_UNEVEN_ADVERB}(?!\w)"
+    # "uneven split", "unequal shares", "not split equally".
+    rf"|(?<!\w){_UNEVEN_ADVERB}(?:\s+\S+)?\s+{_SPLIT_VERB}(?!\w)"
+    r"|(?<!\w)not\s+split\s+(?:equally|evenly)(?!\w)"
+    # "by nights", "by number of nights", "split by the night".
+    r"|(?<!\w)by\s+(?:the\s+)?(?:number\s+of\s+)?(?:nights|days|counts?)(?!\w)"
+    rf"|(?<!\w){_SPLIT_VERB}\s+by\s+(?:the\s+)?(?:night|day)(?!\w)", re.IGNORECASE)
+# A ratio of shares: "60/40" or "70:30", two whole numbers that add up to 100, which keeps a
+# date ("3/7") and a time ("10:30") out; or "2:1", a colon with one digit after it, which no
+# time has. A slash with small numbers is always read as a date.
+_RATIO = re.compile(r"(?<![\d.])(\d{1,2})\s*[/:]\s*(\d{1,2})(?![\d.])")
+_SMALL_RATIO = re.compile(r"(?<![\d.:])(\d{1,2})\s*:\s*(\d)(?![\d.:])")
+# What joins two names the model returned as one: "Reds and Blues", "Carol & Dave", "Carol, Dave".
+_NAME_JOINER = re.compile(r"\s*(?:,|&|(?<!\w)and(?!\w))\s*", re.IGNORECASE)
 _EXCEPT_WORD = re.compile(r"(?<!\w)(?:except|excluding|but\s+not|apart\s+from|other\s+than)(?!\w)", re.IGNORECASE)
 _EVERYONE_WORD = re.compile(r"(?<!\w)(?:everyone|everybody|all|all\s+of\s+us|whole\s+group|the\s+group)(?!\w)", re.IGNORECASE)
 
@@ -81,6 +105,19 @@ _PAID_BY_ME = re.compile(r"(?<!\w)(?:paid\s+(?:for\s+)?)?by\s+(?:me|myself)(?!\w
 def asks_for_split(message: str) -> bool:
     """True when the message contains a split word ("split", "shared", "between"...)."""
     return _SPLIT_WORD.search(message) is not None
+
+
+def says_uneven(message: str) -> bool:
+    """True when the message says the shares aren't equal ("unevenly", "by nights", "60/40",
+    "2:1").
+
+    50/50 and 1:1 are even splits, so a ratio counts only when its two numbers differ.
+    """
+    if _UNEVEN_WORD.search(message):
+        return True
+    if any(int(a) + int(b) == 100 and int(a) != int(b) for a, b in _RATIO.findall(message)):
+        return True
+    return any(int(a) != int(b) for a, b in _SMALL_RATIO.findall(message))
 
 
 def sender_shares(message: str) -> bool | None:
@@ -354,6 +391,52 @@ def _reread(reference: dict, message: str, trip_on: bool) -> tuple[dict, list[tu
     return reference, unsure
 
 
+def _add_unlisted(reference: dict, message: str, candidates, families: dict[int, str]) -> dict:
+    """The model's split_reference plus anyone the message gives a count the model left out.
+
+    For "Airbnb 900 split by nights. Reds 5 nights, rest all 6 nights." (a /help example) the
+    model returned no people at all, 94% sure (logprobs run 2026-11-18, #120), so the Reds'
+    5 was lost and the trip split evenly. Python knows every name and family label, so it
+    reads them from the words, as _rest_count reads the rest. A name is added only when all
+    of these hold, so nothing is guessed:
+      - it is a split by count: the model read a count or a default, or the words say
+        "by nights" (says_uneven). An even split never gains a name this way.
+      - the model listed nobody by that name or label, in people or except_people.
+      - a mention of it that doesn't say who paid has exactly one number after it in its
+        own clause ("Reds 5 nights", "Carol stayed 4 nights"), from 1 to 999.
+    Returns a copy; the model's dict is never changed.
+    """
+    entries = [*(reference.get("people") or ()), *(reference.get("except_people") or ())]
+    by_count = reference.get("default_count") is not None or says_uneven(message) or any(
+        isinstance(e, dict) and e.get("count") is not None for e in entries)
+    if not by_count:
+        return reference
+    listed = {_label_key(e if isinstance(e, str) else e.get("name") or "") for e in entries}
+    # Labels first, so a label that is also someone's name stays one entry (match_person in
+    # resolve_split still tries the person first, as it does for the model's entries).
+    said = {label: True for label in families.values() if label}
+    said.update((p.display_name, False) for p in candidates if p.display_name not in said)
+    added = []
+    for name, is_family in said.items():
+        if _label_key(name) in listed:
+            continue
+        for found in _mentions(name, message):
+            if _is_paying(found, message):
+                continue
+            clause = _clause(message, found)
+            after = clause[clause.casefold().find(found.group(0).casefold()) + len(found.group(0)):]
+            numbers = _numbers(after)
+            if len(numbers) == 1 and 1 <= numbers[0] <= 999:
+                # "Bob's family 5" is Bob's whole family, as the model is told to read it.
+                family = is_family or bool(re.match(r"(?:['’]s)?\s+famil(?:y|ies)(?!\w)", after, re.IGNORECASE))
+                added.append({"name": name, "is_family": family, "count": numbers[0]})
+                listed.add(_label_key(name))
+                break
+    if not added:
+        return reference
+    return {**reference, "people": [*(reference.get("people") or ()), *added]}
+
+
 def _number_after_except(message: str) -> bool:
     """True when a whole number (digits or a number word) comes after the first except word."""
     found = _EXCEPT_WORD.search(message)
@@ -417,6 +500,11 @@ def resolve_split(reference: dict | None, candidates, sender: Participant,
     """
     if not reference or reference.get("kind", "none") == "none":
         return SplitResult((), ())
+    candidates = tuple(candidates)
+    if message is not None:
+        # Before anything reads the entries: an added count is what lets "the rest" below
+        # read its own count (it is read only beside someone else's).
+        reference = _add_unlisted(reference, message, candidates, families)
     # "Reds 5, others stay 6" says "everyone" as surely as "all" does - but only beside a named
     # person's count, so "Dinner with the others 80" stays a personal entry.
     says_everyone = message is not None and bool(
@@ -439,9 +527,11 @@ def resolve_split(reference: dict | None, candidates, sender: Participant,
     # warning pointing to "Set amounts" (ADR-0048): one tap to fix, and the warning stays until
     # amounts are set. The warning never blocks a save, so an unfixed card saves even shares.
     # The model turns "Carol's share is 50" into a count of 50 for Carol alone (5 of 10 runs,
-    # 2026-11-16), so for a fixed share every count is dropped, never trusted.
-    uneven_unread = bool((reference.get("uneven") and not by_count)
-                         or (message is not None and _FIXED_SHARE.search(message)))
+    # 2026-11-16), so for a fixed share every count is dropped, never trusted. Both are read
+    # from the words (says_uneven replaced the model's `uneven` flag, #120), so with no
+    # message there is no uneven reading, like every other text check here.
+    uneven_unread = message is not None and bool(
+        (not by_count and says_uneven(message)) or _FIXED_SHARE.search(message))
     if uneven_unread:
         entries = tuple({**e, 'count': None} if isinstance(e, dict) else e for e in entries)
         exceptions = tuple({**e, 'count': None} if isinstance(e, dict) else e for e in exceptions)
@@ -452,7 +542,6 @@ def resolve_split(reference: dict | None, candidates, sender: Participant,
             isinstance(e, dict) and e.get('count') is not None
             and not _valid_count(e['count'], message) for e in (*entries, *exceptions)):
         return SplitResult((), (COUNT_UNREAD_WARNING,))
-    candidates = tuple(candidates)
     warnings = []
 
     def named(entry) -> list[Participant]:
@@ -469,17 +558,33 @@ def resolve_split(reference: dict | None, candidates, sender: Participant,
         family_words = _FAMILY_SUFFIX.match(name.strip())
         if family_words:
             name, is_family = family_words.group("name"), True
+        matched = match_one(name, is_family)
+        if matched is None:
+            # "Reds and Blues" as one name: the model splits it or not about half the time
+            # (53% vs 47% at that point, logprobs run 2026-11-18, #120), and as one name it
+            # matches nobody, so the whole split was lost. When every part matches on its own,
+            # it is those parts; one unmatched part keeps the warning for the whole name. Each
+            # part is an exact match, so nothing is guessed.
+            parts = [part for part in _NAME_JOINER.split(name) if part.strip()]
+            found = [match_one(part, is_family) for part in parts] if len(parts) > 1 else [None]
+            if any(f is None for f in found):
+                warnings.append(NO_MATCH_WARNING.format(name=name))
+                return []
+            matched = [p for group in found for p in group]
+        return matched
+
+    def match_one(name: str, is_family: bool) -> list[Participant] | None:
+        """One name: a person (or their family), else one trip family label. None if neither."""
         person = sender if name.strip().casefold() in _SENDER_WORDS else match_person(name, candidates)
         if person is None:
-            # Not a person's name, so try the trip's family labels: "Reds and Blues 5 nights"
-            # names two families by their labels. A person is always tried first, so this
-            # only ever turns a "Couldn't match" into a match, never changes one.
+            # Not a person's name, so try the trip's family labels: "Reds 5 nights" names a
+            # family by its label. A person is always tried first, so this only ever turns a
+            # "Couldn't match" into a match, never changes one.
             said = _label_key(name)
             labels = {label for label in families.values() if label and _label_key(label) == said}
             if len(labels) == 1:
                 return [p for p in candidates if families.get(p.id) in labels]
-            warnings.append(NO_MATCH_WARNING.format(name=name))
-            return []
+            return None
         label = families.get(person.id)
         if is_family and label:
             return [p for p in candidates if families.get(p.id) == label]

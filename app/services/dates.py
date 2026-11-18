@@ -32,6 +32,21 @@ def mentions_last_week(text: str) -> bool:
     return bool(_LAST_WEEK.search(text or ""))
 
 
+def says_year(year, text: str) -> bool:
+    """True if the message says this year: "2025" whole, or "25" straight after a date
+    separator ("3/7/25", "12-9-25", "12 Sep '25").
+
+    The model fills in a year nobody said: for "taxi 18 on 12 Sep" it wrote 2026 at 92% and
+    2023 at 8% (logprobs run 2026-11-18, #120). 2023 would be a wrong date with no warning, so
+    a year counts only when it is in the words, like a split count (splits._valid_count).
+    """
+    if type(year) is not int:
+        return False
+    text = text or ""
+    return bool(re.search(rf"(?<!\d){year}(?!\d)", text)
+                or re.search(rf"[/\-.']\s?{year % 100:02d}(?!\d)", text))
+
+
 def resolve_date_reference(ref, today: date):
     ''' ref is a dictionary that is returned by DateReference in extraction.py
     The model outputs a dictionary where "kind" is the key to figure out the date
@@ -166,8 +181,13 @@ def apply_date_resolution(transaction: dict, today: date) -> dict:
     # A copy, with last_week added from the message text - the one part of the reference the
     # model can't read reliably (see mentions_last_week). 'description' is the raw message,
     # set by process_expense_text before this runs.
+    message = transaction.get("description", "")
     ref = {**(transaction.get("date_reference") or {}),
-           "last_week": mentions_last_week(transaction.get("description", ""))}
+           "last_week": mentions_last_week(message)}
+    # A year the message doesn't say is dropped, so "12 Sep" is the most recent 12 Sep
+    # (_resolve_calendar), never a year the model made up (see says_year).
+    if ref.get("year") is not None and not says_year(ref["year"], message):
+        ref["year"] = None
     resolved = resolve_date_reference(ref, today)
     transaction["date"] = (resolved or today).isoformat()
     # None for a date that looks fine, else the text of the card's ⚠️ line (#74). Worked out

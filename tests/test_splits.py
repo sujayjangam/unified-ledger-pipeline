@@ -6,6 +6,72 @@ from app.services.participants import Participant
 from app.services.splits import resolve_split, share_out, split_shares
 
 
+# --- says_uneven: uneven shares read from the words, not the model (#120) --------------------
+
+@pytest.mark.parametrize('message,uneven', [
+    ('dinner 90 split unevenly with Carol', True),
+    ('dinner 90 split uneven with Carol', True),
+    ('taxi 30 split unequally between Carol and Dave', True),
+    ('dinner 90 not split equally with Carol', True),
+    ('dinner 90 split with Carol, not evenly', True),
+    ('dinner 90, uneven split with Carol', True),
+    ('taxi 40, unequal shares with Dave', True),
+    ('Airbnb 900 split by nights with Carol', True),
+    ('Hotel 600 split by number of nights with Carol', True),
+    ('hotel 400 split by the night with Carol', True),
+    ('dinner 100 split 60/40 with Carol', True),
+    ('dinner 100 split 70:30 with Carol', True),
+    ('Dinner 90 split 2:1 with Carol', True),
+    # Even, or not a ratio at all.
+    ('dinner 90 split evenly with Carol', False),
+    ('dinner 90 split equally with Carol', False),
+    ('dinner 100 split 50/50 with Carol', False),
+    ('dinner 90 split 1:1 with Carol', False),
+    ('Taxi 40 over uneven roads, go halves with Carol', False),  # "uneven" not about the split
+    ('Paris by night tour 80 split with Carol', False),
+    ('dinner 40 on 2/1 split with Carol', False),       # a date, not 2:1
+    ('dinner 40 on 3/7 split with Carol', False),       # a date
+    ('dinner 40 at 10:30 split with Carol', False),     # a time
+    ('hotel 200 per night split with Carol', False),    # a price per night is still even
+    ('grab 12 to Bythenights Road', False),             # not the word "by"
+    ('dinner 80 split with Carol', False),
+])
+def test_says_uneven(message, uneven):
+    from app.services.splits import says_uneven
+    assert says_uneven(message) is uneven
+
+
+def test_uneven_words_tick_evenly_with_the_set_amounts_warning(directory):
+    """'Unevenly' with no count read: names ticked evenly, warning points to Set amounts."""
+    from app.services.splits import UNEVEN_EVEN_SPLIT_WARNING
+    reference = {'kind': 'named', 'include_sender': True, 'people': [{'name': 'Carol'}]}
+    result = resolve_split(reference, directory.participants, directory.participant(1), {}, False,
+                           'dinner 90 split unevenly with Carol')
+    assert [p.id for p in result.people] == [1, 3]
+    assert result.warnings == (UNEVEN_EVEN_SPLIT_WARNING,)
+    # The same message without the word is a plain even split, with no warning.
+    result = resolve_split(reference, directory.participants, directory.participant(1), {}, False,
+                           'dinner 90 split with Carol')
+    assert [p.id for p in result.people] == [1, 3] and result.warnings == ()
+
+
+def test_uneven_words_never_drop_counts_that_were_read(directory):
+    """'Split by nights' with the nights said is a split by count, not an unread uneven one."""
+    reference = {'kind': 'named', 'include_sender': True,
+                 'people': [{'name': 'me', 'count': 3}, {'name': 'Carol', 'count': 2}]}
+    result = resolve_split(reference, directory.participants, directory.participant(1), {}, False,
+                           'Hotel 600 split by nights, me 3 and Carol 2')
+    assert result.counts == {1: 3, 3: 2} and result.warnings == ()
+
+
+def test_a_stale_uneven_flag_from_the_model_is_ignored(directory):
+    """Only the words decide now: an old-shape reference carrying uneven=True adds nothing."""
+    reference = {'kind': 'named', 'include_sender': True, 'people': [{'name': 'Carol'}], 'uneven': True}
+    result = resolve_split(reference, directory.participants, directory.participant(1), {}, False,
+                           'dinner 90 split with Carol')
+    assert [p.id for p in result.people] == [1, 3] and result.warnings == ()
+
+
 @pytest.mark.parametrize('word', ['EXCEPT', 'excluding', 'but not', 'apart from', 'other than'])
 def test_dropped_exclusion_refuses_split(directory, word):
     from app.services.splits import EXCEPT_UNREAD_WARNING
@@ -122,7 +188,7 @@ def test_counts_must_be_said(directory, message, count, valid):
     from app.services.splits import COUNT_UNREAD_WARNING
     # Bob at 1000 is never valid, so give him "1", said at the end: a count needs two sharers.
     message = None if message is None else f"{message}, Bob 1"
-    result = resolve_split({'kind': 'named', 'uneven': True,
+    result = resolve_split({'kind': 'named',
                             'people': [{'name': 'Carol', 'count': count}, {'name': 'Bob', 'count': 1}]},
                            directory.participants, directory.participant(1), {}, False, message)
     assert bool(result.people) is valid
@@ -186,7 +252,7 @@ def test_everyone_with_family_duration_and_exclusion(directory):
 def test_sender_count_and_missing_count(directory):
     """A me entry supplies the sender's count; include_sender alone cannot invent one."""
     from app.services.splits import COUNT_UNREAD_WARNING
-    reference = {'kind': 'named', 'include_sender': True, 'uneven': True,
+    reference = {'kind': 'named', 'include_sender': True,
                  'people': [{'name': 'me', 'count': 3}, {'name': 'Carol', 'count': 2}]}
     result = resolve_split(reference, directory.participants, directory.participant(1), {}, False,
                            'Hotel 600 split by nights, me 3 and Carol 2')
@@ -225,9 +291,10 @@ def test_invalid_share_inputs(amount, weights):
         share_out(amount, weights)
 
 
-def _resolve(directory, reference, trip_on=False, families=None):
+def _resolve(directory, reference, trip_on=False, families=None, message=None):
     """Resolve a fictional message for Alice with optional trip families."""
-    return resolve_split(reference, directory.participants, directory.participant(1), families or {}, trip_on)
+    return resolve_split(reference, directory.participants, directory.participant(1), families or {},
+                         trip_on, message)
 
 
 @pytest.mark.parametrize("reference", [None, {}, {"kind": "none"}, {"kind": "none", "uneven": True}, {"people": []}])
@@ -265,7 +332,7 @@ def test_family_label_names_the_whole_family(directory, name):
 
 def test_family_label_carries_its_count(directory):
     """"Reds only 5 nights, rest all 6": the label's count goes to each member of the family."""
-    reference = {"kind": "everyone", "uneven": True, "default_count": 6, "count_unit": "nights",
+    reference = {"kind": "everyone", "default_count": 6, "count_unit": "nights",
                  "people": [{"name": "Reds", "is_family": False, "count": 5}]}
     result = resolve_split(reference, directory.participants, directory.participant(1),
                            {2: "Reds", 3: "Reds"}, True,
@@ -319,15 +386,17 @@ def test_unknown_name_keeps_known_people(directory):
     assert result.warnings == ("⚠️ Couldn't match 'Erin'", "⚠️ Couldn't match 'Dave'")
 
 
-@pytest.mark.parametrize("reference,trip_on,warning", [
-    ({"kind": "everyone"}, False, '⚠️ "Everyone" needs a trip switched on. No split recorded.'),
-    ({"kind": "named", "uneven": True}, True, "⚠️ Uneven shares: tap 👥 Add split, tick who shares, then Set amounts. No split recorded."),
-    ({"kind": "named"}, False, "⚠️ Couldn't tell who shares this. No split recorded."),
-    ({"kind": "named", "include_sender": True, "except_people": ["me"]}, True, "⚠️ Couldn't tell who shares this. No split recorded."),
+@pytest.mark.parametrize("reference,trip_on,message,warning", [
+    ({"kind": "everyone"}, False, None, '⚠️ "Everyone" needs a trip switched on. No split recorded.'),
+    ({"kind": "named"}, True, "dinner 90 split unevenly",
+     "⚠️ Uneven shares: tap 👥 Add split, tick who shares, then Set amounts. No split recorded."),
+    ({"kind": "named"}, False, None, "⚠️ Couldn't tell who shares this. No split recorded."),
+    ({"kind": "named", "include_sender": True, "except_people": ["me"]}, True, None,
+     "⚠️ Couldn't tell who shares this. No split recorded."),
 ])
-def test_refusals(directory, reference, trip_on, warning):
+def test_refusals(directory, reference, trip_on, message, warning):
     """No guessed group is returned when the requested split cannot be resolved."""
-    result = _resolve(directory, reference, trip_on)
+    result = _resolve(directory, reference, trip_on, message=message)
     assert not result.people
     assert result.warnings == (warning,)
 
@@ -515,6 +584,67 @@ def test_payer_clause_gives_no_count(people):
     assert result.counts == _STAY_COUNTS and not result.warnings
 
 
+@pytest.mark.parametrize("kind", ["everyone", "named"])
+def test_two_labels_read_as_one_name_are_both_matched(kind):
+    """"Reds and Blues" came back as one name about half the time (logprobs, 2026-11-18, #120)
+    and matched nobody, so the whole split was lost. Each part matches, so it is both families,
+    whichever way the model also read "everyone" or "named" (a 49%/49% tie)."""
+    result = _trip({"kind": kind, "include_sender": True, "default_count": 6, "count_unit": "nights",
+                    "people": [{"name": "Carol", "is_family": False, "count": None},
+                               {"name": "Reds and Blues", "is_family": True, "count": 5}]}, _STAY)
+    assert result.counts == _STAY_COUNTS and not result.warnings
+
+
+@pytest.mark.parametrize("kind", ["everyone", "named"])
+def test_a_label_with_its_own_count_is_added_when_the_model_left_it_out(kind):
+    """The /help example: the model returned no people, 94% sure (logprobs, 2026-11-18,
+    #120), so the Reds' 5 was lost. "Reds 5 nights" is a label and one number in its clause."""
+    result = _trip({"kind": kind, "include_sender": False, "people": [], "except_people": [],
+                    "default_count": 6, "count_unit": "nights"},
+                   "Airbnb 900 split by nights. Reds 5 nights, rest all 6 nights.")
+    assert result.counts == {1: 6, 2: 6, 3: 5, 4: 5, 5: 6, 6: 6} and not result.warnings
+
+
+def test_a_family_said_with_its_count_is_added_as_the_family():
+    result = _trip({"kind": "named", "include_sender": False, "default_count": None, "count_unit": "nights",
+                    "people": [{"name": "Bob", "count": 4}]},
+                   "Airbnb 900 split by nights: Carol's family 5, Bob 4")
+    assert result.counts == {2: 4, 3: 5, 4: 5}
+
+
+@pytest.mark.parametrize("message, reference", [
+    # An even split never gains a name: no count read and no "by nights".
+    ("dinner 80 split with Carol and Dave 80", {"kind": "named", "include_sender": True,
+                                               "people": [{"name": "Carol"}]}),
+    # Two numbers after the name in its clause: either could be the count.
+    ("Airbnb 900 split by nights. Reds 5 or 6 nights, rest all 6",
+     {"kind": "everyone", "include_sender": True, "people": [], "default_count": 6}),
+    # Said only as the payer: "Carol paid 600" is the bill, not her count.
+    ("Carol paid 600 split by nights, Dave 4, Erin 6",
+     {"kind": "named", "include_sender": False, "people": [{"name": "Dave", "count": 4},
+                                                           {"name": "Erin", "count": 6}]}),
+])
+def test_nobody_is_added_without_one_count_of_their_own(message, reference):
+    from app.services.splits import _add_unlisted
+    assert _add_unlisted({"except_people": [], **reference}, message, _TRIP, _TRIP_FAMILIES) == \
+        {"except_people": [], **reference}
+
+
+@pytest.mark.parametrize("joined", ["Carol & Dave", "Carol, Dave", "Carol and Dave"])
+def test_two_people_read_as_one_name_are_both_matched(joined):
+    result = _trip({"kind": "named", "include_sender": False, "people": [{"name": joined}]},
+                   "lunch 60 split between Carol and Dave")
+    assert [p.id for p in result.people] == [3, 4] and not result.warnings
+
+
+def test_a_joined_name_with_an_unmatched_part_matches_nobody():
+    """One unknown part: nothing is guessed, and the warning names what was said."""
+    result = _trip({"kind": "named", "include_sender": False, "people": [{"name": "Reds and Zed"}]},
+                   "lunch 60 split between Reds and Zed")
+    assert result.people == ()
+    assert result.warnings == ("⚠️ Couldn't match 'Reds and Zed'",)
+
+
 @pytest.mark.parametrize("reference", [
     {"kind": "everyone", "people": [{"name": "Carol", "count": 6}, {"name": "Reds", "count": 5},
                                     {"name": "Blues", "count": 5}]},
@@ -652,7 +782,7 @@ def test_amount_after_a_name_is_not_a_count():
 def test_payer_count_outside_the_paying_clause_asks_for_a_check():
     """"Carol paid 600 for the villa, stayed 4 nights": the 4 isn't in the paying clause, so it
     may be Carol's. It is still dropped (the rule stands), but the card asks for a check."""
-    result = _trip({"kind": "everyone", "uneven": True, "count_unit": "nights",
+    result = _trip({"kind": "everyone", "count_unit": "nights",
                     "people": [{"name": "Carol", "count": 4}]},
                    "Carol paid 600 for the villa, stayed 4 nights. Rest all 6 nights.")
     assert result.warnings == ("⚠️ Check Carol's nights.",)
@@ -669,7 +799,7 @@ def test_payer_count_inside_the_paying_clause_is_dropped_quietly():
 def test_count_borrowed_from_another_clause_asks_for_a_check():
     """"Split between Bob, Dave and Fay. Bob 2, the rest 3": the first number after Dave and
     Fay is Bob's 2, from another clause, so each of them gets a check line."""
-    result = _trip({"kind": "named", "uneven": True, "count_unit": "nights",
+    result = _trip({"kind": "named", "count_unit": "nights",
                     "people": [{"name": "Bob", "count": 2}, {"name": "Dave"}, {"name": "Fay"}]},
                    "Villa 600 split between Bob, Dave and Fay. Bob 2, the rest 3.")
     assert result.warnings == ("⚠️ Check Dave's nights.", "⚠️ Check Fay's nights.")
@@ -684,7 +814,7 @@ def test_count_from_the_same_clause_needs_no_check():
 
 
 def test_check_line_without_a_unit_says_count():
-    result = _trip({"kind": "everyone", "uneven": True, "people": [{"name": "Carol", "count": 4}]},
+    result = _trip({"kind": "everyone", "people": [{"name": "Carol", "count": 4}]},
                    "Carol paid 600 for the villa, stayed 4. Rest all 6.")
     assert result.warnings == ("⚠️ Check Carol's count.",)
 
@@ -694,7 +824,9 @@ def test_check_line_without_a_unit_says_count():
     ("Airbnb 900 split by nights. Reds 5 nights, rest all 6 nights.",
      {"kind": "everyone", "people": [{"name": "Reds", "count": 5}]},
      {1: 6, 2: 6, 3: 5, 4: 5, 5: 6, 6: 6}),
-    ("Carol paid 600 for her 4 nights. Rest all stay 6 nights.",
+    # Replaced "Carol paid 600 for her 4 nights. Rest all stay 6 nights.", which could fairly
+    # mean the 600 was Carol's own stay (#120). This wording says the 600 is for everyone.
+    ("Carol paid 600 for all. Carol stayed 4 nights, rest all 6 nights",
      {"kind": "everyone", "people": [{"name": "Carol", "count": 4}]},
      {1: 6, 2: 6, 3: 4, 4: 6, 5: 6, 6: 6}),
 ])

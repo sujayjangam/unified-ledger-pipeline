@@ -50,14 +50,24 @@ committing doc changes or when picking work back up after a gap; otherwise check
   makes any connection fail, because locally `.env` is production. Stub queries and Telegram
   objects (see `tests/test_button_callback.py`). Test-only dependencies go in
   `requirements-dev.txt`, never `requirements.txt`.
-- **Never call the OpenAI API yourself** — no `scripts.check_extraction`, no ad-hoc model
-  calls, no worker runs that hit it. Production shares the same prepaid credit, and test runs
-  once drained it so the live bot failed with a 429. Give the user the command and the call
-  count, and let them run it.
+- **OpenAI calls need the user's explicit approval, every run.** That covers
+  `scripts.check_extraction`, ad-hoc model calls and anything else that hits the API. State
+  the call count first, and ask again before the next run: one yes covers one run, never the
+  next step of a plan. Workers never call it. Production shares the same prepaid credit, and
+  test runs once drained it so the live bot failed with a 429.
 - After any change to the prompt or schema descriptions in `app/services/extraction.py`,
-  `python -m scripts.check_extraction` (real model, no database) must be run by the user (see
-  above), and any real message the model misread added to its list
-  ([ADR-0031](docs/decisions/0031-last-week-from-message-text.md)).
+  `python -m scripts.check_extraction` (real model, no database) must be run, with approval
+  (see above), and any real message the model misread added to its list
+  ([ADR-0031](docs/decisions/0031-last-week-from-message-text.md)). `--only "<text>"` reruns just
+  the matching messages; the script prints its call count first. `--margins` lists every
+  choice the model made under 95% likelihood, at no extra calls: at temperature 0 a pass at
+  51% looks like one at 99%, and only the first flips on the next call.
+- The prompt holds only what Python can't read from the words
+  ([ADR-0049](docs/decisions/0049-prompt-holds-only-what-python-cant-read.md)). Class docstrings
+  on the schema models are sent to the model, so notes go in `#` comments; each rule is written
+  once, in its field; `tests/test_extraction.py` caps the size. Raise the cap only with a run.
+  The call runs at temperature 0, so `check_extraction` defaults to one run per message: add
+  different messages rather than more runs.
 - `scripts/migrate_to_postgres.py` can't run again but is kept on purpose as a reference. Don't
   delete it.
 
@@ -91,8 +101,8 @@ Env vars (`.env.example` shows the format):
   `app/services/dates.py` does the calendar maths in tested Python, counting from one SGT `today`.
   "Last week" is read from the message text, not the model
   ([ADR-0030](docs/decisions/0030-llm-reads-dates-python-resolves.md),
-  [ADR-0031](docs/decisions/0031-last-week-from-message-text.md)). The date warning never blocks a
-  save and is never stored.
+  [ADR-0031](docs/decisions/0031-last-week-from-message-text.md)). A year counts only if the
+  message says it (`says_year`). The date warning never blocks a save and is never stored.
 - `resolve_payment` never guesses: no open wallet or funding card for a YouTrip top-up → refuse the
   entry (`WalletNotSetUp`); an outside payer with no open "Paid by someone else" account → refuse
   it too (`OutsideAccountNotSetUp`).
@@ -131,7 +141,11 @@ Env vars (`.env.example` shows the format):
   count is used only if its number is in the message, and a menu tap keeps the counts (one row
   builder for the message and every tap). Python, not the model, decides that an "except" entry
   with a count is a sharer at that count; "everyone" counts only when the text says it. A name
-  that matches no person is tried as a trip family label (a person always wins). A paying
+  that matches no person is tried as a trip family label (a person always wins). A name
+  that still matches nothing ("Reds and Blues") is split on "and", "&" or ",", used only if
+  every part matches. In a split by count, a name or label the model left out is added by
+  `_add_unlisted` only with exactly one number after it in its own clause, never from a
+  paying mention. A paying
   clause ("X paid ... for 6 nights") gives X no count unless it says "her/his/their N"; X still
   shares, at a count from the other words. The rest's count ("rest", "others", "everyone else")
   is read by Python from its own clause, beats the model's, and is skipped when that clause has
@@ -145,7 +159,8 @@ Env vars (`.env.example` shows the format):
   end up with, or a missing count filled from a number in another clause. Every `/help`
   example (`app/services/help_topics.py`) is also a case in `scripts/check_extraction.py`;
   change one only with the other. A sharer left without a count gets a warning and no split,
-  never a wrong even one. A fixed amount or percentage, or "uneven" with no count read, keeps
+  never a wrong even one. A fixed amount or percentage, or uneven wording with no count read
+  ("unevenly", "by nights", "60/40": read by `says_uneven`, never the model), keeps
   the names ticked evenly with `UNEVEN_EVEN_SPLIT_WARNING` pointing to "Set amounts" (ADR-0048);
   every count the model read is dropped then, never trusted. An even split set in the menu
   keeps that warning, reworded, until Confirm or amounts are set. Transfers and YouTrip top-ups are never split.

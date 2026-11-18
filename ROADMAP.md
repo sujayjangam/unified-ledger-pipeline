@@ -40,6 +40,17 @@ paid" buttons ([#114](https://github.com/sujayjangam/unified-ledger-pipeline/iss
 a finished trip's hand-kept sheet loaded as real bills, and the trip read from the message text
 for pre-trip costs.
 
+**In review 2026-11-18:** a trimmed extraction prompt
+([#120](https://github.com/sujayjangam/unified-ledger-pipeline/issues/120),
+[ADR-0049](docs/decisions/0049-prompt-holds-only-what-python-cant-read.md)), about a third
+smaller, running at temperature 0. Waits for the full `check_extraction` run before merging,
+and must land before the 26 Nov trip freeze or wait until after it.
+
+**After the trip:** a Python-only split reader
+([#122](https://github.com/sujayjangam/unified-ledger-pipeline/issues/122)), scored offline
+against the check cases and the trip's real messages before it replaces the model's split
+fields.
+
 **Done 2026-11-18:** exact amounts per person for a split
 ([#112](https://github.com/sujayjangam/unified-ledger-pipeline/issues/112),
 [ADR-0048](docs/decisions/0048-exact-split-amounts-by-reply.md)): "Set amounts" in the split

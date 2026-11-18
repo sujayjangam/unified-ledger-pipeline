@@ -3,17 +3,30 @@
 The test suite can't do this: tests/ never makes a network call, so every test that touches
 extraction fakes the model's answer. That proves the code handles an answer correctly, but
 not that the model gives the right answer. This script fills that gap. It sends a fixed list
-of messages to GPT-4o-mini through the real extract_transactions, several times each since
-the model isn't deterministic, and reports how often each one came back right.
+of messages to GPT-4o-mini through the real extract_transactions and reports how often each
+one came back right.
+
+Extraction runs at temperature 0 (#120), so a message reads the same way nearly every time and
+one run per message is the main result. A second run only finds the rare message sitting on a
+near-tie, whose answer can still change. Calls are better spent on more different messages
+than on repeats of the same one.
 
 Run it after any change to the prompt or the schema descriptions in
 app/services/extraction.py, from the repo root:
 
-    python -m scripts.check_extraction            # 5 runs per message
-    python -m scripts.check_extraction --runs 10
+    python -m scripts.check_extraction                    # 1 run per message
+    python -m scripts.check_extraction --runs 2           # also shows near-ties
+    python -m scripts.check_extraction --only "for lunch"  # just the messages containing it
+    python -m scripts.check_extraction --margins          # plus every near-tie, same calls
 
-It calls OpenAI with OPENAI_API_KEY from .env, so each full run costs a little - well under
-a cent at 5 runs of each message. It never touches the database.
+--margins asks for logprobs: how likely each choice in the answer was. A pass at 51% looks the
+same as one at 99%, and only the first can flip on the next call; it lists each choice under
+95% beneath its message (scripts/margins.py). The tokens billed are printed at the end.
+
+It calls OpenAI with OPENAI_API_KEY from .env, one call per message per run, and prints the
+number of calls before it starts. Production uses the same prepaid credit, so every run needs
+the user's explicit approval, given for that run, with the call count stated first; workers
+never run it (CLAUDE.md). It never touches the database.
 
 Exit code 0 means every run of every message was right; 1 means at least one wasn't.
 """
@@ -30,8 +43,10 @@ from dotenv import load_dotenv
 # time, reading OPENAI_API_KEY from the environment.
 load_dotenv()
 
+from app.services import extraction  # noqa: E402 - load_dotenv() first
 from app.services.dates import apply_date_resolution  # noqa: E402 - load_dotenv() first
 from app.services.extraction import extract_transactions  # noqa: E402 - load_dotenv() first
+from scripts.margins import near_ties  # noqa: E402 - load_dotenv() first
 from app.services.participants import Participant, mentions_paying  # noqa: E402 - load_dotenv() first
 from app.services.splits import (  # noqa: E402 - load_dotenv() first
     resolve_split, sender_shares, drop_share_entries, UNEVEN_EVEN_SPLIT_WARNING)
@@ -51,17 +66,28 @@ YESTERDAY = TODAY - timedelta(days=1)
 # than the raw date_reference - that's the result the user actually sees, and it includes the
 # "last week" check that dates.py makes on the message text itself.
 # None for the date means "don't check it".
+#
+# Every case here must be able to fail in a way the bot would show (#120). A message whose
+# result Python decides on its own can't, so it doesn't belong here - it belongs in tests/.
+# Cut on 2026-11-18 for that reason or as a repeat: "lunch 15 yday" and "Coffee 5 yday" (same
+# as "Lunch 15 yday"), "lunch 10 last monday" and "Last week Tuesday dinner 40" (same model
+# reading as the weekday cases; the week rules are Python's, tested in tests/test_dates.py).
 CASES = [
     # Short typed messages with a bare-number price (#77)
     ("Lunch 15 yday", 15, YESTERDAY),
-    ("lunch 15 yday", 15, YESTERDAY),
-    ("Coffee 5 yday", 5, YESTERDAY),
     ("lunch 15", 15, TODAY),
     ("Lunch 15.50 yday", 15.5, YESTERDAY),
     ("Grab 12.80 ytd", 12.8, YESTERDAY),
     # Spoken style, as a Whisper transcript reads
     ("I spent fifteen dollars on lunch yesterday", 15, YESTERDAY),
     ("50 ringgit for dinner", 50, TODAY),
+    # Trip currencies (#120): rupiah amounts are large, and "k" shorthand is likely abroad.
+    ("Dinner 450k rupiah", 450000, TODAY),
+    ("Taxi 85000 IDR", 85000, TODAY),
+    # The card is the model's to pick from the list; the top-up category decides the wallet
+    # and Transfer rules in resolve_payment. Nothing else here checks either.
+    ("Lunch 12 on Card A", 12, TODAY),
+    ("Topup YouTrip 200", 200, TODAY),
     # Price first, then a sentence about the food. The first came back with no amount on
     # production (2026-11-18, 3 of 32 runs); the second in 15 of 24 runs on an early #112 prompt.
     ("5 for lunch. Hainanese curry rice", 5, TODAY),
@@ -71,41 +97,45 @@ CASES = [
     ("grab 12.80 day before yesterday", 12.8, date(2026, 9, 21)),
     ("coffee 5 last tues", 5, date(2026, 9, 22)),
     ("Coffee 5 tues last week", 5, date(2026, 9, 15)),
-    ("lunch 10 last monday", 10, date(2026, 9, 21)),
-    ("Last week Tuesday dinner 40", 40, date(2026, 9, 15)),
     ("dinner 40 on 3/7", 40, date(2026, 7, 3)),  # day first: 3 July, not 7 March
     ("taxi 18 on 12 Sep", 18, date(2026, 9, 12)),
     # No price at all: the amount must stay null - "never guess an amount" still holds
     ("lunch yesterday", None, None),
     ("hello", None, None),
 ]
+# The currency is checked on every case with an amount: SGD unless listed here.
+CURRENCIES = {"50 ringgit for dinner": "MYR", "Dinner 450k rupiah": "IDR", "Taxi 85000 IDR": "IDR"}
+# Checked only for the cases listed: the card picked, and the category.
+CARDS = {"Lunch 12 on Card A": "Card A"}
+CATEGORIES = {"Topup YouTrip 200": "YouTrip top-up"}
 
 
+# Each case also checks the amount ("amount"), which costs no extra call.
+# Cut on 2026-11-18 because Python decides the whole checked result, so they could never fail:
+# "bought Carol a coffee 6", "gift for Dave 40", "Carol's birthday cake 55", "dinner with Carol
+# 70" and "groceries 55 Card A" (no split word, no paying word), "lunch 20 I paid" (read_payer
+# reads it; the model's payer is never used) and "Dinner with the others 80" (needs a count
+# for a name the message doesn't have).
 SPLIT_CASES = [
-    {"message": "Dinner with everyone 80", "kind": "none", "outcome": "no split"},
-    {"message": "Dinner 480 cash, split evenly between all", "kind": "everyone", "include_sender": True, "uneven": False, "payer_name": None},
-    {"message": "Petrol 90, split between Alice's and Bob's families", "kind": "named", "include_sender": False, "people": {("alice", True), ("bob", True)}},
-    {"message": "Airbnb 2300, split by nights: Alice's and Bob's families 5, Carol and Dave 4", "kind": "named", "uneven": True,
+    {"message": "Dinner with everyone 80", "amount": 80, "kind": "none", "outcome": "no split"},
+    {"message": "Dinner 480 cash, split evenly between all", "amount": 480, "kind": "everyone", "include_sender": True, "payer_name": None},
+    {"message": "Petrol 90, split between Alice's and Bob's families", "amount": 90, "kind": "named", "include_sender": False, "people": {("alice", True), ("bob", True)}},
+    {"message": "Airbnb 2300, split by nights: Alice's and Bob's families 5, Carol and Dave 4", "amount": 2300, "kind": "named",
      "counts": {("alice", True, 5), ("bob", True, 5), ("carol", False, 4), ("dave", False, 4)}, "default_count": None},
-    {"message": "Airbnb 2300 on my Visa, 5 nights, everyone except Carol's family who only stayed 4", "kind": "everyone",
+    {"message": "Airbnb 2300 on my Visa, 5 nights, everyone except Carol's family who only stayed 4", "amount": 2300, "kind": "everyone",
      "default_count": 5, "counts": {("carol", True, 4)}, "except_people": set(), "count_unit": "nights"},
-    {"message": "Hotel 600 split by nights, me 3 and Carol 2", "kind": "named", "include_sender": True,
+    {"message": "Hotel 600 split by nights, me 3 and Carol 2", "amount": 600, "kind": "named", "include_sender": True,
      "counts": {("me", False, 3), ("carol", False, 2)}, "default_count": None},
-    {"message": "Groceries 150, Carol's share is 50, rest split evenly", "uneven": True, "counts": set(), "default_count": None},
-    {"message": "dinner 80 split with Carol", "kind": "named", "include_sender": True, "people": {("carol", False)}, "payer_name": None},
-    {"message": "lunch 60 split between Carol and Dave", "kind": "named", "include_sender": False, "payer_name": None},
-    {"message": "taxi 30 shared with Dave and Erin", "kind": "named", "include_sender": True},
-    {"message": "drinks 120 split between everyone except Dave", "kind": "everyone", "except_people": {"dave"}},
-    {"message": "Airbnb 900 split between everyone except Carol's family", "kind": "everyone", "except_people": {"carol"}, "uneven": False},
-    {"message": "Carol covered dinner 90", "kind": "none", "payer_name": "carol"},
-    {"message": "lunch 45, Dave's treat", "kind": "none", "payer_name": "dave"},
-    {"message": "dinner 200 paid by Erin, split with Carol and Dave", "kind": "named", "include_sender": True, "payer_name": "erin"},
-    {"message": "bought Carol a coffee 6", "kind": "none", "payer_name": None},
-    {"message": "gift for Dave 40", "kind": "none", "payer_name": None},
-    {"message": "Carol's birthday cake 55", "kind": "none", "payer_name": None},
-    {"message": "dinner with Carol 70", "kind": "none", "payer_name": None},
-    {"message": "lunch 20 I paid", "kind": "none", "payer_name": None},
-    {"message": "groceries 55 Card A", "kind": "none", "payer_name": None},
+    {"message": "Groceries 150, Carol's share is 50, rest split evenly", "amount": 150, "counts": set(), "default_count": None},
+    {"message": "dinner 80 split with Carol", "amount": 80, "kind": "named", "include_sender": True, "people": {("carol", False)}, "payer_name": None},
+    {"message": "lunch 60 split between Carol and Dave", "amount": 60, "kind": "named", "include_sender": False, "payer_name": None},
+    {"message": "taxi 30 shared with Dave and Erin", "amount": 30, "kind": "named", "include_sender": True},
+    {"message": "drinks 120 split between everyone except Dave", "amount": 120, "kind": "everyone", "except_people": {"dave"}},
+    {"message": "Airbnb 900 split between everyone except Carol's family", "amount": 900, "kind": "everyone", "except_people": {"carol"}},
+    # Python can't read "covered" or "treat", so the model is the only reader of these payers.
+    {"message": "Carol covered dinner 90", "amount": 90, "kind": "none", "payer_name": "carol"},
+    {"message": "lunch 45, Dave's treat", "amount": 45, "kind": "none", "payer_name": "dave"},
+    {"message": "dinner 200 paid by Erin, split with Carol and Dave", "amount": 200, "kind": "named", "include_sender": True, "payer_name": "erin"},
 ]
 
 # Every case checks the final sharers. Bob has his own family so mistakenly including
@@ -120,7 +150,7 @@ _EVEN_NAMES = [
     # Index 6, "Carol's share is 50": names ticked evenly until Set amounts (ADR-0048).
     (), (), (), ('Alice', 'Carol'), ('Alice', 'Carol'), ('Carol', 'Dave'), ('Alice', 'Dave', 'Erin'),
     ('Alice', 'Bob', 'Carol', 'Erin', 'Frank'), ('Alice', 'Bob', 'Erin', 'Frank'),
-    (), (), ('Alice', 'Carol', 'Dave'), (), (), (), (), (), (),
+    (), (), ('Alice', 'Carol', 'Dave'),
 ]
 for case, names in zip(SPLIT_CASES, _EVEN_NAMES, strict=True):
     case.setdefault('outcome', {(name, None) for name in names} if names else 'no split')
@@ -130,35 +160,36 @@ SPLIT_CASES[5]['outcome'] = {('Alice', 3), ('Carol', 2)}
 
 # Cases the directory above would otherwise hide, each with its outcome stated outright.
 SPLIT_CASES += [
-    # A fixed share: both names ticked evenly, the warning pointing to Set amounts (ADR-0048).
-    {"message": "Alice paid 135 split with Bob. Bob's split is 90", "uneven": True,
-     "outcome": {('Alice', None), ('Bob', None)}, "warnings": (UNEVEN_EVEN_SPLIT_WARNING,)},
-    # Read as two expenses on the test bot (2026-11-18), so the one-expense guard refused it.
-    {"message": "I paid 135 split with Bob. Bob's split is 90", "uneven": True,
+    # A fixed share read as two expenses on the test bot (2026-11-18), so the one-expense guard
+    # refused it. Both names ticked evenly, the warning pointing to Set amounts (ADR-0048).
+    # "Alice paid ..." was cut as a repeat of this one (#120).
+    {"message": "I paid 135 split with Bob. Bob's split is 90", "amount": 135,
      "outcome": {('Alice', None), ('Bob', None)}, "warnings": (UNEVEN_EVEN_SPLIT_WARNING,)},
     # Carol misread as a family would add Dave at 4 nights.
-    {"message": "Airbnb 2300, split by nights: Alice's family 5, Carol and Erin 4",
+    {"message": "Airbnb 2300, split by nights: Alice's family 5, Carol and Erin 4", "amount": 2300,
      "outcome": {('Alice', 5), ('Carol', 4), ('Erin', 4)}},
     # The sender (Alice) isn't named, so she must not get a share.
-    {"message": "Airbnb 2300, split by nights: Bob's family 5, Carol and Dave 4",
+    {"message": "Airbnb 2300, split by nights: Bob's family 5, Carol and Dave 4", "amount": 2300,
      "outcome": {('Bob', 5), ('Frank', 5), ('Carol', 4), ('Dave', 4)}},
     # A number that isn't a count must leave an even split even.
-    {"message": "3 pizzas 60 split with Carol", "outcome": {('Alice', None), ('Carol', None)}},
-    {"message": "dinner for 4, 120, split between Carol and Dave", "outcome": {('Carol', None), ('Dave', None)}},
+    {"message": "3 pizzas 60 split with Carol", "amount": 60, "outcome": {('Alice', None), ('Carol', None)}},
+    {"message": "dinner for 4, 120, split between Carol and Dave", "amount": 120,
+     "outcome": {('Carol', None), ('Dave', None)}},
     # A real message (2026-11-17), names swapped. Families named by label, the payer's "for 6
     # nights" is the bill's length, not her count, and the rest's 6 is in a later sentence.
     # Carol is a Blue, so she shares at 5.
     {"message": "Carol paid 2717.84 fir airbnb for 6 nights. Reds and Blues only staying 5 nights. "
-                "Rest all stay 6 nights.",
+                "Rest all stay 6 nights.", "amount": 2717.84,
      "outcome": {('Alice', 6), ('Bob', 5), ('Frank', 5), ('Carol', 5), ('Dave', 5), ('Erin', 6)}},
-    # A rest word with no split word and nobody's count: never a whole-trip split.
-    {"message": "Dinner with the others 80", "outcome": "no split"},
     # "The rest" wordings; the first is a /help example (app/services/help_topics.py). Bob and Frank are the Reds.
     # Without "split by nights" the model dropped the Reds' 5 in 4 of 8 runs (2026-11-17), so
     # the help says it.
-    {"message": "Airbnb 900 split by nights. Reds 5 nights, rest all 6 nights.",
+    {"message": "Airbnb 900 split by nights. Reds 5 nights, rest all 6 nights.", "amount": 900,
      "outcome": {('Alice', 6), ('Bob', 5), ('Frank', 5), ('Carol', 6), ('Dave', 6), ('Erin', 6)}},
-    {"message": "Carol paid 600 for her 4 nights. Rest all stay 6 nights.",
+    # Says the 600 is for everyone. It replaced "Carol paid 600 for her 4 nights. Rest all stay
+    # 6 nights.", which could fairly mean the 600 was Carol's own stay (#120). "She stayed 4"
+    # would not work: a count is read only beside the name, and "Carol paid" is a paying clause.
+    {"message": "Carol paid 600 for all. Carol stayed 4 nights, rest all 6 nights", "amount": 600,
      "outcome": {('Alice', 6), ('Bob', 6), ('Frank', 6), ('Carol', 4), ('Dave', 6), ('Erin', 6)}},
 ]
 
@@ -227,8 +258,60 @@ async def run_once(message: str, semaphore: asyncio.Semaphore):
     return txn
 
 
+# Filled by _watch_calls: each message's near-ties (with --margins), and the tokens billed.
+TIES: dict[str, list[str]] = {}
+USAGE = {"calls": 0, "prompt": 0, "completion": 0}
+
+
+def _watch_calls(margins: bool) -> None:
+    """Wrap the parse call extract_transactions makes, here only - the bot's call is untouched.
+
+    Every call adds the tokens OpenAI billed for it to USAGE. With --margins it also asks for
+    logprobs (the likelihood of each choice, returned beside the same answer) and keeps the
+    answer's near-ties under its message, so a pass that won narrowly shows (scripts/margins.py).
+    """
+    completions = extraction.openai_client.beta.chat.completions
+    original = completions.parse
+
+    async def parse(**kwargs):
+        if margins:
+            kwargs = {**kwargs, "logprobs": True, "top_logprobs": 5}
+        response = await original(**kwargs)
+        USAGE["calls"] += 1
+        if response.usage:
+            USAGE["prompt"] += response.usage.prompt_tokens
+            USAGE["completion"] += response.usage.completion_tokens
+        if margins:
+            logprobs = response.choices[0].logprobs
+            lines = near_ties(logprobs.content) if logprobs and logprobs.content else ["no logprobs came back"]
+            TIES.setdefault(kwargs["messages"][-1]["content"], []).extend(lines)
+        return response
+    completions.parse = parse
+
+
+def _print_ties(message: str) -> None:
+    """Each distinct near-tie under a message once, with how many runs had it."""
+    lines = TIES.get(message, [])
+    for line in dict.fromkeys(lines):
+        print(f"           near-tie {line}  x{lines.count(line)}")
+
+
+def _only(text: str | None) -> None:
+    """Keep only the cases whose message contains `text` (ignoring case), so one slipping case
+    can be rerun - on this branch and on main - without paying for the whole list."""
+    if not text:
+        return
+    def keep(message):
+        return text.casefold() in message.casefold()
+    CASES[:] = [c for c in CASES if keep(c[0])]
+    SPLIT_CASES[:] = [c for c in SPLIT_CASES if keep(c["message"])]
+    MULTI_CASES[:] = [c for c in MULTI_CASES if keep(c[0])]
+
+
 async def main(runs: int) -> int:
     """Check old amount/date cases and split readings with the same all-runs exit rule."""
+    messages = len(CASES) + len(SPLIT_CASES) + len(MULTI_CASES)
+    print(f"{messages} messages x {runs} runs = {messages * runs} OpenAI calls\n")
     semaphore = asyncio.Semaphore(10)
     # Every run of every message, all started together and awaited as one batch.
     jobs = [run_once(message, semaphore) for message, _, _ in CASES for _ in range(runs)]
@@ -244,11 +327,18 @@ async def main(runs: int) -> int:
             got_date = date.fromisoformat(transaction["date"]) if transaction.get("date") else None
             amount_ok = got_amount == want_amount
             date_ok = want_date is None or got_date == want_date
+            # Only with a price: "hello" can come back with no entry at all.
+            got_currency = transaction.get("currency")
+            currency_ok = want_amount is None or got_currency == CURRENCIES.get(message, "SGD")
+            card_ok = message not in CARDS or transaction.get("payment_method") == CARDS[message]
+            category_ok = message not in CATEGORIES or transaction.get("category") == CATEGORIES[message]
             reading = _split_reading(transaction)
             # 0 is fine: "hello" comes back as an empty list, which the bot treats as no price.
             one = transaction.get("_count", 0) <= 1
-            if not (one and amount_ok and date_ok and reading['outcome'] == 'no split' and reading["payer_name"] is None):
-                wrong.append(f"amount={got_amount} date={got_date} kind={reading.get('kind')} "
+            if not (one and amount_ok and date_ok and currency_ok and card_ok and category_ok
+                    and reading['outcome'] == 'no split' and reading["payer_name"] is None):
+                wrong.append(f"amount={got_amount} {got_currency} date={got_date} kind={reading.get('kind')} "
+                             f"card={transaction.get('payment_method')} category={transaction.get('category')} "
                              f"payer={reading['payer_name']} expenses={transaction.get('_count')}")
         right = runs - len(wrong)
         all_right = all_right and not wrong
@@ -257,8 +347,9 @@ async def main(runs: int) -> int:
         # Show each distinct wrong answer once, with how often it came up.
         for answer in sorted(set(wrong)):
             print(f"           got {answer}  x{wrong.count(answer)}")
+        _print_ties(message)
     for i, case in enumerate(SPLIT_CASES, start=len(CASES)):
-        expected = {key: value for key, value in case.items() if key not in ("message", "outcome")}
+        expected = {key: value for key, value in case.items() if key not in ("message", "outcome", "amount")}
         wrong = []
         info = []
         for transaction in results[i * runs:(i + 1) * runs]:
@@ -269,10 +360,12 @@ async def main(runs: int) -> int:
             payer_wrong = 'payer_name' in expected and reading.get('payer_name') != expected['payer_name']
             # Exact-amount cases must show the menu advice as well as refusing a guessed split.
             warning_wrong = 'warnings' in expected and reading['warnings'] != expected['warnings']
+            # The amount is checked too: a split reading must not cost the price (#120).
+            amount_wrong = transaction.get("amount") != case["amount"]
             if (not transaction or transaction.get("_count") != 1 or reading['outcome'] != case['outcome']
-                    or payer_wrong or warning_wrong):
-                wrong.append(f"{reading['outcome']} payer={reading.get('payer_name')} "
-                             f"expenses={transaction.get('_count')}")
+                    or payer_wrong or warning_wrong or amount_wrong):
+                wrong.append(f"{reading['outcome']} amount={transaction.get('amount')} "
+                             f"payer={reading.get('payer_name')} expenses={transaction.get('_count')}")
             elif actual != expected:
                 info.append(str(actual))
         all_right = all_right and not wrong
@@ -282,6 +375,7 @@ async def main(runs: int) -> int:
             print(f"           got {answer}  x{wrong.count(answer)}")
         for answer in sorted(set(info)):
             print(f"           info: raw fields {answer}  x{info.count(answer)}")
+        _print_ties(case["message"])
     start = (len(CASES) + len(SPLIT_CASES)) * runs
     for i, (message, want) in enumerate(MULTI_CASES):
         got = [t.get("_count") for t in results[start + i * runs:start + (i + 1) * runs]]
@@ -289,13 +383,24 @@ async def main(runs: int) -> int:
         all_right = all_right and not wrong
         mark = "ok  " if not wrong else "FAIL"
         print(f"{mark} {runs - len(wrong)}/{runs}  {message!r}  (want {want} expenses, got {got})")
+        _print_ties(message)
+    if USAGE["calls"]:
+        print(f"\nTokens billed: {USAGE['prompt']} in, {USAGE['completion']} out, over {USAGE['calls']} calls "
+              f"({USAGE['prompt'] // USAGE['calls']} in per call)")
     return 0 if all_right else 1
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--runs", type=int, default=5, help="runs per message (default 5)")
+    parser.add_argument("--runs", type=int, default=1, help="runs per message (default 1)")
+    parser.add_argument("--only", help="run only the messages containing this text (ignoring case)")
+    parser.add_argument("--margins", action="store_true",
+                        help="also list each choice the model made with under 95%% likelihood")
     args = parser.parse_args()
     if not os.getenv("OPENAI_API_KEY"):
         sys.exit("OPENAI_API_KEY isn't set - add it to .env.")
+    _only(args.only)
+    _watch_calls(args.margins)
+    if not (CASES or SPLIT_CASES or MULTI_CASES):
+        sys.exit(f"No message contains {args.only!r}.")
     sys.exit(asyncio.run(main(args.runs)))
