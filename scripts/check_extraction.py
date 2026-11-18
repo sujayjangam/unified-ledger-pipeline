@@ -17,6 +17,11 @@ app/services/extraction.py, from the repo root:
     python -m scripts.check_extraction                    # 1 run per message
     python -m scripts.check_extraction --runs 2           # also shows near-ties
     python -m scripts.check_extraction --only "for lunch"  # just the messages containing it
+    python -m scripts.check_extraction --margins          # plus every near-tie, same calls
+
+--margins asks for logprobs: how likely each choice in the answer was. A pass at 51% looks the
+same as one at 99%, and only the first can flip on the next call; it lists each choice under
+95% beneath its message (scripts/margins.py). The tokens billed are printed at the end.
 
 It calls OpenAI with OPENAI_API_KEY from .env, one call per message per run, and prints the
 number of calls before it starts. Production uses the same prepaid credit, so only the user
@@ -37,8 +42,10 @@ from dotenv import load_dotenv
 # time, reading OPENAI_API_KEY from the environment.
 load_dotenv()
 
+from app.services import extraction  # noqa: E402 - load_dotenv() first
 from app.services.dates import apply_date_resolution  # noqa: E402 - load_dotenv() first
 from app.services.extraction import extract_transactions  # noqa: E402 - load_dotenv() first
+from scripts.margins import near_ties  # noqa: E402 - load_dotenv() first
 from app.services.participants import Participant, mentions_paying  # noqa: E402 - load_dotenv() first
 from app.services.splits import (  # noqa: E402 - load_dotenv() first
     resolve_split, sender_shares, drop_share_entries, UNEVEN_EVEN_SPLIT_WARNING)
@@ -250,6 +257,44 @@ async def run_once(message: str, semaphore: asyncio.Semaphore):
     return txn
 
 
+# Filled by _watch_calls: each message's near-ties (with --margins), and the tokens billed.
+TIES: dict[str, list[str]] = {}
+USAGE = {"calls": 0, "prompt": 0, "completion": 0}
+
+
+def _watch_calls(margins: bool) -> None:
+    """Wrap the parse call extract_transactions makes, here only - the bot's call is untouched.
+
+    Every call adds the tokens OpenAI billed for it to USAGE. With --margins it also asks for
+    logprobs (the likelihood of each choice, returned beside the same answer) and keeps the
+    answer's near-ties under its message, so a pass that won narrowly shows (scripts/margins.py).
+    """
+    completions = extraction.openai_client.beta.chat.completions
+    original = completions.parse
+
+    async def parse(**kwargs):
+        if margins:
+            kwargs = {**kwargs, "logprobs": True, "top_logprobs": 5}
+        response = await original(**kwargs)
+        USAGE["calls"] += 1
+        if response.usage:
+            USAGE["prompt"] += response.usage.prompt_tokens
+            USAGE["completion"] += response.usage.completion_tokens
+        if margins:
+            logprobs = response.choices[0].logprobs
+            lines = near_ties(logprobs.content) if logprobs and logprobs.content else ["no logprobs came back"]
+            TIES.setdefault(kwargs["messages"][-1]["content"], []).extend(lines)
+        return response
+    completions.parse = parse
+
+
+def _print_ties(message: str) -> None:
+    """Each distinct near-tie under a message once, with how many runs had it."""
+    lines = TIES.get(message, [])
+    for line in dict.fromkeys(lines):
+        print(f"           near-tie {line}  x{lines.count(line)}")
+
+
 def _only(text: str | None) -> None:
     """Keep only the cases whose message contains `text` (ignoring case), so one slipping case
     can be rerun - on this branch and on main - without paying for the whole list."""
@@ -301,6 +346,7 @@ async def main(runs: int) -> int:
         # Show each distinct wrong answer once, with how often it came up.
         for answer in sorted(set(wrong)):
             print(f"           got {answer}  x{wrong.count(answer)}")
+        _print_ties(message)
     for i, case in enumerate(SPLIT_CASES, start=len(CASES)):
         expected = {key: value for key, value in case.items() if key not in ("message", "outcome", "amount")}
         wrong = []
@@ -328,6 +374,7 @@ async def main(runs: int) -> int:
             print(f"           got {answer}  x{wrong.count(answer)}")
         for answer in sorted(set(info)):
             print(f"           info: raw fields {answer}  x{info.count(answer)}")
+        _print_ties(case["message"])
     start = (len(CASES) + len(SPLIT_CASES)) * runs
     for i, (message, want) in enumerate(MULTI_CASES):
         got = [t.get("_count") for t in results[start + i * runs:start + (i + 1) * runs]]
@@ -335,6 +382,10 @@ async def main(runs: int) -> int:
         all_right = all_right and not wrong
         mark = "ok  " if not wrong else "FAIL"
         print(f"{mark} {runs - len(wrong)}/{runs}  {message!r}  (want {want} expenses, got {got})")
+        _print_ties(message)
+    if USAGE["calls"]:
+        print(f"\nTokens billed: {USAGE['prompt']} in, {USAGE['completion']} out, over {USAGE['calls']} calls "
+              f"({USAGE['prompt'] // USAGE['calls']} in per call)")
     return 0 if all_right else 1
 
 
@@ -342,10 +393,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--runs", type=int, default=1, help="runs per message (default 1)")
     parser.add_argument("--only", help="run only the messages containing this text (ignoring case)")
+    parser.add_argument("--margins", action="store_true",
+                        help="also list each choice the model made with under 95%% likelihood")
     args = parser.parse_args()
     if not os.getenv("OPENAI_API_KEY"):
         sys.exit("OPENAI_API_KEY isn't set - add it to .env.")
     _only(args.only)
+    _watch_calls(args.margins)
     if not (CASES or SPLIT_CASES or MULTI_CASES):
         sys.exit(f"No message contains {args.only!r}.")
     sys.exit(asyncio.run(main(args.runs)))
