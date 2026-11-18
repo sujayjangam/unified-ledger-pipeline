@@ -121,7 +121,8 @@ Env vars (`.env.example` shows the format):
   split word (`asks_for_split`), and "with"/"between" decide whether the sender shares
   (`sender_shares`), both read by Python. Nobody is guessed: an unmatched name, or
   "everyone" with no trip on, is a ⚠️ card line. Split warnings are never stored and never block a
-  save. Uneven shares are counts only (nights, or any count per person;
+  save. Uneven shares read from the message are counts (nights, or any count per person;
+  exact amounts per person are #112, typed into a reply prompt, not read from the message;
   [ADR-0042](docs/decisions/0042-uneven-shares-by-count.md)): the model reads each count, a
   count is used only if its number is in the message, and a menu tap keeps the counts (one row
   builder for the message and every tap). Python, not the model, decides that an "except" entry

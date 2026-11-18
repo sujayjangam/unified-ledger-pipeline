@@ -1,89 +1,117 @@
-# ADR-0042: Uneven shares by a count per person, read by the model and checked in Python
+# ADR-0042: Uneven shares by a count per person
 
-**Status:** Accepted
+**Status:** Accepted (edited 2026-11-18, see below)
 **Date:** 2026-11-16
 **Plan:** `docs/superpowers/plans/2026-11-16-splits.md` (PR 3)
 **Code:** `app/services/extraction.py::SplitReference`, `app/services/splits.py`, `app/bot_core.py::_split_lines`
 
-## Context
+> **Edited 2026-11-18.** This record first said uneven shares were "counts only". That was
+> wrong. Counts are one kind of uneven share, built for things like hotel nights. Exact amounts
+> per person ("Alice 45.50, Bob 74.50") are another kind, and they will be typed into a reply
+> prompt rather than read from the message
+> ([#112](https://github.com/sujayjangam/unified-ledger-pipeline/issues/112)). Normally an
+> accepted record is never edited, but this one stated a limit nobody meant to set, so it is
+> corrected in place.
 
-ADR-0039 splits an entry evenly and, when a message asks for uneven shares, records no split and
-shows a warning. The group trip's accommodation needs uneven shares: a 5-night booking where some
-members stay only 4 nights. `share_out` already takes a weight per person; what is missing is
-reading the counts, keeping them through the split menu, and showing them on the card.
+## The problem
 
-## Decision
+Until this change, a split was always even (ADR-0039). If a message asked for uneven shares, the
+bot saved no split and showed a warning.
 
-- **Counts only, for now.** A share is amount × count ÷ total count, in whole cents through
-  `share_out` (leftover cents as in ADR-0039). A fixed amount ("Carol's share is 50") and
-  percentages are not built: they keep the "can't do uneven shares yet" warning and no split.
-- **The model reads counts, never shares.** Each named person or family may carry a `count`; the
-  reference may carry a `default_count` for every sharer not given their own, and a `count_unit`
-  as said ("nights"). The model copies a count wherever it is said, including on an "except"
-  entry; it is not asked to decide whether that person shares.
-- **Python decides what "except" means.** An except entry with a count is a sharer at that
-  count ("everyone except Carol's family who only stayed 4" is Carol's family at 4, the rest at
-  the default); one without a count is left out. Asking the model to make this choice was
-  tried first and made it drop plain exclusions ("everyone except Carol's family" lost Carol's
-  family in 3 of 5 runs, 2026-11-16). If the message has an except word, nobody ends up left
-  out, and no sharer has a count of their own, the card warns and no split is recorded. Any
-  count of their own lets it through, so "5 nights, Carol 4, everyone except Dave" with Dave
-  dropped by the model is not caught; the card shows every sharer. In a split by count, an except entry
-  with no count is refused when a number follows the except word: the count was probably lost
-  (1 of 10 runs), and leaving that family out would be a wrong split that looks right.
-  Family wording left in a name ("Carol's family") is stripped in Python and read as a family.
-- **Python checks every count against the message.** A count is used only if the number appears
-  in the raw message, as digits or a number word, the same way "last week" is read from the text
-  (ADR-0031). Every sharer must end up with a count; otherwise a "couldn't read a count" warning
-  and no split, never an even split. A family's count applies to each member. A default count
-  nobody uses is ignored, and "everyone" or "the rest" listed as a person carries the default.
-  Numbers are read as whole words: never the 3 in 2300, 3.50 or 3,000.
-- **Python fills in what the model drops, from the text.** A listed sharer with no count gets
-  the first number after their name ("Carol and Erin 4": the model gave Erin nothing in 9 of
-  10 runs). In a split by count, the sender shares only if the message names them ("me",
-  "with", or inside a named family); the model said they shared when they weren't named in 10
-  of 10 runs. The sender's count is the first number after "me".
-- **Python rules out what isn't a count.** A count split with one sharer is refused: a count
-  only means something next to another, and "Carol's share is 50" came back as Carol at 50.
-  Fixed-share wording ("share is 50", "owes 30", "40%") gets the "can't do uneven shares yet"
-  warning whatever the model read. When every sharer has the same count, it is an even split:
-  "dinner for 4, split between Carol and Dave" came back as 4 each in 7 of 10 runs.
-- **"Everyone" is read from the text.** The model's `everyone` is honoured only when the
-  message says everyone (or all, the whole group); with people listed and no such word it is
-  read as those people. A message with no split word gets through only when it is a split by
-  count, every count checks out and it says everyone ("5 nights, everyone except ..."); every
-  other message still needs a split word (ADR-0039).
-- **The split menu keeps the counts.** They are kept on the pending entry, and the same row
-  builder serves the message and every tap. Unticking keeps everyone else's count. A newly
-  ticked person gets the default count (with none said, the most common count read, a tie to the
-  larger), with a ⚠️ line naming them and their count. There is no count editor yet.
-- **The card shows the count on each line**, under a header naming the unit: "👥 Split by nights
-  between 10:", then " • Alice: 5, 241.97".
-- **Only cents are stored.** No migration and no `split_type` column: `/balances` needs only the
-  shares, and the counts read from the message are kept word for word in `description`
-  (ADR-0008). A count given in the menu to a newly ticked person is not in the message, so it
-  is stored only as that person's cents.
+The group trip needed uneven shares for the accommodation. Picture a 5-night booking where one
+family only stayed 4 nights. They should pay a little less. `share_out` could already hand out
+cents by weight; what was missing was reading the counts from the message, keeping them through
+the split menu, and showing them on the card.
 
-## Alternatives considered
+## What we decided
 
-- **Log the booking as two entries** (4 nights across everyone, 1 across the rest). Rejected in
-  ROADMAP: one card charge should stay one entry, so reconciliation against the statement stays
-  simple.
-- **A weight column on `transaction_splits`.** It would let `/balances` explain a share later,
-  but needs a production migration during the trip's deploy freeze. The raw message already
+**A share is worked out from a count.** Each person gets amount × their count ÷ the total count,
+in whole cents through `share_out`, with leftover cents handed out as ADR-0039 says. This record
+covers counts only. Exact amounts are covered by #112, and percentages aren't planned. Until
+#112 ships, a message with a fixed amount ("Carol's share is 50") or a percentage still gets the
+"can't do uneven shares yet" warning and no split.
+
+**The model reads the counts. It never works out a share.** The model can put a `count` on each
+person or family it names, a `default_count` for everyone else, and a `count_unit` such as
+"nights". It copies a count wherever one is said, even next to "except". It doesn't decide what
+"except" means.
+
+**Python decides what "except" means.** "Everyone except Carol's family, who only stayed 4"
+means Carol's family share at 4 and everyone else at the default. "Everyone except Carol's
+family", with no number, means they're left out. We first asked the model to make this call, and
+it dropped plain exclusions in 3 of 5 runs (2026-11-16), so Python does it instead. Two checks
+guard against a count the model lost:
+- If the message says "except", nobody ends up left out, and nobody has a count of their own,
+  the card warns and saves no split.
+- If a number follows the "except" word but the excepted family came back with no count, the
+  split is refused. The count was probably lost (1 run in 10), and quietly leaving that family
+  out would be a wrong split that looks right.
+
+One gap remains: "5 nights, Carol 4, everyone except Dave" with Dave dropped by the model isn't
+caught. The card shows every sharer, so it can be spotted before Confirm. Words like "Carol's
+family" are stripped down in Python and read as a family.
+
+**Every count must appear in the message.** A count is used only if its number is in the raw
+text, as digits or a word ("four"), the same way "last week" is read from the text (ADR-0031).
+Numbers are read as whole words, so the 3 in 2300, 3.50 or 3,000 never counts. Everyone sharing
+must end up with a count. If someone doesn't, the card says "couldn't read a count" and saves no
+split. It never falls back to an even split. A family's count applies to each person in it.
+"Everyone" or "the rest" listed as a person gets the default count, and a default nobody uses is
+ignored.
+
+**Python fills in what the model misses.** If a listed person has no count, they get the first
+number after their name: in "Carol and Erin 4", the model gave Erin nothing in 9 of 10 runs. In
+a split by count, the sender only shares if the message names them ("me", "with", or a family
+they belong to), because the model wrongly included them in 10 of 10 runs. The sender's count is
+the first number after "me".
+
+**Python rules out things that aren't counts.**
+- A count split with only one person is refused. "Carol's share is 50" came back as Carol at a
+  count of 50, which is an amount, not a count.
+- Fixed-share wording ("share is 50", "owes 30", "40%") gets the "can't do uneven shares yet"
+  warning, whatever the model read. #112 replaces this warning with a way to enter the amounts.
+- If everyone ends up with the same count, it's just an even split. "Dinner for 4, split between
+  Carol and Dave" came back as 4 each in 7 of 10 runs.
+
+**"Everyone" has to be in the text.** The model's `everyone` only counts if the message says
+everyone, all, or the whole group. With names listed and no such word, it means those names. A
+message with no split word only gets through if it's a split by count, every count checks out,
+and it says everyone ("5 nights, everyone except ..."). Every other message still needs a split
+word (ADR-0039).
+
+**The split menu keeps the counts.** They're stored on the pending entry, and the same code
+builds the rows for the message and for every tap. Unticking someone keeps everyone else's
+count. Ticking someone new gives them the default count (or, if none was said, the most common
+count, with a tie going to the larger), plus a ⚠️ line saying who they are and what count they
+got. There's no way to change a count in the menu yet.
+
+**The card shows each count.** A header names the unit ("👥 Split by nights between 10:"), and
+each line shows the count and the share (" • Alice: 5, 241.97").
+
+**Only the cents are saved.** No migration and no `split_type` column. Balances only need the
+shares, and the counts are still in `description`, which keeps the message word for word
+(ADR-0008). A count given to someone ticked in the menu isn't in the message, so only their
+cents are kept.
+
+## What else we looked at
+
+- **Logging the booking as two entries** (4 nights for everyone, then 1 night for the rest).
+  Rejected: one card charge should stay one entry, so it matches the bank statement.
+- **A weight column on `transaction_splits`.** It would let balances explain a share later, but
+  it needed a production migration during the trip's deploy freeze, and the message already
   holds the counts.
-- **Any menu tap turns the split even.** Simpler, but a tap to add one forgotten person would
-  silently undo the nights.
-- **Fixed amounts in the same change.** The trip doesn't need them, and they bring their own
-  edge cases (a fixed total above the amount, a fixed amount for a family).
+- **Any tap in the menu turns the split even.** Simpler, but adding one forgotten person would
+  quietly throw away everyone's nights.
+- **Fixed amounts in the same change.** The trip didn't need them first, and they bring their own
+  questions (amounts that add up to more than the bill, or an amount for a whole family). They
+  are #112, done with a reply prompt instead of reading them from the message.
 
-## Consequences
+## What follows
 
 - The trip's accommodation can be logged as one message and one entry.
-- A count the model invents is caught when the number isn't in the message; a count it attaches
-  to the wrong person is not, and is visible only on the card, which shows every count before
-  Confirm.
-- A newly ticked person's count is a guess, so the card says so. Changing a count means
-  resending the message until a count editor exists.
-- Old saved rows and new ones look the same in the database: only cents. Recovering the counts
-  later means reading `description`.
+- A count the model makes up is caught when its number isn't in the message. A count put on the
+  wrong person isn't caught, but the card shows every count before Confirm.
+- A newly ticked person's count is a guess, so the card says so. Changing a count means sending
+  the message again until there's a count editor.
+- In the database, rows saved before and after this change look the same: just cents. To get the
+  counts back later, read `description`.

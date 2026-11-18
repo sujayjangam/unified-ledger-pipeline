@@ -49,7 +49,7 @@ supersedes the old one rather than editing history.
 | [0039](0039-splits-read-by-the-model-worked-out-by-python.md) | The model reads who shares an entry; Python matches the names and hands out the cents | Accepted | 2026-11-16 |
 | [0040](0040-model-as-second-reader-for-the-payer.md) | The model is a second reader for the payer, used only when Python finds nobody | Accepted | 2026-11-16 |
 | [0041](0041-split-menu-and-wider-people-menus.md) | The split menu, and people menus that offer every participant when no trip is on | Accepted | 2026-11-16 |
-| [0042](0042-uneven-shares-by-count.md) | Uneven shares by a count per person, read by the model and checked in Python | Accepted | 2026-11-16 |
+| [0042](0042-uneven-shares-by-count.md) | Uneven shares by a count per person, read by the model and checked in Python | Accepted (edited 2026-11-18) | 2026-11-16 |
 | [0043](0043-everyday-groups-for-the-split-menu.md) | Everyday groups for the split menu, and no relationships between people | Accepted | 2026-11-17 |
 | [0044](0044-trip-balances-from-splits.md) | Trip balances worked out from the splits, and totals stay "what was paid" | Accepted | 2026-11-17 |
 | [0045](0045-family-labels-the-rest-and-stricter-wording.md) | Family labels, "the rest", and stricter wording over a model double-check | Accepted | 2026-11-17 |
