@@ -32,12 +32,24 @@ columns) and [#91](https://github.com/sujayjangam/unified-ledger-pipeline/pull/9
 production 2026-11-14 after a Neon-branch rehearsal and a backup). Before 0005, the 5 rows with
 no `account_id` were given a card by hand in SQL, one guarded `UPDATE` per `transaction_id`.
 
-**Next action:** step 5 (settlement, ADR-0046) now includes debt lines, pairwise netting
-and gifts at payback time (ADR-0047), in review on `feat/settlements`: tried on the test bot
-against a Neon branch, and migration 0009 applied to production by hand on 2026-11-17. Then step 6 (`/recent` with delete). These are what the trip still needs. Steps 1 to 4
-are done (`docs/superpowers/plans/2026-11-16-splits.md`). After settlement: a finished trip's
-hand-kept sheet is loaded as real bills, as a test on real expenses, and the trip is read from
-the message text for pre-trip costs.
+**Next action:** exact amounts per person for a split
+([#112](https://github.com/sujayjangam/unified-ledger-pipeline/issues/112)): a "Set amounts"
+button on the split menu opens a reply prompt (with hint text in the typing box and a short
+popup on the tap), read in Python, with `rest` for whoever takes what's left. Design first, in a
+new ADR. Then step 6, `/recent` with delete
+([#115](https://github.com/sujayjangam/unified-ledger-pipeline/issues/115)), which the trip
+still needs. After that: paying back one bill
+([#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113)), then clearer "Mark
+paid" buttons ([#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114)). Later:
+a finished trip's hand-kept sheet loaded as real bills, and the trip read from the message text
+for pre-trip costs.
+
+**Done 2026-11-18:** step 5, settlement: paybacks as their own records, debt lines, pairwise
+netting and gifts at payback time ([ADR-0046](docs/decisions/0046-settlements-as-their-own-records.md),
+[ADR-0047](docs/decisions/0047-pay-back-only-who-you-owe.md),
+[#111](https://github.com/sujayjangam/unified-ledger-pipeline/pull/111)). Tried on the test bot
+against a Neon branch; migration 0009 applied to production by hand on 2026-11-17. ADR-0042 was
+edited the same day: uneven shares are not counts only.
 
 **Done 2026-11-17:** step 4, `/trip_bals`: who owes whom on one trip, per family, with
 suggested payments ([ADR-0044](docs/decisions/0044-trip-balances-from-splits.md),
@@ -299,7 +311,9 @@ sequenced in the phase checklists and aren't repeated here):
 - `reconciliation_status` is hardcoded to `'unsettled'` in both writers. The field Phase 1 is
   meant to populate currently has no writer at all.
 - `benefit_of` and `split_ratio` exist in the schema and in `docs/SCHEMA.md` but are written by no
-  code path — Phase 3 will need them, nothing populates them today.
+  code path. `split_ratio` is replaced by `transaction_splits` (one whole-cent share per person),
+  so it is dead and could be dropped by a migration. `reconciliation_status` (above) says nothing
+  about paybacks: whether a bill is paid off isn't stored anywhere.
 - No income path exists: `transaction_type` is only ever `'Expense'` or `'Transfer'`. Income is
   planned with statement upload (see Phase 1).
 - `app/main.py`'s POST handler omits `currency` entirely, so a row created through the REST API
@@ -393,8 +407,7 @@ only shared costs they pay get logged. Travel minimum, in build order:
      (nights, ADR-0042), done 2026-11-17,
      [#106](https://github.com/sujayjangam/unified-ledger-pipeline/pull/106).
      After the trip: PR 2b (everyday groups in the split menu, designed in ADR-0043 and parked
-     2026-11-17), aliases per sender, fixed amounts and percentages ("Carol's share is 50, rest split
-     evenly"), which PR 3 leaves as a warning with no split; and a count editor in the split
+     2026-11-17), aliases per sender, percentages, and a count editor in the split
      menu, so a newly ticked person's count can be changed without resending.
      - Candidate, after the trip: a trip read from the message text. Pre-trip costs are logged
        with trip mode off ("travel insurance for Sydney trip"), and nobody switches trip mode
@@ -442,8 +455,13 @@ only shared costs they pay get logged. Travel minimum, in build order:
      table, a "Mark paid" tap under each suggested payment, the paid side may be in another
      currency (both amounts stated, no exchange-rate lookup), and an overpayment saves behind a
      "⚠️ Confirm overpayment" button. If time allows: an Edit step on the payback card.
+     Done 2026-11-18, [#111](https://github.com/sujayjangam/unified-ledger-pipeline/pull/111).
+     Found on the test bot, to fix: no record of which bill a payback was for
+     ([#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113)), and numbered
+     "Mark paid" buttons ([#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114)).
   6. `/recent` (today the last 5 entries) gets paging and a delete button per entry. A soft delete
-     is suggested: the row stays but drops out of balances and totals.
+     is suggested: the row stays but drops out of balances and totals
+     ([#115](https://github.com/sujayjangam/unified-ledger-pipeline/issues/115)).
 
   Stretch: split instructions in the message text ("split between me, Alice and Bob").
   The model picks names from the member list only, "me" resolves in Python from the sender, and
