@@ -26,8 +26,10 @@ is tried on a Neon branch with a fictional trip-sized directory first.
 **Next up**, in this order:
 
 1. Undo a saved entry: `/recent` gets paging and a delete button
-   ([#115](https://github.com/sujayjangam/unified-ledger-pipeline/issues/115)). The trip needs
-   this most.
+   ([#115](https://github.com/sujayjangam/unified-ledger-pipeline/issues/115),
+   [ADR-0050](docs/decisions/0050-soft-delete-behind-a-view.md)). Built, PR open. Migration
+   0010 applied to production on 2026-11-18, after a backup. Before it merges: try it on the
+   test bot.
 2. Record which bill a payback was for, so a bill can be marked paid off
    ([#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113)).
 3. Clearer "Mark paid" buttons than "Mark paid 1, 2, 3"
@@ -297,17 +299,15 @@ sequenced in the phase checklists and aren't repeated here):
 Real bugs, but scheduled for Phase 4-5. Phases 1-3 come first.
 
 - **Transfers are counted as expenses in the summary commands.** `/today`, `/week`, `/month`, the
-  `/cat_*` commands and `/recent` decide what is a transfer by checking `category = 'Transfer'`
-  (`get_period_summary` and `get_category_summary` in `app/services/ledger_queries.py`,
-  `recent_command` in `app/bot_core.py`). The bot never writes that category: it records a
+  `/cat_*` commands decide what is a transfer by checking `category = 'Transfer'`
+  (`get_period_summary` and `get_category_summary` in `app/services/ledger_queries.py`;
+  `/recent` was fixed with #115 and checks `transaction_type`). The bot never writes that category: it records a
   transfer as `transaction_type = 'Transfer'` with category `'YouTrip top-up'`
   (`resolve_payment` in `app/services/participants.py`, `apply_payment_defaults` before #53), and `'Transfer'` isn't one of the categories
   the extractor can pick (`ExpenseCategory` in `app/services/extraction.py`). So a YouTrip top-up
   is added to the expense totals, the Transfers line always reads "No transfers", `/cat_*` lists
-  top-ups as a spending category, and `/recent` never shows the transfer label. Fix: check
-  `transaction_type` instead in those places — `/recent` also needs it added to
-  `get_recent_entries`' `SELECT`, which currently returns only the category. Found by reading the
-  code on 2026-09-13; not yet confirmed against production rows.
+  top-ups as a spending category. Fix: check `transaction_type` instead in those places. Found by
+  reading the code on 2026-09-13; not yet confirmed against production rows.
 
 ## Plan
 
@@ -422,9 +422,11 @@ only shared costs they pay get logged. Travel minimum, in build order:
      Found on the test bot, to fix: no record of which bill a payback was for
      ([#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113)), and numbered
      "Mark paid" buttons ([#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114)).
-  6. `/recent` (today the last 5 entries) gets paging and a delete button per entry. A soft delete
-     is suggested: the row stays but drops out of balances and totals
-     ([#115](https://github.com/sujayjangam/unified-ledger-pipeline/issues/115)).
+  6. `/recent` gets paging and a delete button per entry, with Undo. A soft delete: the row stays
+     but drops out of balances, totals and the duplicate check, through a view
+     ([#115](https://github.com/sujayjangam/unified-ledger-pipeline/issues/115),
+     [ADR-0050](docs/decisions/0050-soft-delete-behind-a-view.md)). Built 2026-11-18, PR open;
+     migration 0010 tried on a Neon branch.
 
   Stretch: an "Edit" button on the card before saving (reply with the corrected text,
   reprocessed through `process_expense_text`), and fixing the split and payer after saving.
@@ -477,14 +479,15 @@ first source of converted amounts *(from Phase 0)*.
 - [ ] Webhook idempotency — persist the `update_id` dedupe in Postgres instead of process memory.
 Originally deferred because voice-only ingestion capped volume; text ingestion ended that premise
 *(from Phase 0)*.
-- [ ] Edit and delete path for *saved* rows —
-[#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22). No `UPDATE` or `DELETE`
-exists anywhere in `app/`, so a wrong extraction is permanent; the mismatches the matcher flags are
-the rows that need correcting. First step: the Confirm / Edit / Cancel card
+- [ ] Edit path for *saved* rows —
+[#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22). A saved row can be
+deleted from `/recent` (#115, a soft delete,
+[ADR-0050](docs/decisions/0050-soft-delete-behind-a-view.md)), but not corrected: a wrong
+extraction has to be deleted and logged again. The mismatches the matcher flags are the rows that
+need correcting. First step: the Confirm / Edit / Cancel card
 ([#66](https://github.com/sujayjangam/unified-ledger-pipeline/issues/66), `context.user_data` only,
-no DB write), whose field picker the saved-row edit reuses. Saved-row edits need a
-hard-vs-soft-delete decision first. Add routing coverage for the new callback handlers with it
-*(from Phase 0)*.
+no DB write), whose field picker the saved-row edit reuses. Add routing coverage for the new
+callback handlers with it *(from Phase 0)*.
 - [ ] Receipt image capture (Telegram photo message) as a second ingestion path alongside voice
 notes — store the image (GCS) and link it to the transaction row; reuses the rule-based +
 LLM-fallback extraction architecture above rather than building a separate one-off pipeline.

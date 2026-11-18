@@ -169,8 +169,11 @@ the options turned down, and what it cost. The ones that shaped the system most:
 
 **Reading the ledger**
 
-- `/recent` (the last 5 entries), `/today`, `/week`, `/month` and a per-category version of each,
-  totalled per currency.
+- `/recent` (the latest entries, 5 per page), `/today`, `/week`, `/month` and a per-category
+  version of each, totalled per currency.
+- Deleting a saved entry: a 🗑 button per entry in `/recent`, a second tap to confirm, and Undo
+  straight after. A deleted entry stays in the database, hidden from every total, `/trip_bals`
+  and the duplicate check ([ADR-0050](docs/decisions/0050-soft-delete-behind-a-view.md)).
 
 **Keeping it running**
 
@@ -186,7 +189,7 @@ the options turned down, and what it cost. The ones that shaped the system most:
 
 What's coming is tracked in [`ROADMAP.md`](ROADMAP.md):
 
-- **Undoing a saved entry** from Telegram, and linking each payback to the bill it paid off.
+- **Linking each payback to the bill it paid off.**
 - **Reconciliation engine** (Phase 1): read PDF bank statements
   ([ADR-0016](docs/decisions/0016-pdf-statements-over-csv.md)) into a staging table and match
   them to ledger entries with step-by-step rules. A line is matched automatically only when

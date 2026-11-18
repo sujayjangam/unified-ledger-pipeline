@@ -1,28 +1,106 @@
 from sqlalchemy import text
 from app.database import get_connection
 
-def get_recent_entries(limit=5):
-    """Fetches the most recently *entered* transactions, including both expenses and transfers.
+# What /recent shows for one entry. Read from the transactions view, so a deleted entry never
+# comes back from here (ADR-0050). split_count is how many people share it (0 = not split).
+_ENTRY_COLUMNS = '''
+    t.transaction_id, t.date, t.description, t.amount, t.currency, t.category, t.transaction_type,
+    t.entered_by_participant_id, tr.name AS trip_name,
+    (SELECT count(*) FROM transaction_splits s WHERE s.transaction_id = t.transaction_id) AS split_count
+'''
+
+
+def get_recent_page(offset: int, limit: int):
+    """One page of the most recently *entered* live entries, newest first: (entries, more).
+
+    entries is a list of dicts with the _ENTRY_COLUMNS keys; more is True when an older page
+    exists. None means the read FAILED, so /recent can say so rather than "nothing logged".
 
     Ordered by created_at (when the row was written), not date (when the spend happened) - see
-    docs/SCHEMA.md. "Recent" means "what was just logged": once backdated entries exist (#15), an
-    expense from last week that was logged a minute ago is still recent. transaction_id is a
-    random UUID, so as a tiebreaker it carries no meaning of its own; it only keeps rows that
-    share a created_at in a stable order, and rows that predate the column all share their
-    date's midnight (see alembic/versions/0002_add_created_at.py).
+    docs/SCHEMA.md. "Recent" means "what was just logged": a backdated expense logged a minute
+    ago is still recent. transaction_id is a random UUID, so as a tiebreaker it carries no
+    meaning of its own; it only keeps rows that share a created_at in a stable order, and rows
+    that predate the column all share their date's midnight (alembic 0002_add_created_at).
+
+    One row more than the page is read, only to learn whether an older page exists.
+    """
+    try:
+        with get_connection() as conn:
+            rows = conn.execute(text(f'''
+                SELECT {_ENTRY_COLUMNS}
+                FROM transactions t
+                LEFT JOIN trips tr ON tr.id = t.trip_id
+                ORDER BY t.created_at DESC, t.transaction_id DESC
+                LIMIT :limit OFFSET :offset
+            '''), {"limit": limit + 1, "offset": offset}).mappings().all()
+    except Exception as e:
+        print(f"❌ Query Error: {e}")
+        return None
+    entries = [dict(row) for row in rows]
+    return entries[:limit], len(entries) > limit
+
+
+def get_live_entry(transaction_id: str):
+    """One live entry as a dict (the _ENTRY_COLUMNS keys), {} if there is no live entry with
+    this id (deleted, or never existed), or None if the read FAILED.
+
+    {} and None are different on purpose: "already deleted" is a toast, a failed read is an
+    error, and neither may be taken for the other.
+    """
+    try:
+        with get_connection() as conn:
+            row = conn.execute(text(f'''
+                SELECT {_ENTRY_COLUMNS}
+                FROM transactions t
+                LEFT JOIN trips tr ON tr.id = t.trip_id
+                WHERE t.transaction_id = :transaction_id
+            '''), {"transaction_id": transaction_id}).mappings().first()
+    except Exception as e:
+        print(f"❌ Query Error: {e}")
+        return None
+    return dict(row) if row else {}
+
+
+def soft_delete_entry(transaction_id: str, deleted_by_participant_id: int):
+    """Marks a live entry deleted (ADR-0050). True if this call deleted it, False if it was
+    already deleted or doesn't exist, None if the write FAILED.
+
+    One of only two queries that name raw_transactions: the view hides deleted rows, so the
+    real table is the only place a row can be marked or unmarked. "AND deleted_at IS NULL"
+    makes two overlapping taps safe: the second one changes nothing and gets False.
+    The split rows are left alone; every reader reaches them through the view, so they drop
+    out with the entry.
     """
     try:
         with get_connection() as conn:
             result = conn.execute(text('''
-                SELECT date, description, amount, currency, category
-                FROM transactions
-                ORDER BY created_at DESC, transaction_id DESC
-                LIMIT :limit
-            '''), {"limit": limit})
-            return result.fetchall()
+                UPDATE raw_transactions
+                SET deleted_at = now(), deleted_by_participant_id = :participant_id
+                WHERE transaction_id = :transaction_id AND deleted_at IS NULL
+            '''), {"transaction_id": transaction_id, "participant_id": deleted_by_participant_id})
+            conn.commit()
+            return result.rowcount == 1
     except Exception as e:
-        print(f"❌ Query Error: {e}")
-        return []
+        print(f"❌ Could not delete entry: {e}")
+        return None
+
+
+def restore_entry(transaction_id: str):
+    """Undoes a delete. True if this call restored it, False if it was already live or doesn't
+    exist, None if the write FAILED. Clears both columns together: the database refuses a live
+    row that still names a deleter (ck_raw_transactions_deleter_only_when_deleted)."""
+    try:
+        with get_connection() as conn:
+            result = conn.execute(text('''
+                UPDATE raw_transactions
+                SET deleted_at = NULL, deleted_by_participant_id = NULL
+                WHERE transaction_id = :transaction_id AND deleted_at IS NOT NULL
+            '''), {"transaction_id": transaction_id})
+            conn.commit()
+            return result.rowcount == 1
+    except Exception as e:
+        print(f"❌ Could not restore entry: {e}")
+        return None
 
 def find_recent_duplicate(amount_cents: int, currency: str, within_minutes: int):
     """Returns the newest entry with exactly this amount and currency saved in the last

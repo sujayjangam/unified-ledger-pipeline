@@ -67,9 +67,9 @@ for the uninstalled `psycopg2` — see [ADR-0006](decisions/0006-psycopg3-url-sc
 is a copy-on-write snapshot, so test rows never reach the real ledger and the branch can be deleted
 afterwards.
 
-If you skip this, `app/bot_local.py` refuses to start, because there is no delete path for a row
-saved by mistake yet ([#22](https://github.com/sujayjangam/unified-ledger-pipeline/issues/22)). To
-override for a single run, opt in explicitly:
+If you skip this, `app/bot_local.py` refuses to start: `/recent`'s delete only hides a row
+([ADR-0050](decisions/0050-soft-delete-behind-a-view.md)), and removing a test row for good is
+the query under "Clearing test entries" below. To override for a single run, opt in explicitly:
 
 ```powershell
 $env:ALLOW_PROD_DB = '1'; python -m app.bot_local
@@ -137,6 +137,34 @@ which reads like a credentials bug. Create a new branch (step 4 above), paste it
 into `.env.local`, and keep the `postgresql+psycopg://` scheme. A new branch is a copy of Neon's
 `main` branch as it is *at that moment*, schema included - so it has every migration production
 has, and needs `alembic upgrade head` only for migrations production doesn't have yet.
+
+## Clearing test entries
+
+`/recent`'s 🗑 only hides an entry: the row stays in `raw_transactions` with `deleted_at` set
+([ADR-0050](decisions/0050-soft-delete-behind-a-view.md)). To remove test entries for good,
+delete them in the bot first, then run this by hand in the Neon console's SQL editor. No app
+code or script does this, on purpose.
+
+It removes only rows that are already deleted, and only those deleted since the time you give,
+so a live entry can never go. Their split rows go with them (`ON DELETE CASCADE`).
+
+```sql
+-- 1. Look first. Set the time to just before you started deleting (Singapore time).
+SELECT transaction_id, date, description, amount, currency, deleted_at
+FROM raw_transactions
+WHERE deleted_at IS NOT NULL
+  AND deleted_at >= TIMESTAMPTZ '2026-11-18 14:00 +08'
+ORDER BY deleted_at;
+
+-- 2. If that list is exactly the test entries, remove them. RETURNING lists what went.
+DELETE FROM raw_transactions
+WHERE deleted_at IS NOT NULL
+  AND deleted_at >= TIMESTAMPTZ '2026-11-18 14:00 +08'
+RETURNING transaction_id, description, amount, currency;
+```
+
+Use the same time in both. This can't be undone from the bot; within 6 hours Neon's
+point-in-time restore can still bring a row back (`docs/BACKUP_RESTORE.md`).
 
 ## If a token is ever exposed
 

@@ -43,7 +43,30 @@ def test_revision_chain_has_exactly_one_head():
     # ...and exactly one revision is nobody's parent. Two heads means two migrations were
     # written against the same parent, e.g. a future 0003 that also revises 0001.
     assert len(ids - parents) == 1
-    assert ids - parents == {"0009_add_settlements"}
+    assert ids - parents == {"0010_soft_delete"}
+
+
+def test_soft_delete_revises_settlements():
+    settlements = _load(VERSIONS / "0009_add_settlements.py")
+    soft_delete = _load(VERSIONS / "0010_soft_delete_behind_a_view.py")
+    assert soft_delete.down_revision == settlements.revision
+
+
+def test_the_view_shows_every_column_the_writers_name():
+    """Every INSERT INTO transactions now goes through the view (ADR-0050). A column a writer
+    names that the view leaves out would fail every save, so check the lists agree."""
+    import re
+
+    view = set(_load(VERSIONS / "0010_soft_delete_behind_a_view.py").LIVE_COLUMNS)
+    root = VERSIONS.parent.parent
+    for path in ("app/add_expense.py", "app/main.py"):
+        source = (root / path).read_text(encoding="utf-8")
+        inserts = re.findall(r"INSERT INTO transactions \((.*?)\)", source, re.DOTALL)
+        assert inserts, path
+        for columns in inserts:
+            named = {c.strip() for c in columns.split(",")}
+            assert named <= view, (path, named - view)
+    assert "deleted_at" not in view and "deleted_by_participant_id" not in view
 
 
 def test_exactly_one_revision_is_the_root():

@@ -132,7 +132,7 @@ def test_only_summary_queries_filter_outside_payers(monkeypatch):
     conn = _fake_connection(monkeypatch, ledger_queries)
     ledger_queries.get_period_summary("2026-11-01", "2026-11-30")
     ledger_queries.get_category_summary("2026-11-01", "2026-11-30")
-    ledger_queries.get_recent_entries()
+    ledger_queries.get_recent_page(0, 5)
     ledger_queries.find_recent_duplicate(4000, "SGD", 5)
     statements = [" ".join(str(call.args[0]).split()) for call in conn.execute.call_args_list]
     assert len(statements) == 5

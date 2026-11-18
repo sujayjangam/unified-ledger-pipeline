@@ -1,9 +1,9 @@
 # ADR-0050: Deleted entries are marked, and a view hides them
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-11-18
 **Issue:** [#115](https://github.com/sujayjangam/unified-ledger-pipeline/issues/115)
-**Code:** `alembic/versions/0010_*`, `app/services/ledger_queries.py`, `app/bot_core.py::recent_command`, `docs/LOCAL_TESTING.md` (test-entry purge query)
+**Code:** `alembic/versions/0010_*`, `app/services/ledger_queries.py`, `app/bot_core.py::handle_recent_button`, `docs/LOCAL_TESTING.md` (test-entry purge query)
 
 ## Problem
 
