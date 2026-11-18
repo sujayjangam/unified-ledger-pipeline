@@ -50,9 +50,14 @@ committing doc changes or when picking work back up after a gap; otherwise check
   makes any connection fail, because locally `.env` is production. Stub queries and Telegram
   objects (see `tests/test_button_callback.py`). Test-only dependencies go in
   `requirements-dev.txt`, never `requirements.txt`.
-- After any change to the prompt or schema descriptions in `app/services/extraction.py`, run
-  `python -m scripts.check_extraction` (real model, no database), and add any real message the
-  model misread to its list ([ADR-0031](docs/decisions/0031-last-week-from-message-text.md)).
+- **Never call the OpenAI API yourself** — no `scripts.check_extraction`, no ad-hoc model
+  calls, no worker runs that hit it. Production shares the same prepaid credit, and test runs
+  once drained it so the live bot failed with a 429. Give the user the command and the call
+  count, and let them run it.
+- After any change to the prompt or schema descriptions in `app/services/extraction.py`,
+  `python -m scripts.check_extraction` (real model, no database) must be run by the user (see
+  above), and any real message the model misread added to its list
+  ([ADR-0031](docs/decisions/0031-last-week-from-message-text.md)).
 - `scripts/migrate_to_postgres.py` can't run again but is kept on purpose as a reference. Don't
   delete it.
 
@@ -303,7 +308,8 @@ reading and writing.
 - Fences: workers only see this repo. No `--add-dir`, no `--dangerously-skip-permissions`, no
   content from other folders on this machine. Workers never read `.env`, `.env.local`,
   `directory_seed.local.json`, `claude-plan-*.md` or `Test PDF_CSV/`; never run `alembic`,
-  `scripts/seed_directory.py`, the bot or anything else that opens a database connection; and never
+  `scripts/seed_directory.py`, the bot or anything else that opens a database connection or calls
+  OpenAI; and never
   commit, push, deploy, or create issues or PRs.
 - Delegate only when briefing is cheaper than doing it. Small fixes stay with Claude.
 
