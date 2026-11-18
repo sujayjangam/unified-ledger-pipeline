@@ -27,6 +27,7 @@ from app.services.participants import (
 from app.services.splits import (
     resolve_split, menu_people, split_groups, split_people, split_rows,
     open_split, toggle_split_person, toggle_split_family, remove_split,
+    amounts_prompt, parse_split_amounts, AMOUNTS_PROMPT_LINE, drop_share_entries,
 )
 from app.services.trips import (
     Trip, load_active_trip, trip_families, switch_trip_off, switch_trip_on, member_trips,
@@ -911,7 +912,7 @@ def _split_lines(transaction: dict) -> str:
     rows = _owed_split(transaction)
     if not rows:
         return ""
-    if len(rows) == 1:
+    if len(rows) == 1 and 'set' not in rows[0]:
         # "Split: only Carol" read as Carol splitting with herself. One sharer who isn't the
         # payer owes the payer the whole amount, so say exactly that. A bot entry always has
         # a payer (resolve_payment sets one), so the name is always there.
@@ -935,7 +936,8 @@ def _split_lines(transaction: dict) -> str:
             lines.append(_md(label))
         for row in groups[label]:
             count = f"{row['count']}, " if by_count else ""
-            lines.append(f" • {_md(row['name'])}: {count}{format_cents(row['share_cents'])}")
+            suffix = (' ✏️' if row['set'] else " (what's left)") if 'set' in row else ''
+            lines.append(f" • {_md(row['name'])}: {count}{format_cents(row['share_cents'])}{suffix}")
     return "\n".join(lines) + "\n"
 
 
@@ -1038,7 +1040,12 @@ def _keyboard_for(transaction: dict) -> InlineKeyboardMarkup:
         rows.append([InlineKeyboardButton(label, callback_data="trip_toggle")])
     if transaction.get('split_menu'):
         label = "👥 Change split" if transaction.get('split') else "👥 Add split"
-        rows.append([InlineKeyboardButton(label, callback_data="split:menu")])
+        row = [InlineKeyboardButton(label, callback_data="split:menu")]
+        # Often the names are right and only the shares are wrong, so "Set amounts" sits here
+        # too, one tap away, whenever two or more people are ticked (ADR-0048).
+        if len(transaction.get('split') or ()) >= 2:
+            row.append(InlineKeyboardButton("✏️ Set amounts", callback_data="split:amounts"))
+        rows.append(row)
     if transaction.get('payer_menu'):
         # Opens the list of people (handle_payer_button). Absent on a YouTrip top-up, and on a
         # card stashed before this button shipped.
@@ -1100,6 +1107,9 @@ def _split_keyboard(transaction: dict) -> InlineKeyboardMarkup:
     """
     marked = {row['participant_id'] for row in transaction.get('split') or ()}
     rows, shown = [], set()
+    # At the top, so it is the first thing seen once the right people are ticked.
+    if len(marked) >= 2:
+        rows.append([InlineKeyboardButton("✏️ Set amounts", callback_data="split:amounts")])
     if transaction.get('trip_id'):
         for index, (label, members) in enumerate(transaction['split_menu']['groups']):
             if label:
@@ -1178,8 +1188,9 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
         await status_msg.edit_text("❌ Failed to extract structured data from your message.")
         return
 
-    # Extract the actual list from the wrapper and the spender
-    transactions_list = structured_data["transactions"]
+    # Extract the actual list from the wrapper and the spender. An entry the model made out
+    # of a share ("Bob's split is 90") is dropped first, so the guard below doesn't refuse it.
+    transactions_list = drop_share_entries(structured_data["transactions"], raw_text)
     user_id = str(update.effective_user.id)
     # authorize() already checked this sender is a participant, so this is never None.
     sender = directory.participant_by_telegram_id(user_id)
@@ -1559,6 +1570,95 @@ async def _settlement_reply(update, context) -> bool:
     return True
 
 
+async def _delete_quietly(bot, chat_id, message_id):
+    """Best-effort chat cleanup must never undo a redraw or interrupt a save."""
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+    except Exception as e:
+        print(f'❌ Message delete failed: {e}')
+
+
+async def _clear_split_prompt(context, chat_id, card_id, replied_id=None):
+    """Forget the current prompt and any stale reply target after the card is gone."""
+    prompt_id = context.user_data.get('split_prompt_of_card', {}).pop(card_id, None)
+    for previous in dict.fromkeys((prompt_id, replied_id)):
+        if previous is not None:
+            context.user_data.get('split_prompts', {}).pop(previous, None)
+            await _delete_quietly(context.bot, chat_id, previous)
+
+
+async def _replace_split_prompt(context, chat_id, card_id, old_id, prompt_id):
+    """Replace links only after a fresh prompt was sent successfully.
+
+    Also remove the current prompt if a delayed reply targeted an older one, so the chat
+    still has one prompt for this card even when a previous deletion failed.
+    """
+    current = context.user_data.get('split_prompt_of_card', {}).get(card_id)
+    for previous in dict.fromkeys((old_id, current)):
+        if previous is not None:
+            await _delete_quietly(context.bot, chat_id, previous)
+            context.user_data.get('split_prompts', {}).pop(previous, None)
+    _bounded_put(context.user_data.setdefault('split_prompts', {}), prompt_id, card_id)
+    _bounded_put(context.user_data.setdefault('split_prompt_of_card', {}), card_id, prompt_id)
+
+
+async def _split_amounts_reply(update, context, directory) -> bool:
+    """Consume split replies before extraction, using the card's participant snapshot.
+
+    Authorization has already loaded directory; it must not replace the sender or people on
+    the card. Hold the same lock as Confirm until the redraw and state update finish.
+    """
+    message = update.message
+    replied = message.reply_to_message
+    card_id = context.user_data.get('split_prompts', {}).get(replied.message_id) if replied else None
+    if card_id is None:
+        if (replied and replied.from_user and replied.from_user.id == context.bot.id
+                and (replied.text or '').startswith(AMOUNTS_PROMPT_LINE + '\n')):
+            await _delete_quietly(context.bot, message.chat_id, message.message_id)
+            await _delete_quietly(context.bot, message.chat_id, replied.message_id)
+            await message.reply_text('⚠️ This prompt has expired. Send the entry again.')
+            return True
+        return False
+    async with _card_lock(context, card_id):
+        await _delete_quietly(context.bot, message.chat_id, message.message_id)
+        pending = context.user_data.get('pending_cards', {}).get(card_id)
+        if _card_outcome(context, card_id) or pending is None:
+            await message.reply_text("⚠️ This entry can't be changed now.")
+            await _clear_split_prompt(context, message.chat_id, card_id, replied.message_id)
+            return True
+        error = None
+        try:
+            changed = parse_split_amounts(pending, message.text, pending['entered_by_participant_id'])
+        except ValueError as e:
+            error = str(e)
+        else:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=message.chat_id, message_id=card_id, text=_pending_card_text(changed),
+                    reply_markup=_keyboard_for(changed), parse_mode='Markdown')
+            except Exception as e:
+                print(f'❌ Split amounts redraw failed: {e}')
+                error = "⚠️ Couldn't change the split, try again."
+            else:
+                # Do not resurrect a card that was removed while Telegram was answering.
+                if context.user_data.get('pending_cards', {}).get(card_id) is not pending:
+                    await message.reply_text("⚠️ This entry can't be changed now.")
+                    await _clear_split_prompt(context, message.chat_id, card_id, replied.message_id)
+                    return True
+                pending.update(changed)
+        text, placeholder = amounts_prompt(pending, error)
+        try:
+            prompt = await message.reply_text(text, reply_markup=ForceReply(
+                selective=True, input_field_placeholder=placeholder))
+        except Exception as e:
+            # The card is authoritative even if Telegram cannot send its next prompt.
+            print(f'❌ Split amounts prompt failed: {e}')
+        else:
+            await _replace_split_prompt(context, message.chat_id, card_id,
+                                        replied.message_id, prompt.message_id)
+    return True
+
+
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Passes a plain text message through the same pipeline a voice note uses."""
     directory = await authorize(update)
@@ -1567,6 +1667,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Authorize first (every message, fail closed), then check whether this text is a reply
     # to a payback amount prompt. Such a reply is never an expense, so it stops here.
     if await _settlement_reply(update, context):
+        return
+    if await _split_amounts_reply(update, context, directory):
         return
 
     status_msg = await update.message.reply_text("🧠 Extracting data...")
@@ -1730,6 +1832,22 @@ async def _split_tap(query, context: ContextTypes.DEFAULT_TYPE, message_id: int)
         return
 
     action, _, value = query.data.removeprefix('split:').partition(':')
+    if query.data == 'split:amounts':
+        if len(pending.get('split') or ()) < 2:
+            await query.answer('⚠️ Tick at least two people first.')
+            return
+        text, placeholder = amounts_prompt(pending)
+        try:
+            prompt = await query.message.reply_text(text, reply_markup=ForceReply(
+                selective=True, input_field_placeholder=placeholder))
+        except Exception as e:
+            print(f'❌ Split amounts prompt failed: {e}')
+            await query.answer("⚠️ Couldn't send the prompt, try again.")
+            return
+        await _replace_split_prompt(context, query.message.chat_id, message_id, None, prompt.message_id)
+        # Answer once and last: only promise a reply prompt after Telegram accepted it.
+        await query.answer("Reply with a name and amount")
+        return
     try:
         if query.data == 'split:menu':
             changed = open_split(pending)
@@ -1761,7 +1879,33 @@ async def _split_tap(query, context: ContextTypes.DEFAULT_TYPE, message_id: int)
         await query.answer("⏳ This entry is already being saved or was cancelled.")
         return
     pending.update(changed)
+    if action in ('p', 'f', 'none'):  # Only these change who is ticked.
+        await _refresh_split_prompt(context, query.message.chat_id, message_id, pending)
     await query.answer()
+
+
+async def _refresh_split_prompt(context, chat_id, card_id, pending):
+    """Keep an open amounts prompt in step with the card after a tick change.
+
+    Telegram refuses to edit a message sent with ForceReply ("Message can't be edited", seen
+    on the test bot 2026-11-18), so a fresh prompt is sent and the old one deleted, exactly as
+    after a reply. With fewer than two ticked there is nothing to set, so the prompt just goes.
+    Best effort: a failed send is only printed, because the card already shows the truth.
+    """
+    prompt_id = context.user_data.get('split_prompt_of_card', {}).get(card_id)
+    if prompt_id is None:
+        return
+    if len(pending.get('split') or ()) < 2:
+        await _clear_split_prompt(context, chat_id, card_id)
+        return
+    text, placeholder = amounts_prompt(pending)
+    try:
+        prompt = await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=ForceReply(
+            selective=True, input_field_placeholder=placeholder))
+    except Exception as e:
+        print(f"❌ Split amounts prompt refresh failed: {e}")
+        return
+    await _replace_split_prompt(context, chat_id, card_id, prompt_id, prompt.message_id)
 
 
 # buttons!
@@ -1847,6 +1991,7 @@ async def _card_tap(query, context: ContextTypes.DEFAULT_TYPE, message_id: int):
 
         if save_success:
             _mark_card_resolved(context, message_id, "saved")
+            await _clear_split_prompt(context, query.message.chat_id, message_id)
             # Reconstruct the full summary message to keep it in the chat history
             updated_summary = (
                 f"✅ **Saved to Ledger!**\n\n"
@@ -1902,6 +2047,7 @@ async def _card_tap(query, context: ContextTypes.DEFAULT_TYPE, message_id: int):
         await query.answer()
         cancelled = _take_pending_card(context, message_id)
         _mark_card_resolved(context, message_id, "cancelled")
+        await _clear_split_prompt(context, query.message.chat_id, message_id)
         # A flagged card says which kind of cancel this was (#58). cancelled can be None (a card
         # from before a restart), which just gets the plain wording.
         if cancelled and cancelled.get('suspected_duplicate'):

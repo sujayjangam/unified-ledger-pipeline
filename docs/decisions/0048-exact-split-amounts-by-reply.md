@@ -1,6 +1,6 @@
 # ADR-0048: Exact split amounts, typed as a reply
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-11-18
 **Issue:** [#112](https://github.com/sujayjangam/unified-ledger-pipeline/issues/112)
 
@@ -15,37 +15,66 @@ Some bills split by exact amounts ("Alice paid 135, Bob's share is 90"). Today t
 sequenceDiagram
     actor U as You
     participant B as Bot
-    U->>B: message "Alice paid 135 split with Bob. Bob's share is 90"
-    B->>U: confirm card, no split yet, ⚠️ "tap 👥 Add split to set amounts"
-    U->>B: tap "👥 Add split" ("👥 Change split" if a split is already on the card)
-    B->>U: split menu: ticked people, plus "Set amounts"
-    U->>B: tap "Set amounts"
-    B-->>U: popup: "Reply with each person's amount"
-    B->>U: prompt: total 135.00, one line per ticked person<br/>hint in typing box: "Alice 45, Bob rest"
-    U->>B: reply "Alice 45, Bob rest"
-    alt adds up to the total
-        B->>U: card redrawn with each amount
-    else doesn't add up, or unknown name
-        B->>U: ⚠️ "40.00 short" — card unchanged
+    U->>B: message "Alice paid 135 split with Bob. Bob's split is 90"
+    B->>U: card: Alice and Bob ticked evenly, ⚠️ "tap Set amounts"
+    U->>B: tap "✏️ Set amounts" on the card
+    B->>U: prompt: total 135.00, who is set, what's left<br/>hint in typing box: "Bob 90"
+    U->>B: reply "Bob 90"
+    B->>B: delete the reply and the old prompt
+    alt fits the total
+        B->>U: card redrawn: Bob 90.00 ✏️, Alice 45.00 (what's left)
+        B->>U: fresh prompt with the new state
+    else over the total, or unknown name
+        B->>U: fresh prompt with the ⚠️ error — card unchanged
     end
-    U->>B: Confirm → amounts saved as split rows
+    U->>B: Confirm → amounts saved as split rows, prompt deleted
 ```
 
-- **Typed, not read from the message.** Python reads the reply: names matched against the
-  ticked people, amounts through `dollars_to_cents`, lines or commas. No model.
-- **`rest`** gives one person whatever is left. It goes in the `/help` split topic.
-- **Must add up exactly.** Otherwise a ⚠️ reply with the difference, and nothing changes.
-- **Ticking or unticking clears the amounts.** The card falls back to an even split with a ⚠️
-  "amounts cleared, set them again" line until Confirm, and the next prompt shows the old
-  amounts.
+- **Typed, not read from the message.** Python reads the reply, no model. Names only from the
+  ticked people, amounts only through `dollars_to_cents`. Commas or new lines are optional:
+  "Bob 90 me rest" reads as two pairs.
+- **One person at a time.** A reply sets only the people it names; later replies replace a
+  person's amount. Anyone not set shares what's left, evenly or by their counts when the
+  message had counts. So the card always adds up and Confirm always works.
+- **`rest`** puts a person back into the group sharing what's left. It goes in the `/help` split
+  topic.
+- **The only error is a misfit:** set amounts over the total, nobody left to take a remainder,
+  or someone left with nothing. That reply changes nothing.
+- **"Set amounts" is one tap away** once 2+ people are ticked: beside "Change split" on the
+  card, and first in the split menu. Often the names are right and only the shares are wrong.
+- **Ticking keeps the amounts.** A new person joins what's left; unticking drops their amount.
+  An open prompt is replaced to match (a ForceReply message can't be edited), and deleted
+  when fewer than two are ticked.
+  Only a tick change that leaves a misfit clears them, with a ⚠️ line, and the next prompt
+  shows the old amounts.
+- **One prompt on screen.** Each reply and the old prompt are deleted once read (bots can
+  delete incoming messages in private chats within 48 hours); the error goes in the fresh
+  prompt. Confirm or Cancel deletes the last prompt. The expense message stays. A failed delete
+  is ignored and never blocks a save.
 - **Same rules as every card button:** the card lock, answer once, never load the directory,
   redraw from a copy. The reply is caught before expense extraction, like payback amounts.
-- **Only cents are saved.** No migration. The "can't do uneven shares yet" warning now points to
-  "Set amounts".
+- **Names read, shares not: tick them anyway.** A fixed share or percentage in the message, or
+  "uneven" with no count, ticks the names read as an even split, with a ⚠️ line pointing to
+  "Set amounts". Every count the model read is dropped (it reads "share is 50" as a count of
+  50). The warning doesn't block Confirm, so an unfixed card saves even shares. Splits by
+  count (nights) are unchanged.
+- **A share sentence is part of its expense, decided by Python.** The model read "… Bob's split
+  is 90" as a second expense in 10 of 24 runs, so the one-expense guard refused it.
+  `drop_share_entries` drops a later entry only when its amount is the number in a share phrase
+  ("split is 90"), in the same currency and less than the first (12/12 after). Real expenses
+  have no share phrase, so they stay apart when several per message are allowed.
+  `check_extraction` fails on a wrong expense count.
+- **Only cents are saved.** No migration.
 
 ## Rejected
 
 - **The model reads amounts from the message:** more ways to misread, and more Python checks to
   catch it. Typing them is exact.
 - **A Mini App with input boxes:** needs a hosted page and login checks.
-- **Keep old amounts after a tick change:** they'd no longer add up to the total.
+- **Every person in one reply, total must match:** first trial on the test bot (2026-11-18)
+  piled up messages and needed a full retype for every change.
+- **A prompt rule that a share is not an expense:** fixed the share case but cost the nights
+  readings (one fell from 24/24 to 16/24) and price-first amounts ("8 for dinner." 9/24).
+- **Clear all amounts on any tick change:** they still fit when the new person takes what's left.
+- **No split for a fixed share until ticked by hand:** the names were already right; it cost
+  three taps to tick them again.

@@ -155,8 +155,15 @@ its context, rejected alternatives and cost. The ones that shaped the system mos
   Uneven shares work by a count per person, such as nights ("5 nights, everyone except Carol's
   family who only stayed 4"): the model copies the counts, Python checks each number is in the
   message and works out the cents. A family can be named by its trip label ("Reds 5 nights,
-  rest all 6"). A count read loosely gets a "⚠️ Check …" line on the card. A fixed amount or a
-  percentage gets a warning and no split.
+  rest all 6"). A count read loosely gets a "⚠️ Check …" line on the card. Exact amounts per
+  person are typed, not read from the message: "Set amounts" in the split menu sends a reply
+  prompt, and Python reads replies like "Bob 90", one person or several at a time. Anyone not
+  set shares what's left, so the card always adds up; `rest` puts someone back. A reply that
+  can't fit the total gets a warning and nothing changes. Each reply and the old prompt are
+  deleted once read, so the chat shows the card and one prompt
+  ([ADR-0048](docs/decisions/0048-exact-split-amounts-by-reply.md)).
+  A fixed amount or a percentage in the message itself keeps the names ticked as an even split,
+  with a warning and a "Set amounts" button on the card, so fixing it is one tap.
 - CI on every pull request: clean dependency install, lint, an import smoke check across `app/`,
   and a pytest suite over the money and date invariants — required to pass before a merge to
   `main`, enforced by a repository ruleset rather than merely reported on.

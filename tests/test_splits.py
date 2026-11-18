@@ -135,12 +135,27 @@ def test_counts_must_be_said(directory, message, count, valid):
     "Dinner 90 split with Carol, she owes 30",
     "Taxi 40 split 60% me and 40% Carol",
 ])
-def test_fixed_share_wording_is_not_built(directory, message):
-    """A fixed share or a percentage warns and records no split, whatever the model read."""
-    from app.services.splits import UNEVEN_NOT_BUILT_WARNING
+def test_fixed_share_wording_ticks_names_evenly(directory, message):
+    """A fixed share or a percentage ticks the names read, evenly, with the Set amounts warning
+    first (ADR-0048). The model's count (50 here, from "share is 50") is never used."""
+    from app.services.splits import UNEVEN_EVEN_SPLIT_WARNING
     reference = {'kind': 'named', 'people': [{'name': 'Carol', 'count': 50}]}
     result = resolve_split(reference, directory.participants, directory.participant(1), {}, False, message)
-    assert not result.people and result.warnings == (UNEVEN_NOT_BUILT_WARNING,)
+    assert 3 in {p.id for p in result.people}
+    assert result.counts == {} and result.default_count is None
+    assert result.warnings[0] == UNEVEN_EVEN_SPLIT_WARNING
+
+
+def test_fixed_share_with_nobody_matched_records_no_split(directory):
+    """With no name matched there is nothing to tick: the 'no split recorded' wording, and the
+    generic 'couldn't tell who shares' line is not repeated."""
+    from app.services.splits import NOBODY_SHARES_WARNING, UNEVEN_NOT_BUILT_WARNING
+    reference = {'kind': 'named', 'people': [{'name': 'Zed', 'count': 50}]}
+    result = resolve_split(reference, directory.participants, directory.participant(1), {}, False,
+                           "Dinner 90 split between Zed, Zed's share is 50")
+    assert not result.people
+    assert result.warnings[0] == UNEVEN_NOT_BUILT_WARNING
+    assert NOBODY_SHARES_WARNING not in result.warnings
 
 
 def test_one_sharer_with_a_count_refuses(directory):
@@ -306,7 +321,7 @@ def test_unknown_name_keeps_known_people(directory):
 
 @pytest.mark.parametrize("reference,trip_on,warning", [
     ({"kind": "everyone"}, False, '⚠️ "Everyone" needs a trip switched on. No split recorded.'),
-    ({"kind": "named", "uneven": True}, True, "⚠️ This asks for uneven shares, which the bot can't do yet. No split recorded."),
+    ({"kind": "named", "uneven": True}, True, "⚠️ Uneven shares: tap 👥 Add split, tick who shares, then Set amounts. No split recorded."),
     ({"kind": "named"}, False, "⚠️ Couldn't tell who shares this. No split recorded."),
     ({"kind": "named", "include_sender": True, "except_people": ["me"]}, True, "⚠️ Couldn't tell who shares this. No split recorded."),
 ])

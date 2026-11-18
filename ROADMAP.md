@@ -32,17 +32,19 @@ columns) and [#91](https://github.com/sujayjangam/unified-ledger-pipeline/pull/9
 production 2026-11-14 after a Neon-branch rehearsal and a backup). Before 0005, the 5 rows with
 no `account_id` were given a card by hand in SQL, one guarded `UPDATE` per `transaction_id`.
 
-**Next action:** exact amounts per person for a split
-([#112](https://github.com/sujayjangam/unified-ledger-pipeline/issues/112)): a "Set amounts"
-button on the split menu opens a reply prompt (with hint text in the typing box and a short
-popup on the tap), read in Python, with `rest` for whoever takes what's left. Design first, in a
-new ADR. Then step 6, `/recent` with delete
+**Next action:** step 6, `/recent` with delete
 ([#115](https://github.com/sujayjangam/unified-ledger-pipeline/issues/115)), which the trip
 still needs. After that: paying back one bill
 ([#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113)), then clearer "Mark
 paid" buttons ([#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114)). Later:
 a finished trip's hand-kept sheet loaded as real bills, and the trip read from the message text
 for pre-trip costs.
+
+**Done 2026-11-18:** exact amounts per person for a split
+([#112](https://github.com/sujayjangam/unified-ledger-pipeline/issues/112),
+[ADR-0048](docs/decisions/0048-exact-split-amounts-by-reply.md)): "Set amounts" in the split
+menu sends a reply prompt, read in Python, with `rest` for whoever takes what's left. No
+migration. Tried on the test bot before merging.
 
 **Done 2026-11-18:** step 5, settlement: paybacks as their own records, debt lines, pairwise
 netting and gifts at payback time ([ADR-0046](docs/decisions/0046-settlements-as-their-own-records.md),

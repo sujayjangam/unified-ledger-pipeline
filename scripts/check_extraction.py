@@ -33,7 +33,8 @@ load_dotenv()
 from app.services.dates import apply_date_resolution  # noqa: E402 - load_dotenv() first
 from app.services.extraction import extract_transactions  # noqa: E402 - load_dotenv() first
 from app.services.participants import Participant, mentions_paying  # noqa: E402 - load_dotenv() first
-from app.services.splits import resolve_split, sender_shares  # noqa: E402 - load_dotenv() first
+from app.services.splits import (  # noqa: E402 - load_dotenv() first
+    resolve_split, sender_shares, drop_share_entries, UNEVEN_EVEN_SPLIT_WARNING)
 
 # The payment methods offered to the model. Fictional, and fixed here rather than loaded from the
 # database: this script must never touch the database (#53), and the messages below test amounts
@@ -61,6 +62,10 @@ CASES = [
     # Spoken style, as a Whisper transcript reads
     ("I spent fifteen dollars on lunch yesterday", 15, YESTERDAY),
     ("50 ringgit for dinner", 50, TODAY),
+    # Price first, then a sentence about the food. The first came back with no amount on
+    # production (2026-11-18, 3 of 32 runs); the second in 15 of 24 runs on an early #112 prompt.
+    ("5 for lunch. Hainanese curry rice", 5, TODAY),
+    ("8 for dinner. chicken rice and teh", 8, TODAY),
     # Relative and calendar dates (#15). On Wednesday 23 Sep, "last Tuesday" is 22 Sep and
     # "Tuesday last week" is 15 Sep.
     ("grab 12.80 day before yesterday", 12.8, date(2026, 9, 21)),
@@ -112,7 +117,8 @@ SPLIT_PEOPLE = tuple(Participant(i, name, None, None) for i, name in enumerate(
 SPLIT_FAMILIES = {1: 'Alice', 2: 'Reds', 6: 'Reds', 3: 'Blues', 4: 'Blues'}
 _EVEN_NAMES = [
     (), ('Alice', 'Bob', 'Carol', 'Dave', 'Erin', 'Frank'), ('Alice', 'Bob', 'Frank'),
-    (), (), (), (), ('Alice', 'Carol'), ('Carol', 'Dave'), ('Alice', 'Dave', 'Erin'),
+    # Index 6, "Carol's share is 50": names ticked evenly until Set amounts (ADR-0048).
+    (), (), (), ('Alice', 'Carol'), ('Alice', 'Carol'), ('Carol', 'Dave'), ('Alice', 'Dave', 'Erin'),
     ('Alice', 'Bob', 'Carol', 'Erin', 'Frank'), ('Alice', 'Bob', 'Erin', 'Frank'),
     (), (), ('Alice', 'Carol', 'Dave'), (), (), (), (), (), (),
 ]
@@ -124,6 +130,12 @@ SPLIT_CASES[5]['outcome'] = {('Alice', 3), ('Carol', 2)}
 
 # Cases the directory above would otherwise hide, each with its outcome stated outright.
 SPLIT_CASES += [
+    # A fixed share: both names ticked evenly, the warning pointing to Set amounts (ADR-0048).
+    {"message": "Alice paid 135 split with Bob. Bob's split is 90", "uneven": True,
+     "outcome": {('Alice', None), ('Bob', None)}, "warnings": (UNEVEN_EVEN_SPLIT_WARNING,)},
+    # Read as two expenses on the test bot (2026-11-18), so the one-expense guard refused it.
+    {"message": "I paid 135 split with Bob. Bob's split is 90", "uneven": True,
+     "outcome": {('Alice', None), ('Bob', None)}, "warnings": (UNEVEN_EVEN_SPLIT_WARNING,)},
     # Carol misread as a family would add Dave at 4 nights.
     {"message": "Airbnb 2300, split by nights: Alice's family 5, Carol and Erin 4",
      "outcome": {('Alice', 5), ('Carol', 4), ('Erin', 4)}},
@@ -150,6 +162,14 @@ SPLIT_CASES += [
      "outcome": {('Alice', 6), ('Bob', 6), ('Frank', 6), ('Carol', 4), ('Dave', 6), ('Erin', 6)}},
 ]
 
+# Messages with more than one real expense, and how many the model must return. The bot
+# refuses these today (ADR-0010), but the share-sentence rule must not merge real expenses,
+# or several expenses per message would break the day it is allowed.
+MULTI_CASES = [
+    ("coffee 5 and lunch 12", 2),
+    ("Dinner 80 split with Carol. Taxi 20.", 2),
+]
+
 
 def _name(value):
     """Ignore case and a trailing possessive when comparing the model's copied names."""
@@ -174,6 +194,7 @@ def _split_reading(transaction):
         reference["include_sender"] = from_words
     return {
         **reference,
+        "warnings": resolved.warnings,
         "outcome": {(p.display_name, resolved.counts.get(p.id)) for p in resolved.people} or 'no split',
         "people": {(_name(p["name"]), p["is_family"]) for p in reference.get("people", [])},
         "counts": {(_name(p["name"]), p["is_family"], p["count"])
@@ -193,7 +214,12 @@ async def run_once(message: str, semaphore: asyncio.Semaphore):
         result = await extract_transactions(message, TODAY, FICTIONAL_ACCOUNTS)
     if not result or not result.get("transactions"):
         return {}
-    txn = result["transactions"][0]
+    # The same first step process_expense_text takes: drop a share read as a second expense.
+    transactions = drop_share_entries(result["transactions"], message)
+    txn = transactions[0]
+    # Only the first entry is read, so the count is kept: two entries make the bot refuse the
+    # message, and must fail here too (2026-11-18).
+    txn["_count"] = len(transactions)
     # The same two steps process_expense_text takes: the raw message becomes the description,
     # then the date is resolved from the reference plus that text.
     txn["description"] = message
@@ -207,6 +233,7 @@ async def main(runs: int) -> int:
     # Every run of every message, all started together and awaited as one batch.
     jobs = [run_once(message, semaphore) for message, _, _ in CASES for _ in range(runs)]
     jobs += [run_once(case["message"], semaphore) for case in SPLIT_CASES for _ in range(runs)]
+    jobs += [run_once(message, semaphore) for message, _ in MULTI_CASES for _ in range(runs)]
     results = await asyncio.gather(*jobs)
 
     all_right = True
@@ -218,8 +245,11 @@ async def main(runs: int) -> int:
             amount_ok = got_amount == want_amount
             date_ok = want_date is None or got_date == want_date
             reading = _split_reading(transaction)
-            if not (amount_ok and date_ok and reading['outcome'] == 'no split' and reading["payer_name"] is None):
-                wrong.append(f"amount={got_amount} date={got_date} kind={reading.get('kind')} payer={reading['payer_name']}")
+            # 0 is fine: "hello" comes back as an empty list, which the bot treats as no price.
+            one = transaction.get("_count", 0) <= 1
+            if not (one and amount_ok and date_ok and reading['outcome'] == 'no split' and reading["payer_name"] is None):
+                wrong.append(f"amount={got_amount} date={got_date} kind={reading.get('kind')} "
+                             f"payer={reading['payer_name']} expenses={transaction.get('_count')}")
         right = runs - len(wrong)
         all_right = all_right and not wrong
         mark = "ok  " if not wrong else "FAIL"
@@ -237,8 +267,12 @@ async def main(runs: int) -> int:
             # The payer is checked on its own: a right split outcome must not hide a wrong
             # payer ("Carol covered dinner 90" is "no split" whoever the model says paid).
             payer_wrong = 'payer_name' in expected and reading.get('payer_name') != expected['payer_name']
-            if not transaction or reading['outcome'] != case['outcome'] or payer_wrong:
-                wrong.append(f"{reading['outcome']} payer={reading.get('payer_name')}")
+            # Exact-amount cases must show the menu advice as well as refusing a guessed split.
+            warning_wrong = 'warnings' in expected and reading['warnings'] != expected['warnings']
+            if (not transaction or transaction.get("_count") != 1 or reading['outcome'] != case['outcome']
+                    or payer_wrong or warning_wrong):
+                wrong.append(f"{reading['outcome']} payer={reading.get('payer_name')} "
+                             f"expenses={transaction.get('_count')}")
             elif actual != expected:
                 info.append(str(actual))
         all_right = all_right and not wrong
@@ -248,6 +282,13 @@ async def main(runs: int) -> int:
             print(f"           got {answer}  x{wrong.count(answer)}")
         for answer in sorted(set(info)):
             print(f"           info: raw fields {answer}  x{info.count(answer)}")
+    start = (len(CASES) + len(SPLIT_CASES)) * runs
+    for i, (message, want) in enumerate(MULTI_CASES):
+        got = [t.get("_count") for t in results[start + i * runs:start + (i + 1) * runs]]
+        wrong = [n for n in got if n != want]
+        all_right = all_right and not wrong
+        mark = "ok  " if not wrong else "FAIL"
+        print(f"{mark} {runs - len(wrong)}/{runs}  {message!r}  (want {want} expenses, got {got})")
     return 0 if all_right else 1
 
 

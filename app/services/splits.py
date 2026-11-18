@@ -15,11 +15,15 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 
+from app.add_expense import dollars_to_cents, format_cents
 from app.services.participants import Participant, match_person
 
 # Card lines. Display only: never stored, and they never block a save.
-UNEVEN_NOT_BUILT_WARNING = "⚠️ This asks for uneven shares, which the bot can't do yet. No split recorded."
-UNEVEN_EVEN_SPLIT_WARNING = "⚠️ This asked for uneven shares, which the bot can't do yet. Shown as an even split."
+UNEVEN_NOT_BUILT_WARNING = "⚠️ Uneven shares: tap 👥 Add split, tick who shares, then Set amounts. No split recorded."
+UNEVEN_EVEN_SPLIT_WARNING = "⚠️ Uneven shares: tap Set amounts to type each share. Shown as an even split."
+AMOUNTS_CLEARED_WARNING = "⚠️ Amounts cleared. Tap 👥 Change split → Set amounts again."
+# The total varies, so the restart check recognises this fixed introductory line.
+AMOUNTS_PROMPT_LINE = "Set split amounts"
 EVERYONE_NEEDS_TRIP_WARNING = '⚠️ "Everyone" needs a trip switched on. No split recorded.'
 NOBODY_SHARES_WARNING = "⚠️ Couldn't tell who shares this. No split recorded."
 NO_MATCH_WARNING = "⚠️ Couldn't match '{name}'"
@@ -41,8 +45,14 @@ _FAMILY_SUFFIX = re.compile(r"^(?P<name>.+?)(?:'s|’s)?\s+family$", re.IGNORECA
 # "Paid"/"pay" are left out on purpose: "I paid 50, split with Carol" is an ordinary split.
 _FIXED_SHARE = re.compile(
     r"(?<!\w)(?:share|portion|part)\s+(?:is|was|of|=)\s*\$?\d"
+    r"|(?<!\w)split\s+(?:is|was|=)\s*\$?\d"
     r"|\d\s*(?:%|percent(?!\w))"
     r"|(?<!\w)owes?\s+(?:me\s+|us\s+)?\$?\d", re.IGNORECASE)
+# The money number in a fixed-share phrase: "Bob's split is 90" -> 90, "Carol owes 30" -> 30.
+# The same phrases as _FIXED_SHARE, without percentages: a percentage is never an amount.
+_SHARE_AMOUNT = re.compile(
+    r"(?<!\w)(?:(?:share|portion|part)\s+(?:is|was|of|=)|split\s+(?:is|was|=)|owes?\s+(?:me\s+|us\s+)?)"
+    r"\s*\$?(\d+(?:\.\d+)?)", re.IGNORECASE)
 _EXCEPT_WORD = re.compile(r"(?<!\w)(?:except|excluding|but\s+not|apart\s+from|other\s+than)(?!\w)", re.IGNORECASE)
 _EVERYONE_WORD = re.compile(r"(?<!\w)(?:everyone|everybody|all|all\s+of\s+us|whole\s+group|the\s+group)(?!\w)", re.IGNORECASE)
 
@@ -352,6 +362,44 @@ def _number_after_except(message: str) -> bool:
     return bool(_numbers(message[found.end():]))
 
 
+def _cents_or_none(value) -> int | None:
+    """dollars_to_cents for a value that may be missing or bad: None instead of raising."""
+    try:
+        return dollars_to_cents(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def drop_share_entries(transactions: list[dict], message: str) -> list[dict]:
+    """Remove extra entries the model made out of a share of the first one.
+
+    "I paid 135 split with Bob. Bob's split is 90" came back as two expenses (135 and 90) in
+    10 of 24 runs (2026-11-18), and the one-expense guard refused it. Prompt wording fixed that
+    but cost the nights readings, so Python undoes it instead, reading the message as it does
+    for dates and the payer. A later entry goes only when all three hold:
+      - the message has a fixed-share phrase with a money number ("split is 90", "share is 50");
+      - the entry's amount is that number, in the same currency as the first entry;
+      - it is less than the first entry's amount.
+    Real separate expenses ("Dinner 80 split with Carol. Taxi 20.") have no share phrase, so
+    they are never merged - which keeps this right once several expenses per message are allowed.
+    Returns a new list; the input is not changed.
+    """
+    if len(transactions) < 2:
+        return list(transactions)
+    shares = {_cents_or_none(m.group(1)) for m in _SHARE_AMOUNT.finditer(message or "")} - {None}
+    first = transactions[0]
+    first_cents = _cents_or_none(first.get("amount"))
+    if not shares or first_cents is None:
+        return list(transactions)
+
+    def is_share(entry):
+        cents = _cents_or_none(entry.get("amount"))
+        return (cents in shares and cents < first_cents
+                and entry.get("currency") == first.get("currency"))
+
+    return [first, *(t for t in transactions[1:] if not is_share(t))]
+
+
 def resolve_split(reference: dict | None, candidates, sender: Participant,
                   families: dict[int, str], trip_on: bool, message: str | None = None) -> SplitResult:
     """Turns the model's split_reference into the participants who share the entry.
@@ -386,12 +434,18 @@ def resolve_split(reference: dict | None, candidates, sender: Participant,
         # The model read a split the message never asked for. A personal entry, silently: the
         # message decides.
         return SplitResult((), ())
-    if (reference.get("uneven") and not by_count) or (message is not None and _FIXED_SHARE.search(message)):
-        # Recording an even split for "split by nights" would be wrong without looking wrong.
-        # A fixed share or a percentage isn't built yet, and the model turns "Carol's share is
-        # 50" into a count of 50 for Carol alone (5 of 10 runs, 2026-11-16), so the words are
-        # checked here too.
-        return SplitResult((), (UNEVEN_NOT_BUILT_WARNING,))
+    # Uneven shares this reader can't work out: a fixed share or a percentage, or "by nights"
+    # with no counts. The names are still right, so they are ticked with an even split and a
+    # warning pointing to "Set amounts" (ADR-0048): one tap to fix, and the warning stays until
+    # amounts are set. The warning never blocks a save, so an unfixed card saves even shares.
+    # The model turns "Carol's share is 50" into a count of 50 for Carol alone (5 of 10 runs,
+    # 2026-11-16), so for a fixed share every count is dropped, never trusted.
+    uneven_unread = bool((reference.get("uneven") and not by_count)
+                         or (message is not None and _FIXED_SHARE.search(message)))
+    if uneven_unread:
+        entries = tuple({**e, 'count': None} if isinstance(e, dict) else e for e in entries)
+        exceptions = tuple({**e, 'count': None} if isinstance(e, dict) else e for e in exceptions)
+        default_count, by_count, unsure = None, False, []
     # The shorthand without a split word is allowed only with trustworthy counts.
     # Unused defaults are deliberately checked later, after resolving the sharers.
     if message is not None and not asks_for_split(message) and any(
@@ -548,6 +602,11 @@ def resolve_split(reference: dict | None, candidates, sender: Participant,
     checks = [CHECK_COUNT_WARNING.format(name=name, unit=unit) for name, count in dict.fromkeys(unsure)
               if (person := match_person(name, candidates)) is None or counts.get(person.id) != count]
     warnings = [*checks, *warnings]
+    if uneven_unread:
+        # Ticked people: "shown as an even split". Nobody matched: "no split recorded".
+        # The generic "couldn't tell who shares" line would only repeat the uneven one.
+        warnings = [UNEVEN_EVEN_SPLIT_WARNING if people else UNEVEN_NOT_BUILT_WARNING,
+                    *(w for w in warnings if w != NOBODY_SHARES_WARNING)]
     return SplitResult(tuple(people[pid] for pid in sorted(people)), tuple(warnings),
                        counts, default_count if by_count else None,
                        reference.get('count_unit') if by_count else None)
@@ -581,6 +640,8 @@ def split_shares(amount_cents: int, people, counts: dict[int, int] | None = None
 #   counts        participant id -> count, retained even while unticked
 #   default_count, unit  the default and unit read from the message
 #   added_counts  participant id -> warning for guessed counts; only ticked warnings display
+#   amounts       set participant id -> whole cents; unset people share the rest by count
+#   cleared_amounts  last amounts cleared by a tick change; hints for the next prompt
 # "Ticked" always means "has a row in pending['split']": there is no second list to drift.
 
 
@@ -642,6 +703,19 @@ def split_rows(pending: dict, participant_ids) -> tuple[dict, ...]:
     menu = pending['split_menu']
     people = {p.id: p for p in menu['everyone']}
     people.update((p.id, p) for p in split_people(pending))
+    if menu.get('amounts'):
+        # Explicit amounts have priority; counts only weight the people sharing the rest.
+        # Both kinds of row carry 'set', not 'count', so the card explains these shares.
+        amounts = menu['amounts']
+        unset = ids - amounts.keys()
+        counts = menu.get('counts') or {}
+        shares = share_out(menu['amount_cents'] - sum(amounts.values()),
+                           {pid: counts.get(pid, 1) for pid in unset}) if unset else {}
+        shares.update(amounts)
+        return tuple({'participant_id': pid, 'name': people[pid].display_name,
+                      'share_cents': shares[pid], 'family': menu['families'].get(pid),
+                      'set': pid in amounts}
+                     for pid in sorted(ids))
     return tuple({**row, 'family': menu['families'].get(row['participant_id'])}
                  for row in split_shares(menu['amount_cents'], (people[pid] for pid in ids), menu.get('counts')))
 
@@ -656,6 +730,8 @@ def _set_split(pending: dict, participant_ids) -> dict:
     also persist while their person is ticked, including after unticking and re-ticking them."""
     ids = set(participant_ids)
     menu = dict(pending['split_menu'])
+    ticks_changed = ids != {row['participant_id'] for row in pending.get('split') or ()}
+    cleared = False
     counts = dict(menu.get('counts') or {})
     added = dict(menu.get('added_counts') or {})
     if counts or menu.get('default_count') is not None:
@@ -669,10 +745,21 @@ def _set_split(pending: dict, participant_ids) -> dict:
                 name=people[pid].display_name, count=default,
                 unit=menu.get('unit') or '').replace(' . Check.', '. Check.')
         menu.update(counts=counts, added_counts=added)
+    if ticks_changed and menu.get('amounts'):
+        old = menu['amounts']
+        menu['amounts'] = {pid: cents for pid, cents in old.items() if pid in ids}
+        # New ticks share the remainder. Clear only if those shares no longer fit.
+        if not ids or amounts_misfit(menu, ids):
+            menu['cleared_amounts'] = old if not ids else menu['amounts']
+            menu.pop('amounts')
+            cleared = True
     changed = {**pending, 'split_menu': menu}
     changed['split'] = split_rows(changed, ids)
-    if ids != {row['participant_id'] for row in pending.get('split') or ()}:
+    if ticks_changed:
         retained = []
+        # Only while someone is still ticked: after "Remove split" there is nothing to set again.
+        if ids and (cleared or AMOUNTS_CLEARED_WARNING in (pending.get('split_warnings') or ())):
+            retained.append(AMOUNTS_CLEARED_WARNING)
         for unread, even in ((UNEVEN_NOT_BUILT_WARNING, UNEVEN_EVEN_SPLIT_WARNING),
                              (COUNT_UNREAD_WARNING, COUNT_EVEN_SPLIT_WARNING)):
             if any(w in (unread, even) for w in pending.get('split_warnings') or ()):
@@ -680,6 +767,111 @@ def _set_split(pending: dict, participant_ids) -> dict:
         changed['split_warnings'] = tuple(retained) + tuple(
             added[pid] for pid in sorted(ids) if pid in added)
     return changed
+
+
+def amounts_misfit(menu: dict, ids) -> str | None:
+    """Explain a remainder that cannot give every unset person a positive share."""
+    ids = set(ids)
+    amounts = menu.get('amounts') or {}
+    total = menu['amount_cents']
+    assigned = sum(amounts.values())
+    if assigned > total:
+        return f"⚠️ Set amounts come to {format_cents(assigned)}, more than {format_cents(total)}."
+    unset = ids - amounts.keys()
+    remainder = total - assigned
+    if remainder and not unset:
+        return f"⚠️ {format_cents(remainder)} short and nobody left to take it. Set someone's amount, or send rest."
+    if unset:
+        counts = menu.get('counts') or {}
+        # share_out refuses zero totals; all unset shares are zero in that case.
+        shares = share_out(remainder, {pid: counts.get(pid, 1) for pid in unset}) if remainder else dict.fromkeys(unset, 0)
+        people = {p.id: p.display_name for p in menu['everyone']}
+        for pid in sorted(unset):
+            if shares[pid] == 0:
+                name = people[pid]
+                return f"⚠️ Nothing left for {name}. Lower an amount, or untick {name}."
+    return None
+
+
+def parse_split_amounts(pending: dict, text: str, sender_id: int) -> dict:
+    """Merge named amounts into a copy; reject misfits without touching the card.
+
+    Amount tokens end pairs, so separators are optional and names may have several words.
+    The shared money converter owns validation and half-up rounding.
+    """
+    ids = {row['participant_id'] for row in pending.get('split') or ()}
+    people = tuple(p for p in split_people(pending) if p.id in ids)
+    if len(ids) < 2:
+        raise ValueError('⚠️ Tick at least two people, then Set amounts again.')
+    amounts = dict(pending['split_menu'].get('amounts') or {})
+    seen = set()
+    words = []
+    for token in re.split(r'[\s,:]+', text.strip()):
+        if not token:
+            continue
+        # Include malformed numeric tokens so the money helper can reject them clearly.
+        is_amount = re.match(r'^\$?[+\-]?(?:\d|\.)', token)
+        if token.casefold() != 'rest' and not is_amount:
+            words.append(token)
+            continue
+        name = ' '.join(words)
+        words = []
+        if not name:
+            raise ValueError(f"⚠️ Couldn't read '{token}'. Send a name and amount, e.g. Bob 90.")
+        person = (next((p for p in people if p.id == sender_id), None)
+                  if name.casefold() in _SENDER_WORDS else match_person(name, people))
+        if person is None:
+            raise ValueError(f"⚠️ Couldn't match '{name}'.")
+        if person.id in seen:
+            raise ValueError(f'⚠️ More than one amount for {person.display_name}.')
+        seen.add(person.id)
+        if token.casefold() == 'rest':
+            amounts.pop(person.id, None)
+        else:
+            try:
+                amounts[person.id] = dollars_to_cents(token.removeprefix('$'))
+            except ValueError:
+                raise ValueError(f"⚠️ Invalid amount for {person.display_name}. Use a positive amount; for zero, untick them instead.") from None
+    if words or not seen:
+        unread = ' '.join(words)
+        raise ValueError(f"⚠️ Couldn't read '{unread}'. Send a name and amount, e.g. Bob 90.")
+    menu = {**pending['split_menu'], 'amounts': amounts}
+    error = amounts_misfit(menu, ids)
+    if error:
+        raise ValueError(error)
+    menu.pop('cleared_amounts', None)
+    removed = {UNEVEN_NOT_BUILT_WARNING, UNEVEN_EVEN_SPLIT_WARNING, AMOUNTS_CLEARED_WARNING}
+    # Counts still decide the remainder until everyone has an explicit amount.
+    if ids <= amounts.keys():
+        removed.update({COUNT_UNREAD_WARNING, COUNT_EVEN_SPLIT_WARNING, *menu.get('added_counts', {}).values()})
+    changed = {**pending, 'split_menu': menu,
+               'split_warnings': tuple(w for w in pending.get('split_warnings', ()) if w not in removed)}
+    changed['split'] = split_rows(changed, ids)
+    return changed
+
+
+def amounts_prompt(pending: dict, error: str | None = None) -> tuple[str, str]:
+    """Show current shares or cleared hints, keeping the restart marker first."""
+    menu = pending['split_menu']
+    amounts = menu.get('amounts') or {}
+    old = menu.get('cleared_amounts') or {}
+    rows = pending.get('split') or ()
+    lines = [AMOUNTS_PROMPT_LINE]
+    if error:
+        lines.append(error)
+    lines.append(f"Total {format_cents(menu['amount_cents'])}.")
+    for row in rows:
+        pid = row['participant_id']
+        suffix = ''
+        if amounts:
+            suffix = f" {format_cents(row['share_cents'])}" + (' ✏️' if pid in amounts else " (what's left)")
+        elif pid in old:
+            suffix = f" (was {format_cents(old[pid])})"
+        lines.append(row['name'] + suffix)
+    lines.append("Send a name and amount, e.g. Bob 90. Anyone not set shares what's left; send rest to put someone back.")
+    first = next((row for row in rows if row['participant_id'] not in amounts), rows[0] if rows else None)
+    placeholder = f"{first['name']} 50" if first else ''
+    return '\n'.join(lines), placeholder[:64]
 
 
 def open_split(pending: dict) -> dict:
