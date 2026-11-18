@@ -391,6 +391,52 @@ def _reread(reference: dict, message: str, trip_on: bool) -> tuple[dict, list[tu
     return reference, unsure
 
 
+def _add_unlisted(reference: dict, message: str, candidates, families: dict[int, str]) -> dict:
+    """The model's split_reference plus anyone the message gives a count the model left out.
+
+    For "Airbnb 900 split by nights. Reds 5 nights, rest all 6 nights." (a /help example) the
+    model returned no people at all, 94% sure (logprobs run 2026-11-18, #120), so the Reds'
+    5 was lost and the trip split evenly. Python knows every name and family label, so it
+    reads them from the words, as _rest_count reads the rest. A name is added only when all
+    of these hold, so nothing is guessed:
+      - it is a split by count: the model read a count or a default, or the words say
+        "by nights" (says_uneven). An even split never gains a name this way.
+      - the model listed nobody by that name or label, in people or except_people.
+      - a mention of it that doesn't say who paid has exactly one number after it in its
+        own clause ("Reds 5 nights", "Carol stayed 4 nights"), from 1 to 999.
+    Returns a copy; the model's dict is never changed.
+    """
+    entries = [*(reference.get("people") or ()), *(reference.get("except_people") or ())]
+    by_count = reference.get("default_count") is not None or says_uneven(message) or any(
+        isinstance(e, dict) and e.get("count") is not None for e in entries)
+    if not by_count:
+        return reference
+    listed = {_label_key(e if isinstance(e, str) else e.get("name") or "") for e in entries}
+    # Labels first, so a label that is also someone's name stays one entry (match_person in
+    # resolve_split still tries the person first, as it does for the model's entries).
+    said = {label: True for label in families.values() if label}
+    said.update((p.display_name, False) for p in candidates if p.display_name not in said)
+    added = []
+    for name, is_family in said.items():
+        if _label_key(name) in listed:
+            continue
+        for found in _mentions(name, message):
+            if _is_paying(found, message):
+                continue
+            clause = _clause(message, found)
+            after = clause[clause.casefold().find(found.group(0).casefold()) + len(found.group(0)):]
+            numbers = _numbers(after)
+            if len(numbers) == 1 and 1 <= numbers[0] <= 999:
+                # "Bob's family 5" is Bob's whole family, as the model is told to read it.
+                family = is_family or bool(re.match(r"(?:['’]s)?\s+famil(?:y|ies)(?!\w)", after, re.IGNORECASE))
+                added.append({"name": name, "is_family": family, "count": numbers[0]})
+                listed.add(_label_key(name))
+                break
+    if not added:
+        return reference
+    return {**reference, "people": [*(reference.get("people") or ()), *added]}
+
+
 def _number_after_except(message: str) -> bool:
     """True when a whole number (digits or a number word) comes after the first except word."""
     found = _EXCEPT_WORD.search(message)
@@ -454,6 +500,11 @@ def resolve_split(reference: dict | None, candidates, sender: Participant,
     """
     if not reference or reference.get("kind", "none") == "none":
         return SplitResult((), ())
+    candidates = tuple(candidates)
+    if message is not None:
+        # Before anything reads the entries: an added count is what lets "the rest" below
+        # read its own count (it is read only beside someone else's).
+        reference = _add_unlisted(reference, message, candidates, families)
     # "Reds 5, others stay 6" says "everyone" as surely as "all" does - but only beside a named
     # person's count, so "Dinner with the others 80" stays a personal entry.
     says_everyone = message is not None and bool(
@@ -491,7 +542,6 @@ def resolve_split(reference: dict | None, candidates, sender: Participant,
             isinstance(e, dict) and e.get('count') is not None
             and not _valid_count(e['count'], message) for e in (*entries, *exceptions)):
         return SplitResult((), (COUNT_UNREAD_WARNING,))
-    candidates = tuple(candidates)
     warnings = []
 
     def named(entry) -> list[Participant]:

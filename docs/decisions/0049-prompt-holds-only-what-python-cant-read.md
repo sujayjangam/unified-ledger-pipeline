@@ -19,7 +19,7 @@ flowchart LR
     R["New rule"] --> Q{"Can Python read it<br/>from the words?"}
     Q -- yes --> P["Python check + tests<br/>(like asks_for_split,<br/>says_uneven)"]
     Q -- no --> F["One sentence, in the<br/>field it is about"]
-    F --> C["User runs<br/>check_extraction"]
+    F --> C["check_extraction --margins<br/>(user approves the run)"]
 ```
 
 - Every class docstring on the schema models is sent to the model, so notes go in `#`
@@ -33,8 +33,12 @@ flowchart LR
   default was 1). Consistent, not correct, and not guaranteed, so no seed. `check_extraction`
   now spends its calls on different messages, one run each, rather than repeats.
 
-Evidence: about 12,600 characters per request down to 8,300. The real-model run is pending,
-done by the user before merging; its results go in the PR.
+- A pass can be a near-tie: `check_extraction --margins` reads each choice's likelihood
+  (logprobs). Where a near-tie changes the result and Python can read the words, Python
+  decides: a joined name ("Reds and Blues"), a label's own count, a year never said.
+
+Evidence: about 12,600 characters per request down to 8,300. 43 of 44 messages passed on
+2026-11-18; the one miss and the harmful near-ties are now read by Python. Runs are in PR #121.
 
 ## Rejected
 

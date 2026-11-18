@@ -24,8 +24,9 @@ same as one at 99%, and only the first can flip on the next call; it lists each 
 95% beneath its message (scripts/margins.py). The tokens billed are printed at the end.
 
 It calls OpenAI with OPENAI_API_KEY from .env, one call per message per run, and prints the
-number of calls before it starts. Production uses the same prepaid credit, so only the user
-runs it - never Claude or a worker (CLAUDE.md). It never touches the database.
+number of calls before it starts. Production uses the same prepaid credit, so every run needs
+the user's explicit approval, given for that run, with the call count stated first; workers
+never run it (CLAUDE.md). It never touches the database.
 
 Exit code 0 means every run of every message was right; 1 means at least one wasn't.
 """

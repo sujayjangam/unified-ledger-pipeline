@@ -15,7 +15,8 @@ openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # would be sent too). Before adding a rule, check whether Python can read it from the words
 # instead (app/services/splits.py, dates.py, participants.py): Python is exact and tested, and
 # every extra rule here can shift a reading that was measured. tests/test_extraction.py caps
-# the total size. After any change, the user runs python -m scripts.check_extraction.
+# the total size. After any change, python -m scripts.check_extraction is run, with the user's
+# approval for that run (CLAUDE.md).
 
 
 # 1. Define Strict Categories using an Enum (Prevents typos like "Foods" or "Transit")

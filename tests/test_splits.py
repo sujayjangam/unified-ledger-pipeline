@@ -595,6 +595,41 @@ def test_two_labels_read_as_one_name_are_both_matched(kind):
     assert result.counts == _STAY_COUNTS and not result.warnings
 
 
+@pytest.mark.parametrize("kind", ["everyone", "named"])
+def test_a_label_with_its_own_count_is_added_when_the_model_left_it_out(kind):
+    """The /help example: the model returned no people, 94% sure (logprobs, 2026-11-18,
+    #120), so the Reds' 5 was lost. "Reds 5 nights" is a label and one number in its clause."""
+    result = _trip({"kind": kind, "include_sender": False, "people": [], "except_people": [],
+                    "default_count": 6, "count_unit": "nights"},
+                   "Airbnb 900 split by nights. Reds 5 nights, rest all 6 nights.")
+    assert result.counts == {1: 6, 2: 6, 3: 5, 4: 5, 5: 6, 6: 6} and not result.warnings
+
+
+def test_a_family_said_with_its_count_is_added_as_the_family():
+    result = _trip({"kind": "named", "include_sender": False, "default_count": None, "count_unit": "nights",
+                    "people": [{"name": "Bob", "count": 4}]},
+                   "Airbnb 900 split by nights: Carol's family 5, Bob 4")
+    assert result.counts == {2: 4, 3: 5, 4: 5}
+
+
+@pytest.mark.parametrize("message, reference", [
+    # An even split never gains a name: no count read and no "by nights".
+    ("dinner 80 split with Carol and Dave 80", {"kind": "named", "include_sender": True,
+                                               "people": [{"name": "Carol"}]}),
+    # Two numbers after the name in its clause: either could be the count.
+    ("Airbnb 900 split by nights. Reds 5 or 6 nights, rest all 6",
+     {"kind": "everyone", "include_sender": True, "people": [], "default_count": 6}),
+    # Said only as the payer: "Carol paid 600" is the bill, not her count.
+    ("Carol paid 600 split by nights, Dave 4, Erin 6",
+     {"kind": "named", "include_sender": False, "people": [{"name": "Dave", "count": 4},
+                                                           {"name": "Erin", "count": 6}]}),
+])
+def test_nobody_is_added_without_one_count_of_their_own(message, reference):
+    from app.services.splits import _add_unlisted
+    assert _add_unlisted({"except_people": [], **reference}, message, _TRIP, _TRIP_FAMILIES) == \
+        {"except_people": [], **reference}
+
+
 @pytest.mark.parametrize("joined", ["Carol & Dave", "Carol, Dave", "Carol and Dave"])
 def test_two_people_read_as_one_name_are_both_matched(joined):
     result = _trip({"kind": "named", "include_sender": False, "people": [{"name": joined}]},

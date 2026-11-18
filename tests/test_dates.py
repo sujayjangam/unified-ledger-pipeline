@@ -310,12 +310,32 @@ def test_apply_warns_when_it_fell_back_to_today():
 def test_apply_warns_on_a_future_date_but_still_uses_it():
     # "25 Dec 2026", said in September 2026. The user named the year, so the date is kept
     # as said - the warning informs, it never changes or rejects the date (ADR-0030).
-    txn = {"date_reference": model_ref(kind="calendar", day=25, month=12, year=2026)}
+    txn = {"description": "dinner 40 on 25 Dec 2026",
+           "date_reference": model_ref(kind="calendar", day=25, month=12, year=2026)}
 
     apply_date_resolution(txn, TODAY)
 
     assert txn["date"] == "2026-12-25"
     assert txn["date_warning"] == "This date is in the future."
+
+
+@pytest.mark.parametrize("text, year, expected", [
+    # No year said: the model's year is dropped, so it is the most recent 12 Sep (#120). It
+    # wrote 2023 for this message 8% of the time.
+    ("taxi 18 on 12 Sep", 2023, date(2026, 9, 12)),
+    ("taxi 18 on 12 Sep", 2026, date(2026, 9, 12)),
+    ("taxi 18 on 12 Sep 2025", 2025, date(2025, 9, 12)),
+    ("taxi 18 on 12/9/25", 2025, date(2025, 9, 12)),
+    ("taxi 18 on 12 Sep '25", 2025, date(2025, 9, 12)),
+    # 25 is the price, not a year: no date separator before it, so the year goes.
+    ("taxi 25 on 12 Sep", 2025, date(2026, 9, 12)),
+])
+def test_apply_keeps_only_a_year_the_message_says(text, year, expected):
+    txn = {"description": text, "date_reference": model_ref(kind="calendar", day=12, month=9, year=year)}
+
+    apply_date_resolution(txn, TODAY)
+
+    assert txn["date"] == expected.isoformat()
 
 
 # --- the whole pipeline: the card shows the resolved date ----------------------------------
