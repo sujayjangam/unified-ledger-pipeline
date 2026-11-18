@@ -47,12 +47,13 @@ if not local_token or local_token == prod_cfg.get("TELEGRAM_BOT_TOKEN"):
     )
 
 # Guard 2: falling through to the production DATABASE_URL is possible but has to be
-# deliberate - there is no delete path for a row saved by mistake yet (issue #22).
+# deliberate - /recent's delete only hides a row (ADR-0050); removing it for good is a query
+# run by hand (docs/LOCAL_TESTING.md).
 if not local_cfg.get("DATABASE_URL"):
     if os.getenv("ALLOW_PROD_DB") != "1":
         sys.exit(
             f"❌ {LOCAL_ENV} does not set DATABASE_URL, so test entries would land in the\n"
-            "   production ledger, which has no delete path yet (issue #22).\n"
+            "   production ledger, where removing them for good is a query run by hand.\n"
             "   Point it at a Neon branch, or opt in explicitly for this run:\n"
             "     $env:ALLOW_PROD_DB = '1'; python -m app.bot_local"
         )

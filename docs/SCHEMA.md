@@ -8,6 +8,25 @@
    converted only by `app/add_expense.py::dollars_to_cents` (exact decimal maths; half a cent
    rounds up) - see [ADR-0028](decisions/0028-exact-cent-conversion-half-up.md).
 
+## transactions: a view over raw_transactions (revision `0010_soft_delete`)
+
+Since [ADR-0050](decisions/0050-soft-delete-behind-a-view.md) the table is `raw_transactions`,
+and `transactions` is a view of its live rows (`WHERE deleted_at IS NULL`) with the columns
+below. Every read, insert and join uses `transactions`; only the delete and undo queries in
+`app/services/ledger_queries.py` (`soft_delete_entry`, `restore_entry`) name `raw_transactions`.
+Foreign keys and the `idempotency_key` unique constraint are on the real table, so a deleted row
+still blocks a retry of its Confirm.
+
+Two columns are on `raw_transactions` only, never in the view:
+- **deleted_at**: TIMESTAMPTZ, nullable. NULL means live.
+- **deleted_by_participant_id**: BIGINT, nullable, FK → `participants.id`
+  (`fk_raw_transactions_deleted_by`). Who deleted it. A live row can't have one
+  (`ck_raw_transactions_deleter_only_when_deleted`).
+
+A new column goes on `raw_transactions`, then into the view with `CREATE OR REPLACE VIEW`, which
+can only add columns at the end; dropping, renaming or retyping one means dropping and
+recreating the view in the same migration.
+
 ## Fields
 - **transaction_id**: UUID (Primary Key)
 - **date**: ISO 8601 string (YYYY-MM-DD). The *business* date - when the spend happened, as
@@ -136,7 +155,9 @@ One whole-cent share per person on an entry. No rows means "not split": the entr
 payer's alone. Shares add up to the entry's amount, checked in Python before the shares are
 inserted and written in the same database transaction as the entry, only when it was inserted.
 
-- **transaction_id**: TEXT, NOT NULL, FK → `transactions.transaction_id`, ON DELETE CASCADE
+- **transaction_id**: TEXT, NOT NULL, FK → `raw_transactions.transaction_id` (was
+  `transactions` until revision `0010_soft_delete`), ON DELETE CASCADE. A soft delete leaves
+  these rows in place; readers reach them through the view, so they drop out with the entry.
 - **participant_id**: BIGINT, NOT NULL, FK → `participants.id`
 - **share_cents**: BIGINT, NOT NULL, with `share_cents >= 0`
   (`ck_transaction_splits_share_not_negative`)

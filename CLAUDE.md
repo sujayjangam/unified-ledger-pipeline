@@ -188,6 +188,12 @@ Env vars (`.env.example` shows the format):
   `cleared_amounts` with a ⚠️ line. Each reply and the old prompt are deleted once read, the
   last prompt on Confirm or Cancel; a failed delete is only printed, never blocks a save. The
   expense message is never deleted.
+- `/recent` (`handle_recent_button`, ADR-0050) is stateless: each button carries an entry id
+  and a page offset, every tap reads the database fresh, and there is no pending entry or card
+  lock. The delete and undo queries change only a live or only a deleted row, so a second
+  overlapping tap changes nothing and gets a toast. Delete takes a second tap; Undo lives on the
+  "Deleted" message until it is redrawn. Any household member may delete any entry. Plain
+  text, no `parse_mode`. A failed read is an error, never "no entries".
 - `/trip_bals` ([ADR-0044](docs/decisions/0044-trip-balances-from-splits.md)) reads bills and
   settlements. Its numbered "Mark paid" buttons open separate payback cards (ADR-0046), saved
   only on Confirm. Payback taps use the directory snapshot kept with the report or card,
@@ -258,6 +264,12 @@ Env vars (`.env.example` shows the format):
   by rounding each share — splits hand out whole cents
   ([ADR-0004](docs/decisions/0004-money-as-integer-cents.md),
   [ADR-0028](docs/decisions/0028-exact-cent-conversion-half-up.md)).
+- `transactions` is a view of the live rows of `raw_transactions`
+  ([ADR-0050](docs/decisions/0050-soft-delete-behind-a-view.md)). Every read, insert and join
+  uses `transactions`; only `soft_delete_entry` and `restore_entry` name `raw_transactions`. Never
+  filter on `deleted_at` in a query: the view does it. A new column goes on `raw_transactions`,
+  then into the view (`LIVE_COLUMNS` in migration 0010 lists the current set). A delete never
+  removes a row; removing test rows for good is the hand-run query in `docs/LOCAL_TESTING.md`.
 - Alembic owns the schema; no `CREATE TABLE` in application code. Revisions are hand-written
   ([ADR-0007](docs/decisions/0007-alembic-hand-written-migrations.md)).
 - **Production is never migrated automatically**, and a merge to `main` auto-deploys. Run

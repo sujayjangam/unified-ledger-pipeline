@@ -1,6 +1,7 @@
 import truststore
 import os
 import uuid
+import datetime
 from dataclasses import replace
 from dotenv import load_dotenv
 from telegram import BotCommand, Update, InlineKeyboardButton, InlineKeyboardMarkup, ForceReply
@@ -13,7 +14,8 @@ import time
 from app.add_expense import add_expense, dollars_to_cents, format_cents
 from app.services.utils import get_sgt_now, get_week_start, get_month_start
 from app.services.ledger_queries import (
-    get_recent_entries, get_period_summary, get_category_summary, find_recent_duplicate,
+    get_recent_page, get_live_entry, soft_delete_entry, restore_entry,
+    get_period_summary, get_category_summary, find_recent_duplicate,
     get_trip_split_entries, get_trip_settlements,
 )
 from app.services.dates import apply_date_resolution
@@ -219,25 +221,266 @@ def format_category_summary(title: str, category_data: list) -> str:
 
     return "\n".join(lines).strip()
 
-async def recent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await authorize(update) is None:
-        return 
-    
-    entries = get_recent_entries(limit=5)
+# --- /recent: the latest entries, each one deletable (ADR-0050, #115) -----------------------
+#
+# Stateless on purpose: every button carries the entry's id and the page it was drawn on, and
+# every tap reads the database fresh. Nothing is pending in memory, so there is no card lock
+# here; two overlapping taps are made safe by the queries themselves (a delete changes only a
+# live row, an undo only a deleted one, so the second tap changes nothing and says so).
+#
+# Any household member may delete any entry. Every bot user is household (a database check),
+# so passing authorize() is the whole permission check.
+#
+# Sent as plain text (no parse_mode): descriptions are raw messages, and a stray _ or * in
+# one would otherwise break the whole reply.
+
+RECENT_PAGE_SIZE = 5
+RECENT_ERROR = "❌ Couldn't read the ledger, try again."
+RECENT_CHANGE_ERROR = "❌ Couldn't change the ledger, nothing was changed. Try again."
+RECENT_EMPTY = "No entries yet. 📭"
+RECENT_GONE_TOAST = "That entry is already deleted."
+RECENT_DELETED_TOAST = "Deleted."
+RECENT_RESTORED_TOAST = "Restored."
+RECENT_ALREADY_LIVE_TOAST = "That entry is already back."
+# How much of a description a list line shows. The confirm screen shows more, so you can see
+# exactly what you are deleting.
+_RECENT_LINE_DESC = 60
+_RECENT_CONFIRM_DESC = 300
+# Telegram refuses callback data over 64 bytes. Every id is a 36-character UUID today, which
+# fits; an id that wouldn't fit gets no button rather than a button that fails when tapped.
+_CALLBACK_DATA_LIMIT = 64
+
+
+def _short_text(text: str | None, limit: int) -> str:
+    text = (text or "").strip() or "(no description)"
+    return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
+
+
+def _short_date(iso: str, today) -> str:
+    """'2026-11-18' as '18 Nov', with the year only when it isn't this year. date is stored as
+    ISO text; anything that doesn't parse is shown as it is rather than hidden."""
+    try:
+        day = datetime.date.fromisoformat(iso)
+    except (TypeError, ValueError):
+        return str(iso)
+    return day.strftime("%d %b") if day.year == today.year else day.strftime("%d %b %Y")
+
+
+def _entry_title(entry: dict, today, desc_limit: int) -> str:
+    """'18 Nov · Dinner at hawker' plus markers: [Transfer], 🧳 tagged to a trip, ✂️ split."""
+    title = f"{_short_date(entry['date'], today)} · {_short_text(entry['description'], desc_limit)}"
+    # The bot records a transfer (a YouTrip top-up) as transaction_type 'Transfer', with
+    # category 'YouTrip top-up'; only very old rows say 'Transfer' in the category.
+    if "Transfer" in (entry.get("transaction_type"), entry.get("category")):
+        title += " [Transfer]"
+    if entry.get("trip_name"):
+        title += " 🧳"
+    if entry.get("split_count"):
+        title += " ✂️"
+    return title
+
+
+def _entry_amount(entry: dict) -> str:
+    return f"{entry['currency']} {format_cents(int(entry['amount']))}"
+
+
+def _logged_by(entry: dict, names: dict) -> str | None:
+    """The sender's name, or None for rows whose sender was never recorded (CLI, API, old rows)."""
+    return names.get(entry.get("entered_by_participant_id"))
+
+
+def _recent_button(label: str, data: str) -> InlineKeyboardButton | None:
+    if len(data.encode()) > _CALLBACK_DATA_LIMIT:
+        return None
+    return InlineKeyboardButton(label, callback_data=data)
+
+
+def _recent_list(entries: list, more: bool, offset: int, names: dict, today):
+    """The list message: numbered entries, one 🗑 button per entry, then Newer/Older."""
     if not entries:
-        await update.message.reply_text("No transactions found. 📭")
+        return RECENT_EMPTY, None
+    first, last = offset + 1, offset + len(entries)
+    lines = [f"📊 Recent entries ({first}–{last})", ""]
+    delete_row = []
+    for n, entry in enumerate(entries, first):
+        lines.append(f"{n}. {_entry_title(entry, today, _RECENT_LINE_DESC)}")
+        who = _logged_by(entry, names)
+        lines.append(f"   {_entry_amount(entry)}" + (f" · logged by {who}" if who else ""))
+        button = _recent_button(f"🗑 {n}", f"recent:ask:{offset}:{entry['transaction_id']}")
+        if button:
+            delete_row.append(button)
+    rows = [delete_row] if delete_row else []
+    paging = []
+    if offset > 0:
+        paging.append(InlineKeyboardButton("◂ Newer", callback_data=f"recent:page:{max(0, offset - RECENT_PAGE_SIZE)}"))
+    if more:
+        paging.append(InlineKeyboardButton("Older ▸", callback_data=f"recent:page:{offset + RECENT_PAGE_SIZE}"))
+    if paging:
+        rows.append(paging)
+    return "\n".join(lines), (InlineKeyboardMarkup(rows) if rows else None)
+
+
+def _recent_confirm(entry: dict, offset: int, names: dict, today):
+    """The second tap: the entry in full, and what deleting it changes."""
+    lines = ["Delete this entry?", "", _entry_title(entry, today, _RECENT_CONFIRM_DESC),
+             f"{_entry_amount(entry)} · {entry.get('category') or 'No category'}"]
+    tags = []
+    if entry.get("trip_name"):
+        tags.append(f"{entry['trip_name']} trip")
+    if entry.get("split_count"):
+        tags.append(f"split {entry['split_count']} ways")
+    if tags:
+        lines.append(" · ".join(tags))
+    who = _logged_by(entry, names)
+    if who:
+        lines.append(f"Logged by {who}")
+    # Only a split entry on a trip moves a trip balance; say /trip_bals only when it does.
+    leaves = "the totals and /trip_bals" if entry.get("trip_name") and entry.get("split_count") else "the totals"
+    lines += ["", f"It leaves {leaves}. You can undo it straight after."]
+    tid = entry["transaction_id"]
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("Yes, delete", callback_data=f"recent:del:{offset}:{tid}"),
+        InlineKeyboardButton("◂ Back", callback_data=f"recent:page:{offset}"),
+    ]])
+    return "\n".join(lines), keyboard
+
+
+def _recent_deleted(entry: dict, offset: int, today):
+    """After a delete: what went, with Undo. Undo lasts until this message is redrawn; after
+    that the entry never shows in /recent again (ADR-0050)."""
+    text = f"🗑 Deleted: {_entry_title(entry, today, _RECENT_LINE_DESC)}\n{_entry_amount(entry)}"
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("↩ Undo", callback_data=f"recent:undo:{offset}:{entry['transaction_id']}"),
+        InlineKeyboardButton("◂ Back to list", callback_data=f"recent:page:{offset}"),
+    ]])
+    return text, keyboard
+
+
+def _recent_list_screen(offset: int, names: dict, today):
+    """Reads one page and draws it, or None if the read failed. A page left empty by deletes
+    (offset past the end) falls back to the newest page rather than saying "no entries"."""
+    page = get_recent_page(offset, RECENT_PAGE_SIZE)
+    if page is not None and not page[0] and offset > 0:
+        offset = 0
+        page = get_recent_page(offset, RECENT_PAGE_SIZE)
+    if page is None:
+        return None
+    entries, more = page
+    return _recent_list(entries, more, offset, names, today)
+
+
+def _participant_names(directory: Directory) -> dict:
+    return {person.id: person.display_name for person in directory.participants}
+
+
+async def recent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/recent: the newest entries, with a 🗑 button for each. Nothing is typed after it."""
+    directory = await authorize(update)
+    if directory is None:
+        return
+    screen = _recent_list_screen(0, _participant_names(directory), get_sgt_now().date())
+    if screen is None:
+        await update.effective_message.reply_text(RECENT_ERROR)
+        return
+    text, keyboard = screen
+    await update.effective_message.reply_text(text, reply_markup=keyboard)
+
+
+def _parse_recent_callback(data: str):
+    """'recent:page:<offset>' or 'recent:<ask|del|undo>:<offset>:<transaction id>'.
+    Returns (action, offset, transaction id or None); raises ValueError for anything else."""
+    parts = data.split(":", 3)
+    if len(parts) < 3 or parts[0] != "recent":
+        raise ValueError("Invalid recent callback")
+    action, offset = parts[1], int(parts[2])
+    if not 0 <= offset <= 2**31 - 1:
+        raise ValueError("Invalid recent offset")
+    if action == "page" and len(parts) == 3:
+        return action, offset, None
+    if action in ("ask", "del", "undo") and len(parts) == 4 and 0 < len(parts[3]) <= _CALLBACK_DATA_LIMIT:
+        return action, offset, parts[3]
+    raise ValueError("Invalid recent callback")
+
+
+async def handle_recent_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """A tap under /recent: page, ask (first tap on 🗑), del (Yes, delete) or undo.
+
+    A callback query can be answered exactly once, so the outcome and the new screen are
+    worked out first; then one answer(), then the redraw. A failed redraw is only printed:
+    a delete or undo that committed stays committed, and the toast already said so.
+    """
+    query = update.callback_query
+    directory = await authorize(update)
+    if directory is None:
+        await query.answer()
+        return
+    sender = directory.participant_by_telegram_id(str(update.effective_user.id))
+    names = _participant_names(directory)
+    today = get_sgt_now().date()
+    toast = None
+    screen = None
+    try:
+        action, offset, transaction_id = _parse_recent_callback(query.data)
+    except ValueError as e:
+        print(f"Bad /recent button: {e}")
+        await query.answer(RECENT_ERROR)
         return
 
-    lines = ["📊 **Recent Entries**\n"]
-    for date, desc, amount_cents, currency, cat in entries:
-        amt = amount_cents / 100.0
-        # Clearly label transfers vs standard expenses
-        if cat == 'Transfer':
-            lines.append(f"• 🔄 `{date}`: {desc} (**{currency} {amt:.2f}**) [Transfer]")
+    if action == "page":
+        screen = _recent_list_screen(offset, names, today)
+        if screen is None:
+            toast = RECENT_ERROR
+
+    elif action in ("ask", "del"):
+        # Read the entry first: the confirm screen shows it, and the deleted screen needs it
+        # after the delete, when the view can no longer see it.
+        entry = get_live_entry(transaction_id)
+        if entry is None:
+            toast = RECENT_ERROR
+        elif not entry:
+            # Deleted since this was drawn, by someone else or by this tap's twin. A second
+            # "Yes, delete" must not redraw: the first tap's "Deleted" message with its Undo
+            # button is on screen, and a redraw would wipe the only way back. So a "del" gets
+            # the toast alone; an "ask" (a 🗑 on an old list) shows the fresh list.
+            toast = RECENT_GONE_TOAST
+            if action == "ask":
+                screen = _recent_list_screen(offset, names, today)
+        elif action == "ask":
+            screen = _recent_confirm(entry, offset, names, today)
         else:
-            lines.append(f"• 🛒 `{date}`: {desc} (**{currency} {amt:.2f}**)")
-            
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+            deleted = soft_delete_entry(transaction_id, sender.id)
+            if deleted is None:
+                toast = RECENT_CHANGE_ERROR
+            elif deleted:
+                toast = RECENT_DELETED_TOAST
+                screen = _recent_deleted(entry, offset, today)
+            else:
+                # Lost the race to an overlapping tap: toast only, for the same reason.
+                toast = RECENT_GONE_TOAST
+
+    else:  # undo
+        restored = restore_entry(transaction_id)
+        if restored is None:
+            toast = RECENT_CHANGE_ERROR
+        else:
+            toast = RECENT_RESTORED_TOAST if restored else RECENT_ALREADY_LIVE_TOAST
+            screen = _recent_list_screen(offset, names, today)
+            if screen is None:
+                # The undo committed; only the list couldn't be read. Drop the Undo button so
+                # it can't be mistaken for "not undone yet".
+                screen = ("↩ Restored. Send /recent to see the list.", None)
+
+    try:
+        await query.answer(toast)
+    except Exception as e:
+        print(f"Could not answer /recent tap: {e}")
+    if screen is None:
+        return
+    text, keyboard = screen
+    try:
+        await query.edit_message_text(text, reply_markup=keyboard)
+    except Exception as e:
+        print(f"Could not redraw /recent: {e}")
 
 async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await authorize(update) is None:
@@ -2150,6 +2393,7 @@ def get_application():
     app.add_handler(CallbackQueryHandler(handle_payer_button, pattern=r"^payer:"))
     app.add_handler(CallbackQueryHandler(handle_split_button, pattern=r"^split:"))
     app.add_handler(CallbackQueryHandler(handle_help_button, pattern=r"^help:"))
+    app.add_handler(CallbackQueryHandler(handle_recent_button, pattern=r"^recent:"))
     app.add_handler(CallbackQueryHandler(handle_button_click))
 
     return app
