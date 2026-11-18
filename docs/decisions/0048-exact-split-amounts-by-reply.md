@@ -15,7 +15,11 @@ Some bills split by exact amounts ("Alice paid 135, Bob's share is 90"). Today t
 sequenceDiagram
     actor U as You
     participant B as Bot
-    U->>B: tap "Set amounts" in the split menu
+    U->>B: message "Alice paid 135 split with Bob. Bob's share is 90"
+    B->>U: confirm card, ⚠️ "set exact amounts with 👥 Change split"
+    U->>B: tap "👥 Change split" (or "👥 Add split")
+    B->>U: split menu: ticked people, plus "Set amounts"
+    U->>B: tap "Set amounts"
     B-->>U: popup: "Reply with each person's amount"
     B->>U: prompt: total 135.00, one line per ticked person<br/>hint in typing box: "Alice 45, Bob rest"
     U->>B: reply "Alice 45, Bob rest"
