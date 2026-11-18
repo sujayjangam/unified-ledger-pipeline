@@ -73,6 +73,13 @@ CASES = [
     # Spoken style, as a Whisper transcript reads
     ("I spent fifteen dollars on lunch yesterday", 15, YESTERDAY),
     ("50 ringgit for dinner", 50, TODAY),
+    # Trip currencies (#120): rupiah amounts are large, and "k" shorthand is likely abroad.
+    ("Dinner 450k rupiah", 450000, TODAY),
+    ("Taxi 85000 IDR", 85000, TODAY),
+    # The card is the model's to pick from the list; the top-up category decides the wallet
+    # and Transfer rules in resolve_payment. Nothing else here checks either.
+    ("Lunch 12 on Card A", 12, TODAY),
+    ("Topup YouTrip 200", 200, TODAY),
     # Price first, then a sentence about the food. The first came back with no amount on
     # production (2026-11-18, 3 of 32 runs); the second in 15 of 24 runs on an early #112 prompt.
     ("5 for lunch. Hainanese curry rice", 5, TODAY),
@@ -89,7 +96,10 @@ CASES = [
     ("hello", None, None),
 ]
 # The currency is checked on every case with an amount: SGD unless listed here.
-CURRENCIES = {"50 ringgit for dinner": "MYR"}
+CURRENCIES = {"50 ringgit for dinner": "MYR", "Dinner 450k rupiah": "IDR", "Taxi 85000 IDR": "IDR"}
+# Checked only for the cases listed: the card picked, and the category.
+CARDS = {"Lunch 12 on Card A": "Card A"}
+CATEGORIES = {"Topup YouTrip 200": "YouTrip top-up"}
 
 
 # Each case also checks the amount ("amount"), which costs no extra call.
@@ -271,12 +281,15 @@ async def main(runs: int) -> int:
             # Only with a price: "hello" can come back with no entry at all.
             got_currency = transaction.get("currency")
             currency_ok = want_amount is None or got_currency == CURRENCIES.get(message, "SGD")
+            card_ok = message not in CARDS or transaction.get("payment_method") == CARDS[message]
+            category_ok = message not in CATEGORIES or transaction.get("category") == CATEGORIES[message]
             reading = _split_reading(transaction)
             # 0 is fine: "hello" comes back as an empty list, which the bot treats as no price.
             one = transaction.get("_count", 0) <= 1
-            if not (one and amount_ok and date_ok and currency_ok
+            if not (one and amount_ok and date_ok and currency_ok and card_ok and category_ok
                     and reading['outcome'] == 'no split' and reading["payer_name"] is None):
                 wrong.append(f"amount={got_amount} {got_currency} date={got_date} kind={reading.get('kind')} "
+                             f"card={transaction.get('payment_method')} category={transaction.get('category')} "
                              f"payer={reading['payer_name']} expenses={transaction.get('_count')}")
         right = runs - len(wrong)
         all_right = all_right and not wrong
