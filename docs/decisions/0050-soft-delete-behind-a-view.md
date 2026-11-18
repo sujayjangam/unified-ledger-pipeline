@@ -3,7 +3,7 @@
 **Status:** Proposed
 **Date:** 2026-11-18
 **Issue:** [#115](https://github.com/sujayjangam/unified-ledger-pipeline/issues/115)
-**Code:** `alembic/versions/0010_*`, `app/services/ledger_queries.py`, `app/bot_core.py::recent_command`, `scripts/` (test-entry purge)
+**Code:** `alembic/versions/0010_*`, `app/services/ledger_queries.py`, `app/bot_core.py::recent_command`, `docs/LOCAL_TESTING.md` (test-entry purge query)
 
 ## Problem
 
@@ -33,8 +33,10 @@ flowchart LR
   The unique index is on the real table, so the retry still conflicts; it returns no row through
   the view, and `add_expense` reads that as "already saved". The bot says saved, and the entry
   stays deleted: the delete was deliberate.
-- Test entries are hard-deleted from `raw_transactions` by a checked-in script, dry run unless
-  `--write`, never by typed SQL; the split rows still cascade.
+- Test entries are hard-deleted from `raw_transactions` by a written-down query, run by hand in
+  the Neon console, never an app path; the split rows still cascade.
+- Any household member may delete any entry. Undo is a button on the same card, until the card
+  is redrawn; after that a deleted entry never shows in `/recent` again.
 - Delete and undo are Telegram only. The REST API and CLI stay add-only: there is nobody to ask
   "are you sure?", the same reason they refuse a closed account.
 - A new column goes on `raw_transactions`, then into the view's column list.
