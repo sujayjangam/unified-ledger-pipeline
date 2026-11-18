@@ -233,6 +233,14 @@ async def extract_transactions(transcript_text: str, today: date, allowed_accoun
     try:
         response = await openai_client.beta.chat.completions.parse(
             model="gpt-4o-mini",
+            # Always take the most likely reading instead of drawing one at random (#120). Left
+            # unset it was 1, so the same message could read differently from one try to the
+            # next: "5 for lunch. Curry rice" lost its amount in 3 of 32 runs. 0 makes a reading
+            # consistent, not right - a wrong one is now wrong every time, which
+            # check_extraction shows in one run. It is still not a guarantee (OpenAI's servers
+            # can break near-ties differently), so no seed is set: a seed only fixes the random
+            # draws, and at 0 there are almost none.
+            temperature=0,
             messages=[
                 {"role": "system", "content": system_prompt(today, allowed_accounts)},
                 {"role": "user", "content": transcript_text}

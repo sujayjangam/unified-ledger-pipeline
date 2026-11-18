@@ -175,6 +175,15 @@ async def test_prompt_lists_exactly_the_accounts_passed_in(monkeypatch):
     assert "The only valid payment methods are: Card A, Cash." in system
 
 
+async def test_extraction_runs_at_temperature_zero(monkeypatch):
+    """The most likely reading every time, not a random draw (#120). Without it the API
+    default is 1, and the same message can read differently from one try to the next."""
+    parse = AsyncMock(side_effect=RuntimeError("stop"))
+    monkeypatch.setattr(extraction.openai_client.beta.chat.completions, "parse", parse)
+    await extraction.extract_transactions("lunch 12", date(2026, 11, 11), ["Card A"])
+    assert parse.call_args.kwargs["temperature"] == 0
+
+
 # --- What the model reads with every message (#120) -----------------------------------------
 #
 # The prompt nearly doubled while splits were built, and price-first amounts started slipping

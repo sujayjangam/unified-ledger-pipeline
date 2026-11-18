@@ -3,14 +3,19 @@
 The test suite can't do this: tests/ never makes a network call, so every test that touches
 extraction fakes the model's answer. That proves the code handles an answer correctly, but
 not that the model gives the right answer. This script fills that gap. It sends a fixed list
-of messages to GPT-4o-mini through the real extract_transactions, several times each since
-the model isn't deterministic, and reports how often each one came back right.
+of messages to GPT-4o-mini through the real extract_transactions and reports how often each
+one came back right.
+
+Extraction runs at temperature 0 (#120), so a message reads the same way nearly every time and
+one run per message is the main result. A second run only finds the rare message sitting on a
+near-tie, whose answer can still change. Calls are better spent on more different messages
+than on repeats of the same one.
 
 Run it after any change to the prompt or the schema descriptions in
 app/services/extraction.py, from the repo root:
 
-    python -m scripts.check_extraction                    # 5 runs per message
-    python -m scripts.check_extraction --runs 10
+    python -m scripts.check_extraction                    # 1 run per message
+    python -m scripts.check_extraction --runs 2           # also shows near-ties
     python -m scripts.check_extraction --only "for lunch"  # just the messages containing it
 
 It calls OpenAI with OPENAI_API_KEY from .env, one call per message per run, and prints the
@@ -319,7 +324,7 @@ async def main(runs: int) -> int:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--runs", type=int, default=5, help="runs per message (default 5)")
+    parser.add_argument("--runs", type=int, default=1, help="runs per message (default 1)")
     parser.add_argument("--only", help="run only the messages containing this text (ignoring case)")
     args = parser.parse_args()
     if not os.getenv("OPENAI_API_KEY"):

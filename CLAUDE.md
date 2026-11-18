@@ -63,6 +63,8 @@ committing doc changes or when picking work back up after a gap; otherwise check
   ([ADR-0049](docs/decisions/0049-prompt-holds-only-what-python-cant-read.md)). Class docstrings
   on the schema models are sent to the model, so notes go in `#` comments; each rule is written
   once, in its field; `tests/test_extraction.py` caps the size. Raise the cap only with a run.
+  The call runs at temperature 0, so `check_extraction` defaults to one run per message: add
+  different messages rather than more runs.
 - `scripts/migrate_to_postgres.py` can't run again but is kept on purpose as a reference. Don't
   delete it.
 

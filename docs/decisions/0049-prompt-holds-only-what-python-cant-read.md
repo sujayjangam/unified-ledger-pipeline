@@ -29,6 +29,9 @@ flowchart LR
 - `needs_review` is gone (nothing read it). `uneven` is read by Python (`says_uneven`): it only
   ever added a card warning.
 - `tests/test_extraction.py` caps the size, so growth is a deliberate change.
+- The call runs at temperature 0: the most likely reading every time, not a random draw (the
+  default was 1). Consistent, not correct, and not guaranteed, so no seed. `check_extraction`
+  now spends its calls on different messages, one run each, rather than repeats.
 
 Evidence: about 12,600 characters per request down to 8,300. The real-model run is pending,
 done by the user before merging; its results go in the PR.
@@ -38,3 +41,5 @@ done by the user before merging; its results go in the PR.
 - **Trim only the whitespace:** the repeats and dead rules were most of the growth.
 - **Drop the measured repeats too:** "ytd" failed in 3 of 10 runs with one copy.
 - **Keep `uneven` as a model field:** it can't be tested offline, and the words settle it.
+- **A seed instead of temperature 0:** a seed only fixes the random draws, and OpenAI calls it
+  best effort.
