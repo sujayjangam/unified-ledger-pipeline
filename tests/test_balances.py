@@ -6,12 +6,120 @@ from app.services.balances import (
     NO_PAYER_LINE,
     NO_SPLITS_LINE,
     Payment,
+    open_bill_shares,
     trip_payments,
     trip_balance_lines,
     unit_balances,
     unit_of,
 )
 from app.services.splits import share_out
+
+
+def bill(transaction_id, payer, splits, currency='SGD'):
+    """Give a fictional entry an id so a payback can name its shares."""
+    return dict(transaction_id=transaction_id, paid_by=payer, splits=splits, currency=currency)
+
+
+def row_payback(transaction_id='lodging', for_id=3, cents=100, **changes):
+    """Erin pays Alice on Carol's behalf, unless a case specifies otherwise."""
+    result = dict(from_id=5, to_id=1, cents=cents, currency='SGD',
+                  bills=[dict(transaction_id=transaction_id, for_id=for_id, cents=cents)])
+    result.update(changes)
+    return result
+
+
+@pytest.mark.parametrize('entries,payback,expected', [
+    ([bill('lodging', 1, {3: 100, 4: 200})], row_payback(), {(4, 1): 200}),
+    ([bill('lodging', 1, {3: 100})], row_payback(), {}),
+    ([bill('lodging', 1, {3: 100})], row_payback('deleted'), {(3, 1): 100, (1, 5): 100}),
+    ([bill('lodging', 2, {3: 100})], row_payback(), {(3, 2): 100, (1, 5): 100}),
+    ([bill('lodging', 1, {3: 100})],
+     row_payback(cents=150, bills=[dict(transaction_id='lodging', for_id=3, cents=100)]),
+     {(1, 5): 50}),
+    ([bill('lodging', 1, {3: 100})], row_payback(cents=150), {(1, 5): 50}),
+    ([bill('lodging', 1, {3: 100}), bill('car', 3, {1: 100})],
+     row_payback(), {(1, 5): 100}),
+    ([bill('lodging', None, {3: 100})], row_payback(), {(1, 5): 100}),
+    ([bill('lodging', 1, {})], row_payback(), {(1, 5): 100}),
+])
+def test_bill_rows_clear_only_their_named_line(entries, payback, expected):
+    """Unused cents return to the giver; an on-behalf payment never creates a loan."""
+    result = unit_balances(entries, {}, [payback])
+    assert result.lines == {'SGD': {(('person', debtor), creditor): cents
+                                   for (debtor, creditor), cents in expected.items()}}
+    assert sum(result.net['SGD'].values()) == 0
+
+
+def test_row_on_a_bill_in_another_currency_clears_nothing():
+    """An SGD payback naming an AUD bill must not take cents off the AUD debt: currencies
+    never net, so the row's cents are owed back to the giver in SGD and the AUD debt stays."""
+    entries = [bill('lodging', 1, {3: 100}, 'AUD')]
+    result = unit_balances(entries, {}, [row_payback()])
+    assert result.lines == {'AUD': {(('person', 3), 1): 100}, 'SGD': {(('person', 1), 5): 100}}
+    assert open_bill_shares(entries, {}, [row_payback()]) == {('lodging', 3): 100}
+
+
+def test_second_payback_for_a_paid_share_never_clears_another_bill():
+    """Carol owes Alice 100 for lodging and 200 for dinner. Erin pays Alice 100 on Carol's
+    behalf for lodging, twice: the second finds the lodging share already paid, so dinner's
+    200 stays owed and Alice owes the second 100 back to Erin."""
+    entries = [bill('lodging', 1, {3: 100}), bill('dinner', 1, {3: 200})]
+    twice = [row_payback(), row_payback()]
+    result = unit_balances(entries, {}, twice)
+    assert result.lines == {'SGD': {(('person', 3), 1): 200, (('person', 1), 5): 100}}
+    assert open_bill_shares(entries, {}, twice) == {('dinner', 3): 200}
+
+
+def test_empty_bill_rows_keep_the_old_family_payback():
+    """An explicit empty list is the same old beneficiary-first payback."""
+    entries = [bill('lodging', 1, {3: 100, 4: 200})]
+    payment = dict(from_id=5, to_id=1, for_id=3, cents=250, currency='SGD')
+    families = {3: 'Lee', 4: 'Lee'}
+    assert unit_balances(entries, families, [payment]) == unit_balances(
+        entries, families, [dict(payment, bills=[])])
+
+
+def test_open_shares_are_gross_and_rows_touch_only_the_named_bill():
+    """Netting changes the report, while the gross lodging and car shares stay separate."""
+    entries = [bill('lodging', 1, {1: 100, 2: 100, 3: 0}), bill('car', 2, {1: 50}),
+               bill('dinner', 1, {2: 30}), bill('unknown', None, {2: 20})]
+    assert open_bill_shares(iter(entries), {}) == {('lodging', 2): 100, ('car', 1): 50, ('dinner', 2): 30}
+    payment = row_payback(for_id=2, cents=120)
+    assert open_bill_shares(entries, {}, [payment, payment]) == {('car', 1): 50, ('dinner', 2): 30}
+
+
+@pytest.mark.parametrize('transaction_id', ['missing', 'car', 'unknown'])
+def test_ineligible_rows_leave_open_shares_alone(transaction_id):
+    """Deleted, differently paid and payerless bills cannot consume another open share."""
+    entries = [bill('lodging', 1, {3: 100}), bill('car', 2, {3: 100}),
+               bill('unknown', None, {3: 100})]
+    assert open_bill_shares(entries, {}, [row_payback(transaction_id)]) == {
+        ('lodging', 3): 100, ('car', 3): 100}
+
+
+def test_old_payback_uses_oldest_receiver_bills_and_netted_amount():
+    """Only the 80 net cents cleared are allocated, in entry order and the same currency."""
+    entries = [bill('other', 2, {3: 50}), bill('aud', 1, {3: 50}, 'AUD'),
+               bill('old', 1, {3: 60}), bill('new', 1, {3: 70}), bill('opposite', 3, {1: 50})]
+    payment = dict(from_id=3, to_id=1, cents=100, currency='SGD')
+    assert open_bill_shares(entries, {}, [payment]) == {
+        ('other', 3): 50, ('aud', 3): 50, ('new', 3): 50, ('opposite', 1): 50}
+
+
+def test_family_payback_shares_follow_beneficiary_then_size_then_id():
+    """Carol's own smaller share goes first; ties between the remaining members use id."""
+    entries = [bill('old', 1, {3: 20, 4: 100, 5: 100}), bill('new', 1, {3: 30})]
+    payment = dict(from_id=6, to_id=1, for_id=3, cents=180, currency='SGD')
+    assert open_bill_shares(entries, {3: 'Lee', 4: 'Lee', 5: 'Lee'}, [payment]) == {('old', 5): 70}
+
+
+def test_mixed_paybacks_replay_in_order_without_negative_shares():
+    """An old payback consumes only debt remaining after the earlier named allocation."""
+    entries = [bill('old', 1, {3: 50}), bill('new', 1, {3: 100})]
+    named = row_payback('new', cents=80)
+    old = dict(from_id=3, to_id=1, cents=60, currency='SGD')
+    assert open_bill_shares(entries, {}, [named, old]) == {('new', 3): 10}
+    assert open_bill_shares(entries, {}, [named, old, old]) == {}
 
 
 def entry(paid_by, splits, currency='SGD'):
@@ -76,7 +184,7 @@ def test_gift_clears_only_beneficiary_line(paid, remaining):
     assert sum(unit_balances(entries, families, [gift]).net['SGD'].values()) == 0
     report = '\n'.join(trip_balance_lines(entries, {1: 'Ann', 2: 'Joe', 3: 'Max'},
                                           families, settlements=[gift]))
-    assert f'Max paid Ann {paid / 100:.2f} SGD for J family' in report
+    assert f'Max paid Ann {paid / 100:.2f} SGD on behalf of J family' in report
 
 
 def test_gift_for_the_receivers_relative_clears_their_line():
@@ -398,10 +506,10 @@ def test_each_persons_total_is_what_they_paid_less_what_they_owe():
         assert set(apply_payments(net, payments, families).values()) <= {0}
 
 
-@pytest.mark.parametrize('giver,note', [(3, ' for Bob'), (4, ' for Bob'), (2, '')])
+@pytest.mark.parametrize('giver,note', [(3, ' on behalf of Bob'), (4, ' on behalf of Bob'), (2, '')])
 def test_payback_history_names_the_line_it_cleared(giver, note):
     """Bob owes his relative Alice. Carol (also family) or Max (outside) paying it is noted
-    "for Bob", not "for Tan family"; Bob paying his own line has no note."""
+    "on behalf of Bob", not "on behalf of Tan family"; Bob paying his own line has no note."""
     families = {1: 'Tan', 2: 'Tan', 3: 'Tan', 4: 'J'}
     names = {1: 'Alice', 2: 'Bob', 3: 'Carol', 4: 'Max'}
     payback = dict(from_id=giver, to_id=1, for_id=2 if giver != 2 else None, cents=3000, currency='SGD')

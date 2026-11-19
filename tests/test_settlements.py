@@ -111,7 +111,7 @@ async def test_gift_menu_snapshot_switch_and_confirm(flow, monkeypatch):
     await bot.handle_settle_button(update, flow)
     gift = flow.user_data['pending_settlements'][20]
     assert gift['for_id'] == 3 and gift['debtor_member_ids'] == (3,)
-    assert 'From: Bob, paying for Lee family (a gift: nobody will owe Bob)' in query.edit_message_text.await_args.args[0]
+    assert 'From: Bob, on behalf of Lee family' in query.edit_message_text.await_args.args[0]
     update, query = tap('settle:person:3')
     await bot.handle_settle_button(update, flow)
     assert flow.user_data['pending_settlements'][20]['for_id'] is None
@@ -158,7 +158,7 @@ def test_overpaid_gift_names_giver_and_handles_lone_debtor():
     for family, label in [('Lee', 'Lee family'), ('Cedar Grove', 'Cedar Grove'), (None, 'Carol')]:
         text = settlements.settlement_card_text(card(from_id=2, for_id=3, family=family,
                                                     clears_cents=4000, paid_cents=4000))
-        assert f'From: Bob, paying for {label} (a gift: nobody will owe Bob)' in text
+        assert f'From: Bob, on behalf of {label}' in text
         assert 'owed back to Bob.' in text
 
 
@@ -357,6 +357,80 @@ def write_args(**changes):
     return result
 
 
+@pytest.mark.parametrize('bills', [
+    [dict(transaction_id='bill', for_id=3, cents=cents)] for cents in (0, -1, True, 1.5, '100', None)
+] + [
+    [dict(transaction_id='bill', for_id=3, cents=100)] * 2,
+    [dict(transaction_id='bill', for_id=3, cents=1001)],
+    [dict(transaction_id='bill', for_id=3, cents=600), dict(transaction_id='bill', for_id=4, cents=500)],
+])
+def test_bill_validation_precedes_connection(monkeypatch, bills):
+    """Stored shares must be positive integer cents, unique, and no more than the payback."""
+    connect = MagicMock()
+    monkeypatch.setattr(settlements, 'get_connection', connect)
+    with pytest.raises(ValueError):
+        settlements.add_settlement(**write_args(bills=iter(bills)))
+    connect.assert_not_called()
+
+
+@pytest.mark.parametrize('inserted', [True, False])
+def test_bill_rows_share_the_settlement_commit_only_on_insert(monkeypatch, inserted):
+    """One handover and all its shares are saved atomically; retries attach nothing."""
+    manager = MagicMock()
+    conn = manager.__enter__.return_value
+    conn.execute.return_value.rowcount = int(inserted)
+    conn.execute.return_value.scalar_one.return_value = 42
+    monkeypatch.setattr(settlements, 'get_connection', lambda: manager)
+    bills = [dict(transaction_id='lodging', for_id=3, cents=300),
+             dict(transaction_id='lodging', for_id=4, cents=400)]
+    assert settlements.add_settlement(**write_args(bills=iter(bills))) is inserted
+    assert conn.execute.call_count == (2 if inserted else 1)
+    sql, params = conn.execute.call_args_list[0].args
+    assert 'RETURNING id' in str(sql) and params['clears_cents'] == 1000
+    if inserted:
+        sql, params = conn.execute.call_args_list[1].args
+        assert 'INSERT INTO settlement_bills' in str(sql)
+        assert params == [dict(settlement_id=42, **bill) for bill in bills]
+    else:
+        conn.execute.return_value.scalar_one.assert_not_called()
+    assert [call[0] for call in conn.method_calls] == ['execute'] * (2 if inserted else 1) + ['commit']
+    conn.commit.assert_called_once_with()
+
+
+def test_bill_insert_failure_does_not_commit(monkeypatch):
+    """A failed allocation leaves the connection to roll back the handover too."""
+    manager = MagicMock()
+    conn = manager.__enter__.return_value
+    conn.execute.side_effect = [MagicMock(rowcount=1), RuntimeError('offline')]
+    monkeypatch.setattr(settlements, 'get_connection', lambda: manager)
+    with pytest.raises(RuntimeError):
+        settlements.add_settlement(**write_args(bills=[dict(transaction_id='bill', for_id=3, cents=100)]))
+    conn.commit.assert_not_called()
+
+
+def test_trip_paybacks_include_ordered_bill_rows_and_fail_closed(monkeypatch):
+    """Both reads share one connection, and a failed bill read is not an empty payback."""
+    manager = MagicMock()
+    conn = manager.__enter__.return_value
+    rows, bills = MagicMock(), MagicMock()
+    rows.mappings.return_value.all.return_value = [dict(id=2), dict(id=1)]
+    bills.mappings.return_value.all.return_value = [
+        dict(settlement_id=1, transaction_id='a', for_id=3, cents=100),
+        dict(settlement_id=1, transaction_id='b', for_id=4, cents=200),
+    ]
+    conn.execute.side_effect = [rows, bills]
+    connect = MagicMock(return_value=manager)
+    monkeypatch.setattr(ledger_queries, 'get_connection', connect)
+    assert ledger_queries.get_trip_settlements(7) == [dict(id=2, bills=[]), dict(id=1, bills=[
+        dict(transaction_id='a', for_id=3, cents=100), dict(transaction_id='b', for_id=4, cents=200)])]
+    connect.assert_called_once_with()
+    sql, params = conn.execute.call_args.args
+    assert 'ORDER BY b.settlement_id, b.transaction_id, b.for_participant_id' in str(sql)
+    assert 's.trip_id = :trip_id' in str(sql) and params == {'trip_id': 7}
+    conn.execute.side_effect = [rows, RuntimeError('offline')]
+    assert ledger_queries.get_trip_settlements(7) is None
+
+
 @pytest.mark.parametrize('changes', [dict(clears_amount='0'), dict(paid_amount='-1'),
                                      dict(to_id=1), dict(for_id=2), dict(paid_amount='11')])
 def test_writer_validates_before_connecting(monkeypatch, changes):
@@ -392,10 +466,13 @@ def test_read_shape_order_and_failure(monkeypatch):
     conn = manager.__enter__.return_value
     row = dict(id=1, date=date(2026, 11, 17), from_id=1, to_id=2, for_id=3, cents=1000,
                currency='AUD', paid_cents=900, paid_currency='SGD')
-    conn.execute.return_value.mappings.return_value.all.return_value = [row]
+    results = [MagicMock(), MagicMock()]
+    results[0].mappings.return_value.all.return_value = [row]
+    results[1].mappings.return_value.all.return_value = []
+    conn.execute.side_effect = results
     monkeypatch.setattr(ledger_queries, 'get_connection', lambda: manager)
-    assert ledger_queries.get_trip_settlements(7) == [row]
-    sql, params = conn.execute.call_args.args
+    assert ledger_queries.get_trip_settlements(7) == [dict(row, bills=[])]
+    sql, params = conn.execute.call_args_list[0].args
     assert 'for_participant_id AS for_id' in str(sql)
     assert 'ORDER BY date, created_at, id' in str(sql) and params == {'trip_id': 7}
     conn.execute.side_effect = RuntimeError('offline')

@@ -194,7 +194,10 @@ def get_category_summary(start_date: str, end_date: str):
 
 
 def get_trip_settlements(trip_id: int):
-    """Read paybacks oldest first; None means failure, not an already settled trip."""
+    """Read paybacks oldest first with ordered bill rows (empty for old paybacks).
+
+    Either read failing returns None, never an apparently settled trip.
+    """
     try:
         with get_connection() as conn:
             rows = conn.execute(text('''
@@ -204,7 +207,17 @@ def get_trip_settlements(trip_id: int):
                 FROM settlements WHERE trip_id = :trip_id
                 ORDER BY date, created_at, id
             '''), {"trip_id": trip_id}).mappings().all()
-            return [dict(row) for row in rows]
+            paybacks = {row['id']: dict(row, bills=[]) for row in rows}
+            bills = conn.execute(text('''
+                SELECT b.settlement_id, b.transaction_id, b.for_participant_id AS for_id, b.cents
+                FROM settlement_bills b JOIN settlements s ON s.id = b.settlement_id
+                WHERE s.trip_id = :trip_id
+                ORDER BY b.settlement_id, b.transaction_id, b.for_participant_id
+            '''), {"trip_id": trip_id}).mappings().all()
+            for bill in bills:
+                paybacks[bill['settlement_id']]['bills'].append(
+                    {key: bill[key] for key in ('transaction_id', 'for_id', 'cents')})
+            return list(paybacks.values())
     except Exception as e:
         print(f"Could not read trip paybacks: {e}")
         return None

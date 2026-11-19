@@ -146,7 +146,9 @@ delete them in the bot first, then run this by hand in the Neon console's SQL ed
 code or script does this, on purpose.
 
 It removes only rows that are already deleted, and only those deleted since the time you give,
-so a live entry can never go. Their split rows go with them (`ON DELETE CASCADE`).
+so a live entry can never go. Their split rows go with them (`ON DELETE CASCADE`). Payback
+bill rows (`settlement_bills`) have no cascade, so step 2 removes those first; the paybacks
+themselves stay.
 
 ```sql
 -- 1. Look first. Set the time to just before you started deleting (Singapore time).
@@ -157,6 +159,14 @@ WHERE deleted_at IS NOT NULL
 ORDER BY deleted_at;
 
 -- 2. If that list is exactly the test entries, remove them. RETURNING lists what went.
+DELETE FROM settlement_bills
+WHERE transaction_id IN (
+  SELECT transaction_id FROM raw_transactions
+  WHERE deleted_at IS NOT NULL
+    AND deleted_at >= TIMESTAMPTZ '2026-11-18 14:00 +08'
+)
+RETURNING settlement_id, transaction_id, for_participant_id, cents;
+
 DELETE FROM raw_transactions
 WHERE deleted_at IS NOT NULL
   AND deleted_at >= TIMESTAMPTZ '2026-11-18 14:00 +08'

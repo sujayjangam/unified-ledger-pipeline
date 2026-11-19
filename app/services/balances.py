@@ -42,28 +42,10 @@ def unit_balances(entries, families: dict, settlements=()) -> Balances:
     """Debts per person from the bills, less paybacks, then rolled up to families.
 
     Entries contain currency, paid_by and splits ({person id: whole cents}).
-    Settlements contain from_id, to_id, cents, currency and optional for_id.
+    Settlements contain from_id, to_id, cents, currency and optional for_id and bills.
     Keep empty currencies to distinguish settled bills from no bills.
     """
-    # {currency: {(debtor id, creditor id): cents}}. Between any two people at most one
-    # direction is ever stored, because _owe nets each new debt against the opposite one.
-    debts: dict = {}
-    no_payer = []
-    for entry in entries:
-        if not entry.get("splits"):
-            continue
-        payer = entry.get("paid_by")
-        if payer is None:
-            no_payer.append(entry)
-            continue
-        owed = debts.setdefault(entry["currency"], {})
-        for sharer, cents in entry["splits"].items():
-            # Your own share of a bill you paid is nothing owed. Every other share is owed
-            # to the payer, whatever family the sharer is in.
-            if sharer != payer:
-                _owe(owed, sharer, payer, cents)
-    for settlement in settlements:
-        _pay_back(debts.setdefault(settlement["currency"], {}), settlement, families)
+    debts, no_payer, _ = _fold_debts(entries, families, settlements)
     net, lines = {}, {}
     for currency, owed in debts.items():
         people: dict = {}
@@ -76,6 +58,97 @@ def unit_balances(entries, families: dict, settlements=()) -> Balances:
         net[currency] = {("person", pid): cents for pid, cents in people.items() if cents}
         lines[currency] = rolled
     return Balances(net=net, lines=lines, no_payer=tuple(no_payer))
+
+
+def open_bill_shares(entries, families: dict, settlements=()) -> dict:
+    """Positive cents still owed on each (transaction_id, person id), in entry order.
+
+    Shares start gross: opposite debts never cancel at bill level. For the Tans (Alice,
+    Bob), Lees (Carol, Dave), and Ngs (Erin, Frank), suppose Bob owes Alice 100 for lodging
+    and Alice owes Bob 50 for a car. Bob's lodging share starts at 100 although his net
+    line is 50. A row paying 100 on that lodging removes its 100 gross cents; only 50
+    clears the net line, and the other 50 is owed back to the giver.
+
+    Replay paybacks in the given order through the same netted debts as unit_balances.
+    Eligible bill rows reduce only their own shares, at most to zero; missing bills or
+    bills paid by someone other than the receiver clear nothing. An old payback without
+    rows reduces the shares of each debtor _pay_back actually cleared, oldest receiver-paid
+    bill first (the supplied entry order), in the payback's currency. A family payback
+    thus uses the same beneficiary-first order as the balance report. By contrast, a bill
+    row for Carol paying Alice on Erin's behalf clears only Erin's named share, never
+    Dave's or Frank's.
+    """
+    _, _, shares = _fold_debts(entries, families, settlements)
+    return {key: cents for key, cents in shares.items() if cents > 0}
+
+
+def _fold_debts(entries, families: dict, settlements):
+    """Replay one debt fold for both the report and the gross bill-share view."""
+    # {currency: {(debtor id, creditor id): cents}}. Between any two people at most one
+    # direction is ever stored, because _owe nets each new debt against the opposite one.
+    debts: dict = {}
+    no_payer = []
+    payer_of, currency_of, shares = {}, {}, {}
+    for entry in entries:
+        if not entry.get("splits"):
+            continue
+        payer = entry.get("paid_by")
+        if payer is None:
+            no_payer.append(entry)
+            continue
+        owed = debts.setdefault(entry["currency"], {})
+        transaction_id = entry.get('transaction_id')
+        if transaction_id is not None:
+            payer_of[transaction_id] = payer
+            currency_of[transaction_id] = entry['currency']
+        for sharer, cents in entry["splits"].items():
+            # Your own share of a bill you paid is nothing owed. Every other share is owed
+            # to the payer, whatever family the sharer is in.
+            if sharer != payer:
+                _owe(owed, sharer, payer, cents)
+                if transaction_id is not None:
+                    shares[(transaction_id, sharer)] = cents
+    for settlement in settlements:
+        owed = debts.setdefault(settlement["currency"], {})
+        if settlement.get('bills'):
+            # Each row is capped by what is still open on its own share, before it touches a
+            # debt line. Without the cap, a second payback naming the same (already paid)
+            # share would spill over onto the person's other bills to the same receiver,
+            # instead of being owed back to the giver.
+            allocations = []
+            for row in _eligible_bills(settlement, payer_of, currency_of):
+                key = (row['transaction_id'], row['for_id'])
+                capped = min(row['cents'], shares.get(key, 0))
+                if capped:
+                    shares[key] -= capped
+                    allocations.append((row['for_id'], capped))
+            _pay_back(owed, settlement, families, allocations)
+        else:
+            cleared = _pay_back(owed, settlement, families)
+            for debtor, cents in cleared.items():
+                for key in shares:
+                    transaction_id, sharer = key
+                    if (sharer == debtor and payer_of[transaction_id] == settlement['to_id']
+                            and currency_of[transaction_id] == settlement['currency']):
+                        used = min(cents, shares[key])
+                        shares[key] -= used
+                        cents -= used
+                        if not cents:
+                            break
+    return debts, no_payer, shares
+
+
+def _eligible_bills(settlement: dict, payer_of: dict, currency_of: dict):
+    """Only a counted bill paid by the receiver, in the payback's currency, can clear a row.
+
+    Paid by someone else: that needs #129's offset rows. Another currency: the row would
+    take cents off a debt in a different currency, which can never be netted (no FX here).
+    """
+    for row in settlement['bills']:
+        payer = payer_of.get(row['transaction_id'])
+        if (payer is not None and payer == settlement['to_id']
+                and currency_of.get(row['transaction_id']) == settlement['currency']):
+            yield row
 
 
 def _owe(owed: dict, debtor: int, creditor: int, cents: int) -> None:
@@ -91,7 +164,7 @@ def _owe(owed: dict, debtor: int, creditor: int, cents: int) -> None:
         owed[(creditor, debtor)] = -left
 
 
-def _pay_back(owed: dict, settlement: dict, families: dict) -> None:
+def _pay_back(owed: dict, settlement: dict, families: dict, allocations=None) -> dict:
     """Take one payback off the line it pays, person by person.
 
     The line is "the beneficiary's unit owes the receiver": the beneficiary is for_id on a
@@ -99,25 +172,36 @@ def _pay_back(owed: dict, settlement: dict, families: dict) -> None:
     A family line is the sum of its members' debts to the receiver, so the payback clears
     the beneficiary's own debt first, then the other members', largest first, ties to the
     lowest id. That only decides whose name is under the family; the family total is the same.
-    Anything left over is owed back to whoever handed the money over.
+    A payback with bill rows passes `allocations` instead: [(person id, cents)], already
+    capped by each named share (see _fold_debts), and each clears only that person's line
+    to the receiver. Anything left over is owed back to whoever handed the money over.
+    Return {debtor id: cents cleared} so old paybacks use this same order when allocated
+    to bills.
     """
     giver, receiver = settlement["from_id"], settlement["to_id"]
-    beneficiary = settlement.get("for_id")
-    beneficiary = giver if beneficiary is None else beneficiary
-    unit = debtor_unit(beneficiary, receiver, families)
-    members = [debtor for debtor, creditor in owed
-               if creditor == receiver and debtor_unit(debtor, receiver, families) == unit]
-    members.sort(key=lambda debtor: (debtor != beneficiary, -owed[(debtor, receiver)], debtor))
+    if allocations is None:
+        beneficiary = settlement.get("for_id")
+        beneficiary = giver if beneficiary is None else beneficiary
+        unit = debtor_unit(beneficiary, receiver, families)
+        members = [debtor for debtor, creditor in owed
+                   if creditor == receiver and debtor_unit(debtor, receiver, families) == unit]
+        members.sort(key=lambda debtor: (debtor != beneficiary, -owed[(debtor, receiver)], debtor))
+        allocations = [(debtor, settlement['cents']) for debtor in members]
     left = settlement["cents"]
-    for debtor in members:
-        cleared = min(left, owed[(debtor, receiver)])
+    cleared_by = {}
+    for debtor, cents in allocations:
+        cleared = min(left, cents, owed.get((debtor, receiver), 0))
+        if not cleared:
+            continue
         owed[(debtor, receiver)] -= cleared
         if not owed[(debtor, receiver)]:
             del owed[(debtor, receiver)]
         left -= cleared
+        cleared_by[debtor] = cleared_by.get(debtor, 0) + cleared
     if left:
-        # Even a gift's excess belongs to whoever actually handed it over.
+        # A payment on someone's behalf still returns excess to whoever handed it over.
         _owe(owed, receiver, giver, left)
+    return cleared_by
 
 
 def debtor_unit(debtor: int, creditor: int, families: dict) -> tuple:
@@ -243,18 +327,18 @@ def trip_balance_lines(entries, names: dict, families: dict, show_members: bool 
             for s in paid_back:
                 handed = (f" (as {format_cents(s['paid_cents'])} {s['paid_currency']})"
                           if s.get("paid_currency", currency) != currency else "")
-                # Name the line the payment cleared, as the receiver sees it: "for Bob" when Bob
-                # is the receiver's relative (a person line), "for Lee family" otherwise. No
+                # Name whose line was paid: "on behalf of Bob" when Bob is the receiver's
+                # relative (a person line), "on behalf of Lee family" otherwise. No
                 # note when the giver pays a line they are part of.
                 beneficiary = s.get('for_id')
                 cleared = (debtor_unit(beneficiary, s['to_id'], families)
                            if beneficiary is not None else None)
-                gift = (f" for {unit_name(cleared)}"
+                on_behalf = (f" on behalf of {unit_name(cleared)}"
                         if cleared is not None and
                         debtor_unit(s['from_id'], s['to_id'], families) != cleared else "")
                 when = f", {s['date'].day} {s['date']:%b}" if s.get("date") else ""
                 lines.append(f" • {person(s['from_id'])} paid {person(s['to_id'])} "
-                             f"{format_cents(s['cents'])} {currency}{gift}{handed}{when}")
+                             f"{format_cents(s['cents'])} {currency}{on_behalf}{handed}{when}")
     if not lines:
         lines.append(NO_SPLITS_LINE)
     if result.no_payer:

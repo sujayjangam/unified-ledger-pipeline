@@ -10,11 +10,13 @@ from app.services.currencies import ISO_4217
 
 def add_settlement(*, from_id, to_id, clears_amount, clears_currency, paid_amount,
                    paid_currency, date, source, idempotency_key, trip_id=None,
-                   entered_by_participant_id=None, note=None, for_id=None) -> bool:
+                   entered_by_participant_id=None, note=None, for_id=None, bills=()) -> bool:
     """Insert once, returning False for a retry already saved; database errors propagate.
 
     Callers supply decimal amounts, as text where possible. Both pass through the same
     cents conversion as expenses, so the loader and the bot cannot round differently.
+    Bill-row cents are whole cents computed from stored shares, never typed money, so
+    they do not pass through dollars_to_cents. Any amount beyond the rows is an overpayment.
     """
     clears_cents = dollars_to_cents(clears_amount)
     paid_cents = dollars_to_cents(paid_amount)
@@ -22,6 +24,17 @@ def add_settlement(*, from_id, to_id, clears_amount, clears_currency, paid_amoun
         raise ValueError("A payback needs two different people")
     if clears_currency == paid_currency and clears_cents != paid_cents:
         raise ValueError("Amounts in the same currency must match")
+    bills = tuple(bills)
+    seen = set()
+    for bill in bills:
+        if not isinstance(bill['cents'], int) or isinstance(bill['cents'], bool) or bill['cents'] <= 0:
+            raise ValueError("Bill cents must be positive whole cents")
+        key = (bill['transaction_id'], bill['for_id'])
+        if key in seen:
+            raise ValueError("A bill share cannot appear twice")
+        seen.add(key)
+    if sum(bill['cents'] for bill in bills) > clears_cents:
+        raise ValueError("Bill shares exceed the amount cleared")
     params = dict(for_id=for_id, trip_id=trip_id, from_id=from_id, to_id=to_id, clears_cents=clears_cents,
                   clears_currency=clears_currency, paid_cents=paid_cents,
                   paid_currency=paid_currency, date=date, source=source, note=note,
@@ -34,9 +47,17 @@ def add_settlement(*, from_id, to_id, clears_amount, clears_currency, paid_amoun
             ) VALUES (
                 :trip_id, :from_id, :to_id, :for_id, :clears_cents, :clears_currency,
                 :paid_cents, :paid_currency, :date, :source, :note, :entered_by_participant_id, :idempotency_key
-            ) ON CONFLICT (idempotency_key) DO NOTHING
+            ) ON CONFLICT (idempotency_key) DO NOTHING RETURNING id
         '''), params)
         inserted = result.rowcount == 1
+        if inserted and bills:
+            settlement_id = result.scalar_one()
+            # A saved retry must not attach rows again; both inserts commit together.
+            conn.execute(text('''
+                INSERT INTO settlement_bills (settlement_id, transaction_id, for_participant_id, cents)
+                VALUES (:settlement_id, :transaction_id, :for_id, :cents)
+            '''), [dict(settlement_id=settlement_id, transaction_id=bill['transaction_id'],
+                       for_id=bill['for_id'], cents=bill['cents']) for bill in bills])
         conn.commit()
     return inserted
 
@@ -53,7 +74,7 @@ def settlement_card_text(card: dict) -> str:
     from_line = payer
     if card.get('for_id') is not None:
         label = (f"{family} family" if len(family.split()) == 1 else family) if family else card['names'][card['for_id']]
-        from_line += f", paying for {label} (a gift: nobody will owe {payer})"
+        from_line += f", on behalf of {label}"
     elif family:
         label = f"{family} family" if len(family.split()) == 1 else family
         from_line += f" ({label})"
