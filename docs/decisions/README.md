@@ -58,6 +58,7 @@ supersedes the old one rather than editing history.
 | [0048](0048-exact-split-amounts-by-reply.md) | Exact split amounts, typed as a reply | Accepted | 2026-11-18 |
 | [0049](0049-prompt-holds-only-what-python-cant-read.md) | The extraction prompt holds only what Python can't read from the words | Accepted | 2026-11-18 |
 | [0050](0050-soft-delete-behind-a-view.md) | Deleted entries are marked, and a view hides them | Accepted | 2026-11-18 |
+| [0051](0051-debts-per-person-then-families.md) | Debts are worked out per person, then rolled up to families | Proposed | 2026-11-19 |
 
 ## Writing a new one
 
