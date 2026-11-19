@@ -25,15 +25,17 @@ is tried on a Neon branch with a fictional trip-sized directory first.
 
 **Next up**, in this order:
 
-1. Record which bill a payback was for, so a bill can be marked paid off
-   ([#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113)).
-2. Clearer "Mark paid" buttons than "Mark paid 1, 2, 3"
-   ([#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114)).
-3. Trip balances: show debts inside a family, then route a debt to save a payment, only along
-   an existing debt line
-   ([#127](https://github.com/sujayjangam/unified-ledger-pipeline/issues/127): sub-issues
-   [#128](https://github.com/sujayjangam/unified-ledger-pipeline/issues/128),
-   [#129](https://github.com/sujayjangam/unified-ledger-pipeline/issues/129)).
+1. Settling up redesigned: one "Settle up" button instead of "Mark paid 1, 2, 3", each payback
+   linked to the bills it clears, no "gift" wording
+   ([#134](https://github.com/sujayjangam/unified-ledger-pipeline/issues/134), which takes in
+   [#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113) and
+   [#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114)). **No design is
+   agreed yet**: agree the screens and the input (buttons, a typed message, or both) first,
+   as an ADR, before any code.
+2. Simplify trip debts to the fewest payments, only along existing debt lines
+   ([#129](https://github.com/sujayjangam/unified-ledger-pipeline/issues/129), the last part of
+   [#127](https://github.com/sujayjangam/unified-ledger-pipeline/issues/127); rule in
+   [ADR-0051](docs/decisions/0051-debts-per-person-then-families.md)).
 
 Later: load a finished trip's hand-kept spreadsheet as real bills, and work out the trip from the
 message itself for costs logged before it starts.
@@ -52,6 +54,13 @@ message itself for costs logged before it starts.
 - Aliases per sender ("dad", "mummy"; see Phase 1 below).
 
 **Recently shipped**, newest first. Each PR and ADR has the full story.
+
+- **2026-11-19: trip debts worked out per person, then rolled up to families**
+  ([#128](https://github.com/sujayjangam/unified-ledger-pipeline/issues/128), PR
+  [#133](https://github.com/sujayjangam/unified-ledger-pipeline/pull/133),
+  [ADR-0051](docs/decisions/0051-debts-per-person-then-families.md)). Relatives who paid for
+  each other now settle up too ("Bob pays Alice"), two families' debts to different people no
+  longer cancel, and anyone but the receiver can pay on someone's behalf. No migration.
 
 - **2026-11-18: delete and undo saved entries from `/recent`**
   ([#115](https://github.com/sujayjangam/unified-ledger-pipeline/issues/115), PR
@@ -154,9 +163,11 @@ message itself for costs logged before it starts.
   has a first pass on the local branch `chore/pin-dependencies-27`.
 
 **Open top-level issues:**
+[#134](https://github.com/sujayjangam/unified-ledger-pipeline/issues/134) settle-up redesign, with
 [#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113) and
-[#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114) trip follow-ups (next up) ·
-[#127](https://github.com/sujayjangam/unified-ledger-pipeline/issues/127) trip balances hide debts inside a family (next up) ·
+[#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114) (next up, design first) ·
+[#127](https://github.com/sujayjangam/unified-ledger-pipeline/issues/127) trip balances, [#129](https://github.com/sujayjangam/unified-ledger-pipeline/issues/129) left (next up) ·
+[#132](https://github.com/sujayjangam/unified-ledger-pipeline/issues/132) early ADRs too long ·
 [#122](https://github.com/sujayjangam/unified-ledger-pipeline/issues/122) Python-only split reader (after the trip) ·
 [#83](https://github.com/sujayjangam/unified-ledger-pipeline/issues/83) cards from Telegram ·
 [#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27) unpinned dependencies (Phase 1) ·
