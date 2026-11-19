@@ -46,12 +46,16 @@ is tried on a Neon branch with a fictional trip-sized directory first.
 2. Simplify trip debts to the fewest payments, only along existing debt lines
    ([#129](https://github.com/sujayjangam/unified-ledger-pipeline/issues/129), the last part of
    [#127](https://github.com/sujayjangam/unified-ledger-pipeline/issues/127); rule in
-   [ADR-0051](docs/decisions/0051-debts-per-person-then-families.md)). In progress. Decided
-   2026-11-19: loops of debts cancel too, so paying a shortened amount clears it, and each
-   shortcut gets a 💡 note line under "To settle".
-   Required (decided 2026-11-19), in its own PR after #129: offset rows (ADR-0052) that mark
-   the bills on a shortened line as paid when it is paid, so the settle card's bill list
-   matches `/trip_bals`, and a shortcut paid by any family member clears in full.
+   [ADR-0051](docs/decisions/0051-debts-per-person-then-families.md)). Done 2026-11-19
+   ([#144](https://github.com/sujayjangam/unified-ledger-pipeline/pull/144)): loops of debts
+   cancel too, and each shortcut gets a 💡 note line under "To settle".
+   Required before the freeze, in its own PR: offset rows (ADR-0052,
+   [#145](https://github.com/sujayjangam/unified-ledger-pipeline/issues/145)) that mark the
+   bills on a shortened line as paid when it is paid, so the settle card's bill list matches
+   `/trip_bals`, and a shortcut paid by any family member clears in full. Worked out again
+   from the bills when the payback card opens, kept on the card, never stored. Built on `feat/offset-rows` (2026-11-20, gate green, not
+   yet pushed); before merging, a read-only check that no saved payback already has a row on a
+   bill its receiver didn't pay.
 
 Later: load a finished trip's hand-kept spreadsheet as real bills, and work out the trip from the
 message itself for costs logged before it starts.
@@ -182,7 +186,7 @@ message itself for costs logged before it starts.
 [#134](https://github.com/sujayjangam/unified-ledger-pipeline/issues/134) settle-up redesign, with
 [#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113) and
 [#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114) (next up, design first) ·
-[#127](https://github.com/sujayjangam/unified-ledger-pipeline/issues/127) trip balances, [#129](https://github.com/sujayjangam/unified-ledger-pipeline/issues/129) left (next up) ·
+[#127](https://github.com/sujayjangam/unified-ledger-pipeline/issues/127) trip balances, [#145](https://github.com/sujayjangam/unified-ledger-pipeline/issues/145) offset rows left (in progress) ·
 [#132](https://github.com/sujayjangam/unified-ledger-pipeline/issues/132) early ADRs too long ·
 [#122](https://github.com/sujayjangam/unified-ledger-pipeline/issues/122) Python-only split reader (after the trip) ·
 [#83](https://github.com/sujayjangam/unified-ledger-pipeline/issues/83) cards from Telegram ·

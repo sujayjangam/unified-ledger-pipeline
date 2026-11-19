@@ -531,3 +531,70 @@ async def test_a_debt_inside_a_family_gets_its_own_payback_card(flow):
     assert (pending['from_id'], pending['to_id'], pending['debtor_member_ids']) == (2, 1, (2,))
     assert pending['family'] is None
     assert 'Confirm' in _buttons(query.message.reply_text.await_args.kwargs['reply_markup'])
+
+
+@pytest.mark.parametrize('bills', [
+    [dict(transaction_id='dinner', for_id=2, payer_id=2, cents=100)],
+    [dict(transaction_id='dinner', for_id=2, cents=100)],
+    [dict(transaction_id='taxi', for_id=4, payer_id=3, cents=100)],
+    [dict(transaction_id='dinner', for_id=3, payer_id=2, cents=99),
+     dict(transaction_id='taxi', for_id=4, payer_id=3, cents=100)],
+    [dict(transaction_id='dinner', for_id=3, payer_id=2, cents=1001)],
+])
+def test_offset_validation_precedes_connection(monkeypatch, bills):
+    connect = MagicMock()
+    monkeypatch.setattr(settlements, 'get_connection', connect)
+    with pytest.raises(ValueError):
+        settlements.add_settlement(**write_args(bills=bills))
+    connect.assert_not_called()
+
+
+@pytest.mark.parametrize('explicit_payer', [True, False])
+def test_offset_rows_insert_without_payer_metadata(monkeypatch, explicit_payer):
+    manager = MagicMock()
+    conn = manager.__enter__.return_value
+    conn.execute.return_value.rowcount = 1
+    conn.execute.return_value.scalar_one.return_value = 42
+    monkeypatch.setattr(settlements, 'get_connection', lambda: manager)
+    bills = [dict(transaction_id='dinner', for_id=3, cents=1000),
+             dict(transaction_id='taxi', for_id=4, payer_id=3, cents=1000),
+             dict(transaction_id='lunch', for_id=5, payer_id=4, cents=1000)]
+    if explicit_payer:
+        bills[0]['payer_id'] = 2
+    assert settlements.add_settlement(**write_args(bills=bills))
+    sql, params = conn.execute.call_args_list[1].args
+    assert 'payer_id' not in str(sql)
+    assert params == [dict(settlement_id=42, transaction_id=b['transaction_id'],
+                           for_id=b['for_id'], cents=b['cents']) for b in bills]
+    conn.commit.assert_called_once()
+
+
+@pytest.mark.parametrize('shortened', [True, False])
+async def test_mark_paid_keeps_parts_and_confirm_uses_snapshot(flow, monkeypatch, shortened):
+    from app.services.balances import payment_rows
+    entries = [dict(transaction_id='dinner', currency='AUD', paid_by=1, splits={3: 6000})]
+    if shortened:
+        entries[0]['splits'][2] = 4000
+        entries.append(dict(transaction_id='taxi', currency='AUD', paid_by=2, splits={3: 4000}))
+    monkeypatch.setattr(bot, 'get_trip_split_entries', MagicMock(return_value=entries))
+    amount = 10000 if shortened else 6000
+    update, _ = tap(f'settle:new:7:1:{amount}', 10)
+    await bot.handle_settle_button(update, flow)
+    pending = flow.user_data['pending_settlements'][20]
+    parts = pending['line_parts']
+    assert bool(parts) is shortened
+    # Payer changes and Confirm must use the card, even if the stored bills have changed.
+    for name in ('get_trip_split_entries', 'get_trip_settlements', '_load_bals_trip'):
+        monkeypatch.setattr(bot, name, MagicMock(side_effect=AssertionError('Do not reload')))
+    update, _ = tap('settle:person:3')
+    await bot.handle_settle_button(update, flow)
+    writer = MagicMock(return_value=True)
+    monkeypatch.setattr(bot, 'add_settlement', writer)
+    update, _ = tap('settle:confirm')
+    await bot.handle_settle_button(update, flow)
+    writer.assert_called_once()
+    if shortened:
+        assert writer.call_args.kwargs['bills'] == payment_rows(parts, 3, amount)
+        assert len(writer.call_args.kwargs['bills']) == 3
+    else:
+        assert 'bills' not in writer.call_args.kwargs

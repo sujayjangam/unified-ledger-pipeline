@@ -17,7 +17,9 @@ def add_settlement(*, from_id, to_id, clears_amount, clears_currency, paid_amoun
     Callers supply decimal amounts, as text where possible. Both pass through the same
     cents conversion as expenses, so the loader and the bot cannot round differently.
     Bill-row cents are whole cents computed from stored shares, never typed money, so
-    they do not pass through dollars_to_cents. Any amount beyond the rows is an overpayment.
+    they do not pass through dollars_to_cents. Only receiver-paid rows use the cash amount;
+    balanced offset rows clear middle people's bills without moving money. payer_id is
+    validation metadata only and is never stored. Excess cash remains an overpayment.
     """
     clears_cents = dollars_to_cents(clears_amount)
     paid_cents = dollars_to_cents(paid_amount)
@@ -38,7 +40,19 @@ def add_settlement(*, from_id, to_id, clears_amount, clears_currency, paid_amoun
         if key in seen:
             raise ValueError("A bill share cannot appear twice")
         seen.add(key)
-    if sum(bill['cents'] for bill in bills) > clears_cents:
+    # Offsets move no money: each middle's bills are covered by clearing their debts.
+    # Missing payer_id keeps typed paybacks on the receiver's bills as before.
+    by_payer, by_member = {}, {}
+    for bill in bills:
+        payer = bill.get('payer_id', to_id)
+        if payer == bill['for_id']:
+            raise ValueError("A bill payer cannot owe their own share")
+        by_payer[payer] = by_payer.get(payer, 0) + bill['cents']
+        by_member[bill['for_id']] = by_member.get(bill['for_id'], 0) + bill['cents']
+    if any(cents > by_member.get(payer, 0) for payer, cents in by_payer.items()
+           if payer != to_id):
+        raise ValueError("Offset rows exceed the middle person's cleared shares")
+    if by_payer.get(to_id, 0) > clears_cents:
         raise ValueError("Bill shares exceed the amount cleared")
     params = dict(for_id=for_id, trip_id=trip_id, from_id=from_id, to_id=to_id, clears_cents=clears_cents,
                   clears_currency=clears_currency, paid_cents=paid_cents,

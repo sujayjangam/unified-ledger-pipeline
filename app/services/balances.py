@@ -75,8 +75,8 @@ def unit_balances(entries, families: dict, settlements=()) -> Balances:
 SIMPLIFY_BUDGET = 200
 
 
-def _cancel_loops(owed: dict) -> dict:
-    """Cancel cycles in sorted person/creditor DFS order, never through a family."""
+def _cancel_loops(owed: dict, on_cycle=None) -> dict:
+    """Cancel cycles in sorted person/creditor DFS order, optionally reporting each amount."""
     owed = dict(owed)
     while True:
         adjacent = {}
@@ -110,6 +110,8 @@ def _cancel_loops(owed: dict) -> dict:
         if not cycle:
             return owed
         amount = min(owed[edge] for edge in cycle)
+        if on_cycle is not None:
+            on_cycle(cycle, amount)
         for edge in cycle:
             owed[edge] -= amount
             if not owed[edge]:
@@ -132,7 +134,7 @@ def _shortcut_moves(owed: dict, families: dict) -> list:
     return sorted(moves, key=lambda move: (-move[0], *move[1:]))
 
 
-def _simplify_debts(owed: dict, families: dict) -> tuple:
+def _simplify_path(owed: dict, families: dict) -> tuple:
     """Search loop-normalized states depth first; keep the first best payment count.
 
     Memoization ignores the path: revisiting identical debts cannot improve the result,
@@ -164,6 +166,12 @@ def _simplify_debts(owed: dict, families: dict) -> tuple:
             child[(u, c)] = child.get((u, c), 0) + x
             pending.append((child, path + ((x, p, c, u),)))
 
+    return best, best_path
+
+
+def _simplify_debts(owed: dict, families: dict) -> tuple:
+    """Return the winning debts and their visible shortcut notes, in the original order."""
+    best, best_path = _simplify_path(owed, families)
     notes = {}
     for x, p, c, u in best_path:
         shown, middle = debtor_unit(u, c, families), debtor_unit(p, c, families)
@@ -173,6 +181,130 @@ def _simplify_debts(owed: dict, families: dict) -> tuple:
         notes[key] = notes.get(key, 0) + x
     return best, tuple((*key, cents) for key, cents in
                        sorted(notes.items(), key=lambda item: (-item[1], item[0])))
+
+
+def _take_pieces(pieces, cents):
+    """Remove cents from the front, splitting only the last piece used."""
+    taken = []
+    while cents:
+        path, amount = pieces.pop(0)
+        used = min(cents, amount)
+        taken.append((path, used))
+        if used < amount:
+            pieces.insert(0, (path, amount - used))
+        cents -= used
+    return taken
+
+
+def _debt_pieces(owed: dict, families: dict) -> dict:
+    """Replay the winning search path, retaining original edges behind each cent."""
+    _, best_path = _simplify_path(owed, families)
+    pieces = {edge: [(edge, cents)] for edge, cents in owed.items()}
+
+    def drop_cycle(cycle, cents):
+        for edge in cycle:
+            _take_pieces(pieces[edge], cents)
+
+    state = _cancel_loops(owed, drop_cycle)
+    # After the first cancellation the used original edges are acyclic. Moves add no
+    # original edge, so a concatenated path can never repeat a person.
+    for x, p, c, u in best_path:
+        incoming = _take_pieces(pieces[(u, p)], x)
+        outgoing = _take_pieces(pieces[(p, c)], x)
+        joined = pieces.setdefault((u, c), [])
+        while incoming:
+            left, a = incoming[0]
+            right, b = outgoing[0]
+            used = min(a, b)
+            joined.append((left + right[1:], used))
+            _take_pieces(incoming, used)
+            _take_pieces(outgoing, used)
+        for edge in ((u, p), (p, c)):
+            state[edge] -= x
+            if not state[edge]:
+                del state[edge]
+        state[(u, c)] = state.get((u, c), 0) + x
+        state = _cancel_loops(state, drop_cycle)
+    return {edge: tuple(pieces[edge]) for edge in state}
+
+
+@dataclass(frozen=True)
+class LinePart:
+    """One member's cents and immutable bill rows for each hop to the receiver.
+
+    Each row is (transaction_id, for_id, payer_id, cents), in oldest bill order.
+    """
+    member: int
+    cents: int
+    hops: tuple
+
+
+def line_parts(entries, families, settlements, currency, owing_unit, creditor):
+    """Describe a shortened line's bills, or None when ordinary payback rules apply."""
+    entries = tuple(entries)
+    debts, _, shares = _fold_debts(entries, families, settlements)
+    pieces = _debt_pieces(debts.get(currency, {}), families)
+    selected = [piece for (u, c), edge_parts in pieces.items()
+                if c == creditor and debtor_unit(u, c, families) == owing_unit
+                for piece in edge_parts]
+    if not any(len(path) > 2 for path, _ in selected):
+        return None
+    parts = []
+    for path, cents in selected:
+        hops = []
+        for a, b in zip(path, path[1:]):
+            left, rows = cents, []
+            for entry in entries:
+                if entry.get('paid_by') != b or entry['currency'] != currency:
+                    continue
+                key = (entry.get('transaction_id'), a)
+                used = min(left, shares.get(key, 0))
+                if used:
+                    rows.append((key[0], a, b, used))
+                    shares[key] -= used
+                    left -= used
+                if not left:
+                    break
+            if left:
+                # An owed-back overpayment has no bill: keep the rowless behaviour.
+                return None
+            hops.append(tuple(rows))
+        parts.append(LinePart(path[0], cents, tuple(hops)))
+    return tuple(parts)
+
+
+def payment_rows(parts, giver, clears_cents):
+    """Take the giver's pieces first, then larger member totals; offset every used hop.
+
+    Within one member, longer chains go first. Erin owes Alice 60 directly and 40 through
+    Bob; if a partial 80 paid her direct 60 first, the 20 left through Bob would have no
+    Ngs-to-Alice line to ride on (shortcuts only use existing lines), and the report would
+    split it into two new lines. Paying the chain first leaves her direct debt, so the rest
+    stays one line. Whose debt is cleared is the same either way, so nobody's total moves.
+    """
+    totals = {}
+    for part in parts:
+        totals[part.member] = totals.get(part.member, 0) + part.cents
+    ordered = sorted(parts, key=lambda part: (
+        part.member != giver, -totals[part.member], part.member, -len(part.hops)))
+    rows = {}
+    for part in ordered:
+        used = min(clears_cents, part.cents)
+        if not used:
+            break
+        for hop in part.hops:
+            left = used
+            for transaction_id, for_id, payer_id, cents in hop:
+                amount = min(left, cents)
+                key = (transaction_id, for_id)
+                row = rows.setdefault(key, dict(transaction_id=transaction_id, for_id=for_id,
+                                                payer_id=payer_id, cents=0))
+                row['cents'] += amount
+                left -= amount
+                if not left:
+                    break
+        clears_cents -= used
+    return list(rows.values())
 
 
 def open_bill_shares(entries, families: dict, settlements=()) -> dict:
@@ -186,7 +318,8 @@ def open_bill_shares(entries, families: dict, settlements=()) -> dict:
 
     Replay paybacks in the given order through the same netted debts as unit_balances.
     Eligible bill rows reduce only their own shares, at most to zero; missing bills or
-    bills paid by someone other than the receiver clear nothing. An old payback without
+    unbalanced offsets clear nothing. Balanced offsets clear middle people's shares
+    without moving money, alongside payment of their own debts. An old payback without
     rows reduces the shares of each debtor _pay_back actually cleared, oldest receiver-paid
     bill first (the supplied entry order), in the payback's currency. A family payback
     thus uses the same beneficiary-first order as the balance report. By contrast, a bill
@@ -198,7 +331,7 @@ def open_bill_shares(entries, families: dict, settlements=()) -> dict:
 
 
 def _fold_debts(entries, families: dict, settlements):
-    """Replay one debt fold for both the report and the gross bill-share view."""
+    """Replay debts and gross shares; accept balanced offsets together or drop them all."""
     # {currency: {(debtor id, creditor id): cents}}. Between any two people at most one
     # direction is ever stored, because _owe nets each new debt against the opposite one.
     debts: dict = {}
@@ -231,7 +364,15 @@ def _fold_debts(entries, families: dict, settlements):
             # share would spill over onto the person's other bills to the same receiver,
             # instead of being owed back to the giver.
             allocations = []
-            for row in _eligible_bills(settlement, payer_of, currency_of):
+            direct, offsets = _offset_bills(settlement, payer_of, currency_of, shares, owed)
+            for row in offsets:
+                payer = payer_of[row['transaction_id']]
+                shares[(row['transaction_id'], row['for_id'])] -= row['cents']
+                edge = (row['for_id'], payer)
+                owed[edge] -= row['cents']
+                if not owed[edge]:
+                    del owed[edge]
+            for row in direct:
                 key = (row['transaction_id'], row['for_id'])
                 capped = min(row['cents'], shares.get(key, 0))
                 if capped:
@@ -254,16 +395,45 @@ def _fold_debts(entries, families: dict, settlements):
 
 
 def _eligible_bills(settlement: dict, payer_of: dict, currency_of: dict):
-    """Only a counted bill paid by the receiver, in the payback's currency, can clear a row.
-
-    Paid by someone else: that needs #129's offset rows. Another currency: the row would
-    take cents off a debt in a different currency, which can never be netted (no FX here).
-    """
+    """Count bills in this currency; other payers need balanced offset validation."""
     for row in settlement['bills']:
         payer = payer_of.get(row['transaction_id'])
-        if (payer is not None and payer == settlement['to_id']
+        if (payer is not None and payer != row['for_id']
                 and currency_of.get(row['transaction_id']) == settlement['currency']):
             yield row
+
+
+def _offset_bills(settlement, payer_of, currency_of, shares, owed):
+    """Check offsets against the pre-payback state, before reducing any share or debt.
+
+    Erin's taxi can be offset only as far as Bob's own debt is cleared on his behalf.
+    Check both gross shares and net debts: a bill may still be open even though an
+    opposite debt has already reduced what its sharer owes. Sum repeated shares and
+    pairs before checking, so two rows cannot both spend the same available cents.
+    """
+    direct, offsets = [], []
+    for row in _eligible_bills(settlement, payer_of, currency_of):
+        target = direct if payer_of[row['transaction_id']] == settlement['to_id'] else offsets
+        target.append(row)
+    middles = {payer_of[row['transaction_id']] for row in offsets}
+    checked = offsets + [row for row in direct if row['for_id'] in middles]
+    by_share, by_pair, incoming, outgoing = {}, {}, {}, {}
+    for row in checked:
+        key = (row['transaction_id'], row['for_id'])
+        payer = payer_of[row['transaction_id']]
+        pair = (row['for_id'], payer)
+        by_share[key] = by_share.get(key, 0) + row['cents']
+        by_pair[pair] = by_pair.get(pair, 0) + row['cents']
+        incoming[payer] = incoming.get(payer, 0) + row['cents']
+        outgoing[row['for_id']] = outgoing.get(row['for_id'], 0) + row['cents']
+    valid = (all(cents <= shares.get(key, 0) for key, cents in by_share.items())
+             and all(cents <= owed.get(pair, 0) for pair, cents in by_pair.items())
+             and all(incoming.get(m, 0) <= outgoing.get(m, 0) for m in middles))
+    if not valid:
+        # Bob's dinner cannot be paid on his behalf if Erin's taxi offset is invalid.
+        # Leave both open; unused money becomes owed back to the giver.
+        return [row for row in direct if row['for_id'] not in middles], []
+    return direct, offsets
 
 
 def _owe(owed: dict, debtor: int, creditor: int, cents: int) -> None:

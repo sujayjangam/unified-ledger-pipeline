@@ -214,6 +214,10 @@ Env vars (`.env.example` shows the format):
   payback time; nobody owes the giver in `/trip_bals`. The paid side records money handed
   over, never spending totals, and may be any ISO 4217 currency (`app/services/currencies.py`).
   An overpayment gets a warning and a Confirm overpayment button, never a refusal.
+  A "Mark paid" on a shortened line also saves offset rows (#145, ADR-0052): the chain is
+  worked out again from the bills when the card opens (`line_parts`), kept on the card, and
+  trimmed to the amount on Confirm (`payment_rows`). Never store the simplification. A normal
+  line, or a chain with no open share behind a step, saves no rows.
   Pure whole-cent maths in `app/services/balances.py` keeps currencies apart. It counts only entries tagged to the trip that have split rows. A failed read of bills or paybacks is shown as an error,
   never as "nobody owes anything". A split entry still with no payer after the fallback (account owner, else sender) is left out with a ⚠️ line,
   never guessed. A trip id from a button is loaded only through `member_trip`. The reply is
@@ -314,9 +318,11 @@ Env vars (`.env.example` shows the format):
   lowest participant id, never to "whoever paid".
 - `settlement_bills` says which bill shares a payback clears (ADR-0052): one row per person's
   share of one bill, written with the payback in one database transaction, only when it was
-  really inserted. A row clears only a share owed to the payback's receiver, on a live bill in
-  the payback's currency, and never more than is still open on that share;
-  otherwise its cents are owed back to the giver, like an overpayment. Old paybacks have no rows
+  really inserted. A row clears only a share on a live bill in the payback's currency, and
+  never more than is still open on that share; otherwise its cents are owed back to the giver,
+  like an overpayment. A row on a bill the receiver didn't pay is an offset row: it counts only
+  if the payback's offsets to each middle person are no more than that person's own rows, and
+  every one fits, all or nothing (ADR-0052). Old paybacks have no rows
   and clear a line's oldest bills first (`open_bill_shares`). No `ON DELETE` on its keys.
 - `ON CONFLICT (idempotency_key) DO NOTHING` stops a double-tapped Confirm inserting twice
   ([ADR-0011](docs/decisions/0011-idempotency-key-over-update-id.md)). Duplicate webhook

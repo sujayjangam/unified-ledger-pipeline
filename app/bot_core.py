@@ -36,7 +36,9 @@ from app.services.trips import (
     Trip, load_active_trip, trip_families, switch_trip_off, switch_trip_on, member_trips,
     member_trip, banner_message_id, set_banner_message_id, format_trip_dates,
 )
-from app.services.balances import trip_balance_lines, trip_payments, unit_of, open_bill_shares
+from app.services.balances import (
+    trip_balance_lines, trip_payments, unit_of, open_bill_shares, line_parts, payment_rows,
+)
 from app.services.settlements import (
     add_settlement, is_overpayment, settlement_card_text, change_settlement_amount, parse_settlement_amount,
 )
@@ -2043,6 +2045,8 @@ async def _new_settlement(update, context):
         payer = (payment.from_unit[1] if payment.from_unit[0] == 'person' else
                  sender.id if sender.id in member_ids else None)
         card = dict(trip_id=trip.id, trip_name=trip.name, from_id=payer,
+                    line_parts=line_parts(entries, families, settlements, currency,
+                                          payment.from_unit, payment.to_unit[1]),
                     to_id=payment.to_unit[1], clears_cents=cents, clears_currency=currency,
                     paid_cents=cents, paid_currency=currency, suggested_cents=cents,
                     debtor_member_ids=member_ids, for_id=None, idempotency_key=str(uuid.uuid4()),
@@ -2115,7 +2119,10 @@ async def _settle_tap(query, context):
                            paid_amount=format_cents(card['paid_cents']), paid_currency=card['paid_currency'],
                            trip_id=card['trip_id'], date=card['date'], source="telegram_bot",
                            entered_by_participant_id=card['entered_by_participant_id'],
-                           idempotency_key=card['idempotency_key'])
+                           idempotency_key=card['idempotency_key'],
+                           **({'bills': payment_rows(card['line_parts'], card['from_id'],
+                                                     card['clears_cents'])}
+                              if card.get('line_parts') else {}))
         except Exception as e:
             print(f"Could not save payback: {e}")
             _bounded_put(pending, message_id, card)
