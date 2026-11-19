@@ -396,3 +396,14 @@ def test_each_persons_total_is_what_they_paid_less_what_they_owe():
             assert per_unit(got) == per_unit(expected)
         payments = [p for _, p in trip_payments(entries, families, settlements)]
         assert set(apply_payments(net, payments, families).values()) <= {0}
+
+
+@pytest.mark.parametrize('giver,note', [(3, ' for Bob'), (4, ' for Bob'), (2, '')])
+def test_payback_history_names_the_line_it_cleared(giver, note):
+    """Bob owes his relative Alice. Carol (also family) or Max (outside) paying it is noted
+    "for Bob", not "for Tan family"; Bob paying his own line has no note."""
+    families = {1: 'Tan', 2: 'Tan', 3: 'Tan', 4: 'J'}
+    names = {1: 'Alice', 2: 'Bob', 3: 'Carol', 4: 'Max'}
+    payback = dict(from_id=giver, to_id=1, for_id=2 if giver != 2 else None, cents=3000, currency='SGD')
+    report = trip_balance_lines([entry(1, {2: 3000})], names, families, settlements=[payback])
+    assert f' • {names[giver]} paid Alice 30.00 SGD{note}' in report

@@ -243,10 +243,15 @@ def trip_balance_lines(entries, names: dict, families: dict, show_members: bool 
             for s in paid_back:
                 handed = (f" (as {format_cents(s['paid_cents'])} {s['paid_currency']})"
                           if s.get("paid_currency", currency) != currency else "")
+                # Name the line the payment cleared, as the receiver sees it: "for Bob" when Bob
+                # is the receiver's relative (a person line), "for Lee family" otherwise. No
+                # note when the giver pays a line they are part of.
                 beneficiary = s.get('for_id')
-                gift = (f" for {unit_name(unit_of(beneficiary, families))}"
-                        if beneficiary is not None and
-                        unit_of(beneficiary, families) != unit_of(s['from_id'], families) else "")
+                cleared = (debtor_unit(beneficiary, s['to_id'], families)
+                           if beneficiary is not None else None)
+                gift = (f" for {unit_name(cleared)}"
+                        if cleared is not None and
+                        debtor_unit(s['from_id'], s['to_id'], families) != cleared else "")
                 when = f", {s['date'].day} {s['date']:%b}" if s.get("date") else ""
                 lines.append(f" • {person(s['from_id'])} paid {person(s['to_id'])} "
                              f"{format_cents(s['cents'])} {currency}{gift}{handed}{when}")
