@@ -59,6 +59,7 @@ supersedes the old one rather than editing history.
 | [0049](0049-prompt-holds-only-what-python-cant-read.md) | The extraction prompt holds only what Python can't read from the words | Accepted | 2026-11-18 |
 | [0050](0050-soft-delete-behind-a-view.md) | Deleted entries are marked, and a view hides them | Accepted | 2026-11-18 |
 | [0051](0051-debts-per-person-then-families.md) | Debts are worked out per person, then rolled up to families | Accepted | 2026-11-19 |
+| [0052](0052-settle-up-by-typed-message.md) | Settling up any bill by a typed "settle" message, linked to the bills it clears | Accepted | 2026-11-19 |
 
 ## Writing a new one
 

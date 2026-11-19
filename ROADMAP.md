@@ -25,13 +25,15 @@ is tried on a Neon branch with a fictional trip-sized directory first.
 
 **Next up**, in this order:
 
-1. Settling up redesigned: one "Settle up" button instead of "Mark paid 1, 2, 3", each payback
-   linked to the bills it clears, no "gift" wording
+1. Settling up redesigned: a typed "settle" message read by Python, each payback linked to the
+   bills it clears, no "gift" wording
    ([#134](https://github.com/sujayjangam/unified-ledger-pipeline/issues/134), which takes in
    [#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113) and
-   [#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114)). **No design is
-   agreed yet**: agree the screens and the input (buttons, a typed message, or both) first,
-   as an ADR, before any code.
+   [#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114); design in
+   [ADR-0052](docs/decisions/0052-settle-up-by-typed-message.md), agreed 2026-11-19). The same
+   method serves everyday bills, for a later `/bals`. Typed path first, with a new
+   `settlement_bills` table (migration 0011, applied to production by hand before the merge);
+   a "Settle up" button on `/trip_bals` follows if time allows before the freeze.
 2. Simplify trip debts to the fewest payments, only along existing debt lines
    ([#129](https://github.com/sujayjangam/unified-ledger-pipeline/issues/129), the last part of
    [#127](https://github.com/sujayjangam/unified-ledger-pipeline/issues/127); rule in
