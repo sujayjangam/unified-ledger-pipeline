@@ -47,7 +47,11 @@ sequenceDiagram
 - **Scope.** Trip mode on: only that trip's bills, nothing else. Trip mode off: the bills named
   decide. A trip bill makes it that trip's payback, an untagged bill an everyday one (`trip_id`
   empty). With no bill named and trip mode off, only everyday debts count. One message can't
-  mix a trip bill and an everyday bill.
+  mix a trip bill and an everyday bill, or bills on two trips: a payback has one trip.
+- **"Settle everyday bills instead"** is a per-card switch, like the expense card's "Not trip".
+  It shows only in trip mode, when a bill word matched no trip bill but did match an everyday
+  bill. A tap redraws this card with everyday bills; trip mode stays on, so later expenses are
+  still tagged. Both sets of bills are read with the message, so the tap loads nothing.
 
 ### Reading the message
 
@@ -80,9 +84,10 @@ with the bill's saved description, after dropping "the", "a", "an", "my", "our",
    part equals an open share on the bill, or the bill's total. The oldest close match is ticked,
    and the card says "❓ Did you mean …?" with one button per close match (date and total on
    each, so two Airbnbs can be told apart), a "Pay oldest first" button, and Change bills.
-3. **No match:** the money goes to those people's oldest bills first, with a ⚠️ line. In trip
-   mode, a word that matches only an everyday bill adds "Turn trip mode off to settle everyday
-   bills."
+3. **No match:** the money goes to those people's oldest bills first, with a ⚠️ line. The
+   exception: in trip mode, when the words match an everyday bill, no trip bill is ticked (it
+   would clear a bill nobody meant). The card shows the "Settle everyday bills instead" button
+   and Change bills, and no Confirm until a bill is ticked.
 
 An amount with no word in common is no match: common amounts (20, 50) would pick the wrong bill.
 
@@ -126,8 +131,11 @@ An amount with no word in common is no match: common amounts (20, 50) would pick
   name, and a tap never loads the directory or the bills again. Callback data stays under 64
   bytes.
 - **"Clears all in full" only when every share is fully cleared.** Otherwise each line says what
-  it leaves owing. ⚠️ and ❓ lines never block Confirm.
+  it leaves owing. ⚠️ and ❓ lines never block Confirm (the one exception is under "No match").
 - **The title shows the scope:** "· Beach trip" or "· Everyday".
+- **Nice to have, later:** with trip mode off, each bill row and "Did you mean" button shows a
+  one-word trip label, the first word of the trip's name ("Sydney wedding trip 2026" →
+  "Airbnb 2300 · Sydney · 12 Nov"). No migration.
 - **One "Settle up" button** on `/trip_bals`, and later `/bals`, opens this same card, after the
   typed path ships and if time allows.
 - **Every settle wording here goes into `/help`** and into the settle reader's tests.
@@ -169,6 +177,18 @@ Carol pays Alice $261.00
 
 Tapping the other bill moves the tick and the money to it. "Pay oldest first" drops the guess and
 shares the money over the oldest bills, as in a no match.
+
+In trip mode, a word that matched only an everyday bill ("Settle Bob paid 330 for bed"):
+
+```
+🤝 Settle up · Beach trip
+Bob pays Alice $330.00
+❓ "bed" matched an everyday bill, not a trip bill.
+[Settle everyday bills instead]
+[Change bills] [❌ Cancel]
+```
+
+A tap redraws it as the everyday card below.
 
 No match:
 
@@ -218,6 +238,7 @@ Refused, nothing saved:
 Settle needs who paid and how much, e.g. "Settle Carol paid 381".
 These bills were paid by Alice and Bob. Send one settle message for each.
 These bills are on a trip and outside it. Send one settle message for each.
+These bills are on two trips. Send one settle message for each.
 ```
 
 ## Rejected
@@ -227,7 +248,10 @@ These bills are on a trip and outside it. Send one settle message for each.
   expense, so a misread counts money twice; Python can read this fixed shape.
 - **Trip payback only while trip mode is on:** everyday bills are split too, and `/bals` needs the
   same method.
-- **Everyday bills in scope while trip mode is on:** a trip settle-up could clear an unrelated bill.
+- **Everyday bills in scope while trip mode is on, without a tap:** a trip settle-up could clear
+  an unrelated bill.
+- **A button that turns trip mode off:** every expense logged after it would be untagged until
+  trip mode is turned back on; the per-card switch avoids resending without that.
 - **A plain amount clears what the sender picks later:** leaves money unassigned; oldest first
   is the usual meaning, and Change bills fixes it.
 - **The sender is always the receiver:** wrong when the payer of the bills was someone else.
