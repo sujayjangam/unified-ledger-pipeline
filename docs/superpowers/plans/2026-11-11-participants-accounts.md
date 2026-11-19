@@ -704,7 +704,7 @@ Expected: the new tests FAIL.
     `Directory` / `resolve_payment`; add `participants.py` and the fail-closed rule to Architecture;
     `entered_by` → `entered_by_participant_id` under Storage; add `scripts/seed_directory.py` under `scripts/`.
   - `docs/SCHEMA.md`: the two new tables and the two new columns; replace the real-name examples on
-    line 19 (`'Sujay', 'Wife'`) with fictional ones while editing that line.
+    line 19 (two real first names) with fictional ones while editing that line.
   - `README.md`: wherever it describes accounts coming from env vars.
   - ADR-0032: the tables, closed accounts, `funded_by_account_id`, `default_account_id`, fail-closed
     allowlist, no cache. ADR-0033: supersedes ADR-0026, following the superseding convention in
