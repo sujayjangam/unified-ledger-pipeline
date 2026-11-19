@@ -173,8 +173,9 @@ trip debt; the paid side records what changed hands, with no exchange-rate looku
 - **from_participant_id**, **to_participant_id**: BIGINT, NOT NULL, FK → `participants.id`;
   must differ (`ck_settlements_different_people`)
 - **for_participant_id**: BIGINT, nullable, FK → `participants.id`; a member of the unit
-  whose debt this gift clears (ADR-0047). NULL means the payer's unit. Must differ from
-  `to_participant_id` (`ck_settlements_different_beneficiary`).
+  whose debt this payback clears on their behalf (ADR-0047). NULL means the payer's unit, or,
+  on a payback with `settlement_bills` rows, that the rows say whose shares it pays. Must
+  differ from `to_participant_id` (`ck_settlements_different_beneficiary`).
 - **clears_cents**, **paid_cents**: BIGINT, NOT NULL, positive whole cents
   (`ck_settlements_positive_clears`, `ck_settlements_positive_paid`)
 - **clears_currency**, **paid_currency**: TEXT, NOT NULL. When equal, the amounts must be
@@ -185,10 +186,39 @@ trip debt; the paid side records what changed hands, with no exchange-rate looku
 - **source**: TEXT, NOT NULL; the bot writes `telegram_bot`
 - **note**: TEXT, nullable
 - **idempotency_key**: TEXT, NOT NULL, UNIQUE (`uq_settlements_idempotency_key`)
+- **fx_rate**: NUMERIC, nullable; bills' currency per 1 of the paid currency, positive
+  (`ck_settlements_positive_fx_rate`). Added by `0011_settlement_bills` for ADR-0053.
+- **fx_rate_date**: DATE, nullable; the date of that rate
+- **fx_source**: TEXT, nullable; where the rate came from (`frankfurter` or `typed`). The three
+  fx columns are all NULL or all set (`ck_settlements_fx_all_or_none`); NULL on every
+  same-currency payback and every row from before ADR-0053 ships.
+- **needs_statement_check**: BOOLEAN, NOT NULL, `DEFAULT false`; true for a two-currency
+  payback until its bill's real rate is checked against the card statement
 
 Overpayments are allowed: the excess is owed back to the person who paid. The writer checks
 positive money, different people and equal same-currency amounts before connecting. Retries
 use `ON CONFLICT (idempotency_key) DO NOTHING`; paybacks never affect spending totals.
+
+## settlement_bills (revision `0011_settlement_bills`)
+
+Which bill shares a payback clears (ADR-0052). One row per person's share of one bill; one
+payback has as many rows as shares it pays. Old paybacks have none and still count, clearing a
+line's oldest bills first.
+
+- **settlement_id**: BIGINT, NOT NULL, FK → `settlements.id`
+- **transaction_id**: TEXT, NOT NULL, FK → `raw_transactions.transaction_id` (a foreign key
+  can't point at the `transactions` view); indexed by `ix_settlement_bills_transaction_id`
+- **for_participant_id**: BIGINT, NOT NULL, FK → `participants.id`; whose share it clears
+- **cents**: BIGINT, NOT NULL, positive (`ck_settlement_bills_positive_cents`), in the
+  payback's `clears_currency`
+- Primary key: (`settlement_id`, `transaction_id`, `for_participant_id`)
+
+No `ON DELETE` on any key: bills are only soft-deleted, so the keys never fire in normal use. A
+row on a deleted bill clears nothing; its cents are owed back to the giver. A row clears only a
+share owed to the payback's receiver, on a bill in `clears_currency`, and never more than is
+still open on that share. The rows add up to at most `clears_cents`; the rest is
+an overpayment. They are written in the same database transaction as the payback, only when
+the payback row was really inserted.
 
 ## Business date vs. write time
 

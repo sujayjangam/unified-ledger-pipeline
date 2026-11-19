@@ -297,6 +297,12 @@ Env vars (`.env.example` shows the format):
   `add_expense` checks that and writes them in the same database transaction as the entry, only
   when the entry row was really inserted. Leftover cents go to the largest remainder, ties to the
   lowest participant id, never to "whoever paid".
+- `settlement_bills` says which bill shares a payback clears (ADR-0052): one row per person's
+  share of one bill, written with the payback in one database transaction, only when it was
+  really inserted. A row clears only a share owed to the payback's receiver, on a live bill in
+  the payback's currency, and never more than is still open on that share;
+  otherwise its cents are owed back to the giver, like an overpayment. Old paybacks have no rows
+  and clear a line's oldest bills first (`open_bill_shares`). No `ON DELETE` on its keys.
 - `ON CONFLICT (idempotency_key) DO NOTHING` stops a double-tapped Confirm inserting twice
   ([ADR-0011](docs/decisions/0011-idempotency-key-over-update-id.md)). Duplicate webhook
   deliveries (`update_id`) are a different problem, deduped only in memory today.
