@@ -29,10 +29,15 @@ flowchart LR
   whom.
 - **Simplified only along existing debt lines.** If P owes C, and U owes P and already owes C, U
   can pay C part of P's debt and pay P that much less. Opposite debts between the same two people
-  cancel. Money is never sent between two people who share no debt. Persons and families both count.
+  cancel, and so does a loop of person-to-person debts (A owes B, B owes C, C owes A), never a
+  loop through a family, which would move money between relatives' own totals. That is what lets
+  a paid shortcut clear. Money is never sent between two people who share no debt. Persons and
+  families both count. Each shortcut gets a plain-text 💡 line under "To settle".
 - **Fewest payments wins.** When there's a choice, pick the one with the fewest payments in "To
   settle", counted after roll-up. Ties go to a fixed order (largest amount, then lowest id), so
-  the list is the same every time. Trying every choice is cheap at trip size.
+  the list is the same every time. The search is bounded (`SIMPLIFY_BUDGET`): on random
+  10-person trips, trying every choice took ~3.7 s per report, and 200 states took ~0.03 s,
+  within one or two payments of it (measured 2026-11-19).
 - **Rolled up where possible.** A family's debts to someone outside it are shown and paid as one
   ("Lee family pays Alice"). A debt inside a family can't be rolled up, so it stays per person
   ("Bob pays Alice").
