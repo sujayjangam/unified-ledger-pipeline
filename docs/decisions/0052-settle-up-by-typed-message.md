@@ -1,6 +1,6 @@
 # ADR-0052: Settling up any bill by a typed "settle" message, linked to the bills it clears
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-11-19
 **Issue:** [#134](https://github.com/sujayjangam/unified-ledger-pipeline/issues/134) (takes in
 [#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113) and
@@ -115,6 +115,10 @@ An amount with no word in common is no match: common amounts (20, 50) would pick
   bill, owed to **the bill's payer**. One payback is one `settlements` row with one bill row per
   share it clears. `_pay_back` takes each bill row off its own line; anything left over is owed
   back to the giver, as now. Old paybacks keep working unchanged.
+- **No `ON DELETE` cascade.** Bills are only soft-deleted (ADR-0050), so the foreign key never
+  fires in normal use. A bill row on a deleted bill clears nothing: its cents count as left over,
+  owed back to the giver. The hand-run test-row cleanup in `docs/LOCAL_TESTING.md` removes bill
+  rows first.
 - **A payment along a simplified line** (#129, offered only by the "Settle up" button) clears
   bills on both lines. Dave owes Carol 40, Carol owes Alice 40, Dave owes Alice 60, and Dave pays
   Alice 100: rows clear Dave's 60 of Alice's bills, Carol's 40 of Alice's bills (on Carol's
@@ -138,7 +142,8 @@ An amount with no word in common is no match: common amounts (20, 50) would pick
   "Airbnb 2300 · Sydney · 12 Nov"). No migration.
 - **One "Settle up" button** on `/trip_bals`, and later `/bals`, opens this same card, after the
   typed path ships and if time allows.
-- **Every settle wording here goes into `/help`** and into the settle reader's tests.
+- **Every settle wording here goes into `/help`** and into the settle reader's tests. Settle is
+  read with no model, so these examples are unit tests, not `scripts/check_extraction.py` cases.
 
 ### Screens
 
