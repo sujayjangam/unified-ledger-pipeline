@@ -25,14 +25,9 @@ is tried on a Neon branch with a fictional trip-sized directory first.
 
 **Next up**, in this order:
 
-1. Undo a saved entry: `/recent` gets paging and a delete button
-   ([#115](https://github.com/sujayjangam/unified-ledger-pipeline/issues/115),
-   [ADR-0050](docs/decisions/0050-soft-delete-behind-a-view.md)). Built, PR open. Migration
-   0010 applied to production on 2026-11-18, after a backup. Before it merges: try it on the
-   test bot.
-2. Record which bill a payback was for, so a bill can be marked paid off
+1. Record which bill a payback was for, so a bill can be marked paid off
    ([#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113)).
-3. Clearer "Mark paid" buttons than "Mark paid 1, 2, 3"
+2. Clearer "Mark paid" buttons than "Mark paid 1, 2, 3"
    ([#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114)).
 
 Later: load a finished trip's hand-kept spreadsheet as real bills, and work out the trip from the
@@ -52,6 +47,14 @@ message itself for costs logged before it starts.
 
 **Recently shipped**, newest first. Each PR and ADR has the full story.
 
+- **2026-11-18: delete and undo saved entries from `/recent`**
+  ([#115](https://github.com/sujayjangam/unified-ledger-pipeline/issues/115), PR
+  [#125](https://github.com/sujayjangam/unified-ledger-pipeline/pull/125),
+  [ADR-0050](docs/decisions/0050-soft-delete-behind-a-view.md)). `/recent` pages 5 at a time
+  with a 🗑 per entry, a second tap to confirm, and Undo. The table is now `raw_transactions`
+  behind a `transactions` view of live rows, so every total, `/trip_bals` and the duplicate
+  check skip deleted entries with no query changed. Migration 0010 was applied to production by
+  hand after a backup, before the merge; tried on the test bot first.
 - **2026-11-18: a smaller extraction prompt, run at temperature 0**
   ([#120](https://github.com/sujayjangam/unified-ledger-pipeline/issues/120), PR
   [#121](https://github.com/sujayjangam/unified-ledger-pipeline/pull/121),
@@ -145,7 +148,6 @@ message itself for costs logged before it starts.
   has a first pass on the local branch `chore/pin-dependencies-27`.
 
 **Open top-level issues:**
-[#115](https://github.com/sujayjangam/unified-ledger-pipeline/issues/115),
 [#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113) and
 [#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114) trip follow-ups (next up) ·
 [#122](https://github.com/sujayjangam/unified-ledger-pipeline/issues/122) Python-only split reader (after the trip) ·
@@ -425,8 +427,8 @@ only shared costs they pay get logged. Travel minimum, in build order:
   6. `/recent` gets paging and a delete button per entry, with Undo. A soft delete: the row stays
      but drops out of balances, totals and the duplicate check, through a view
      ([#115](https://github.com/sujayjangam/unified-ledger-pipeline/issues/115),
-     [ADR-0050](docs/decisions/0050-soft-delete-behind-a-view.md)). Built 2026-11-18, PR open;
-     migration 0010 tried on a Neon branch.
+     [ADR-0050](docs/decisions/0050-soft-delete-behind-a-view.md)). Done 2026-11-18,
+     [#125](https://github.com/sujayjangam/unified-ledger-pipeline/pull/125).
 
   Stretch: an "Edit" button on the card before saving (reply with the corrected text,
   reprocessed through `process_expense_text`), and fixing the split and payer after saving.
