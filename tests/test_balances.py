@@ -347,7 +347,7 @@ def test_trip_query_folds_share_rows_into_entries(monkeypatch):
     assert result.net == {'AUD': {('person', 1): 3000, ('person', 2): -3000}} and len(result.no_payer) == 1
     sql, params = conn.execute.call_args.args
     sql = ' '.join(str(sql).split())
-    assert params == {'trip_id': 7} and 't.trip_id = :trip_id' in sql
+    assert params == {'trip_id': 7} and 't.trip_id IS NOT DISTINCT FROM :trip_id' in sql
     assert 'COALESCE(t.paid_by_participant_id, a.owner_participant_id, t.entered_by_participant_id)' in sql
     assert 'base_amount' not in sql and 'SELECT *' not in sql
 

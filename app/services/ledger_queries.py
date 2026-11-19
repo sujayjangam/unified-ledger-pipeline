@@ -193,10 +193,11 @@ def get_category_summary(start_date: str, end_date: str):
         return []
 
 
-def get_trip_settlements(trip_id: int):
+def get_trip_settlements(trip_id: int | None = None):
     """Read paybacks oldest first with ordered bill rows (empty for old paybacks).
 
-    Either read failing returns None, never an apparently settled trip.
+    None selects everyday (untagged) paybacks. Either read failing returns None,
+    never an apparently settled scope.
     """
     try:
         with get_connection() as conn:
@@ -204,14 +205,14 @@ def get_trip_settlements(trip_id: int):
                 SELECT id, date, from_participant_id AS from_id, to_participant_id AS to_id,
                        for_participant_id AS for_id,
                        clears_cents AS cents, clears_currency AS currency, paid_cents, paid_currency
-                FROM settlements WHERE trip_id = :trip_id
+                FROM settlements WHERE trip_id IS NOT DISTINCT FROM :trip_id
                 ORDER BY date, created_at, id
             '''), {"trip_id": trip_id}).mappings().all()
             paybacks = {row['id']: dict(row, bills=[]) for row in rows}
             bills = conn.execute(text('''
                 SELECT b.settlement_id, b.transaction_id, b.for_participant_id AS for_id, b.cents
                 FROM settlement_bills b JOIN settlements s ON s.id = b.settlement_id
-                WHERE s.trip_id = :trip_id
+                WHERE s.trip_id IS NOT DISTINCT FROM :trip_id
                 ORDER BY b.settlement_id, b.transaction_id, b.for_participant_id
             '''), {"trip_id": trip_id}).mappings().all()
             for bill in bills:
@@ -223,8 +224,8 @@ def get_trip_settlements(trip_id: int):
         return None
 
 
-def get_trip_split_entries(trip_id: int):
-    """Every split entry tagged to one trip, in the shape app/services/balances.py reads.
+def get_trip_split_entries(trip_id: int | None = None):
+    """Split entries for one trip, or everyday when None, in the balances reader's shape.
 
     Returns a list of dicts, oldest first:
       {transaction_id, date, description, amount, currency, paid_by, splits: {participant id: cents}}
@@ -251,7 +252,7 @@ def get_trip_split_entries(trip_id: int):
                 FROM transactions t
                 JOIN transaction_splits s ON s.transaction_id = t.transaction_id
                 JOIN accounts a ON a.id = t.account_id
-                WHERE t.trip_id = :trip_id
+                WHERE t.trip_id IS NOT DISTINCT FROM :trip_id
                 ORDER BY t.date, t.created_at, t.transaction_id, s.participant_id
             '''), {"trip_id": trip_id}).fetchall()
     except Exception as e:

@@ -32,13 +32,15 @@ is tried on a Neon branch with a fictional trip-sized directory first.
    [#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114); design in
    [ADR-0052](docs/decisions/0052-settle-up-by-typed-message.md), agreed 2026-11-19). The same
    method serves everyday bills, for a later `/bals`. Typed path first, with a new
-   `settlement_bills` table (migration 0011, on production; PR 1 merged). PR 2, the reader
-   (`app/services/settle.py`, no bot change yet), is next to merge.
+   `settlement_bills` table (migration 0011, on production). PR 1 and PR 2 (the reader) are
+   merged; PR 3, the settle card with its change buttons and rates, is built and waits on
+   test-bot timing before it merges.
    A payback in another currency is converted at a reference rate and flagged for a statement
    check ([#138](https://github.com/sujayjangam/unified-ledger-pipeline/issues/138),
    [ADR-0053](docs/decisions/0053-other-currency-paybacks-at-a-reference-rate.md)). Build plan,
-   four PRs: `docs/superpowers/plans/2026-11-19-settle-up.md`. The bot's screen speed is timed
-   on a phone before the freeze
+   three PRs (the change buttons moved into PR 3):
+   `docs/superpowers/plans/2026-11-19-settle-up.md`. The bot's screen speed is timed on a
+   phone before the freeze
    ([#137](https://github.com/sujayjangam/unified-ledger-pipeline/issues/137)). A "Settle up"
    button on `/trip_bals` waits until after the trip.
 2. Simplify trip debts to the fewest payments, only along existing debt lines
