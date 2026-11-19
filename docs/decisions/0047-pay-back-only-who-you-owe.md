@@ -10,13 +10,13 @@
 The first real use of `/trip_bals` on production gave a list like this:
 
 ```
-3. Athale family pays Sujay 291.20
-4. Bhagwat family pays Laura 254.16
-5. Bhagwat family pays Sujay 37.04
+3. Ng family pays Bob 291.20
+4. Patel family pays Alice 254.16
+5. Patel family pays Bob 37.04
 ```
 
-Athale and Bhagwat only shared the Airbnb, which Laura paid. They had nothing to do with the car
-rental Sujay paid, yet they were told to pay him. The totals were right. The list was not.
+The Ng and Patel families only shared the Airbnb, which Alice paid. They had nothing to do with the car
+rental Bob paid, yet they were told to pay him. The totals were right. The list was not.
 
 The cause was in ADR-0044: `suggest_payments` put everyone who is owed into one pile and paired
 the biggest debtor with the biggest creditor. That is Splitwise's "simplify debts". It keeps the
@@ -24,7 +24,7 @@ number of payments down, but it sends people to someone they never owed, and in 
 that just starts arguments.
 
 Separately: sometimes someone pays another family's share for them, as a kindness. For example,
-Varsha pays what Sudha Ajji owes Laura. Nobody then owes Varsha anything.
+Dave pays what Erin owes Alice. Nobody then owes Dave anything.
 
 ## Decision
 
@@ -41,11 +41,11 @@ Varsha pays what Sudha Ajji owes Laura. Nobody then owes Varsha anything.
   handed it over.
 - **Paying on someone's behalf is a gift.** On the payback card, "Who paid" can be anyone on the
   trip except the receiver's own family (money from inside it would be that family paying
-  itself). If it's someone outside the family that owes, the card says so ("Varsha pays for Bhagwat
+  itself). If it's someone outside the family that owes, the card says so ("Dave pays for Patel
   family, as a gift"), and the payback clears that family's line. Nobody ends up owing the
   person who paid. It's stored as `settlements.for_participant_id`: a member of the family whose
   debt it clears (NULL means the payer's own family).
-- **Only at payback time.** We considered letting a bill say "Varsha covers Sudha Ajji" when it
+- **Only at payback time.** We considered letting a bill say "Dave covers Erin" when it
   is logged, and decided against it for now: one place to record it is enough, and the payback
   card shows it clearly.
 
