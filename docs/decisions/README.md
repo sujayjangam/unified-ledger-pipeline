@@ -53,13 +53,14 @@ supersedes the old one rather than editing history.
 | [0043](0043-everyday-groups-for-the-split-menu.md) | Everyday groups for the split menu, and no relationships between people | Accepted | 2026-11-17 |
 | [0044](0044-trip-balances-from-splits.md) | Trip balances worked out from the splits, and totals stay "what was paid" | Partly superseded by [0051](0051-debts-per-person-then-families.md) | 2026-11-17 |
 | [0045](0045-family-labels-the-rest-and-stricter-wording.md) | Family labels, "the rest", and stricter wording over a model double-check | Accepted | 2026-11-17 |
-| [0046](0046-settlements-as-their-own-records.md) | Paybacks are their own records, and can be in a different currency | Accepted | 2026-11-17 |
+| [0046](0046-settlements-as-their-own-records.md) | Paybacks are their own records, and can be in a different currency | Partly superseded by [0052](0052-settle-up-by-typed-message.md), [0053](0053-other-currency-paybacks-at-a-reference-rate.md) | 2026-11-17 |
 | [0047](0047-pay-back-only-who-you-owe.md) | Pay back only who you owe, and paying on someone's behalf | Partly superseded by [0051](0051-debts-per-person-then-families.md) | 2026-11-17 |
 | [0048](0048-exact-split-amounts-by-reply.md) | Exact split amounts, typed as a reply | Accepted | 2026-11-18 |
 | [0049](0049-prompt-holds-only-what-python-cant-read.md) | The extraction prompt holds only what Python can't read from the words | Accepted | 2026-11-18 |
 | [0050](0050-soft-delete-behind-a-view.md) | Deleted entries are marked, and a view hides them | Accepted | 2026-11-18 |
 | [0051](0051-debts-per-person-then-families.md) | Debts are worked out per person, then rolled up to families | Accepted | 2026-11-19 |
 | [0052](0052-settle-up-by-typed-message.md) | Settling up any bill by a typed "settle" message, linked to the bills it clears | Accepted | 2026-11-19 |
+| [0053](0053-other-currency-paybacks-at-a-reference-rate.md) | A payback in another currency is converted at a reference rate, then checked against the statement | Accepted | 2026-11-19 |
 
 ## Writing a new one
 
