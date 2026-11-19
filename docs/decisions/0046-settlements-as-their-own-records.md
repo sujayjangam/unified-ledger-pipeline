@@ -1,6 +1,6 @@
 # ADR-0046: Paybacks are their own records, and can be in a different currency
 
-**Status:** Accepted
+**Status:** Accepted; "Taps first" superseded by [ADR-0052](0052-settle-up-by-typed-message.md), and the rejection of market rates by [ADR-0053](0053-other-currency-paybacks-at-a-reference-rate.md) for the typed settle message
 **Date:** 2026-11-17
 **Plan:** step 5 of group-trip splitting in `ROADMAP.md`
 **Code:** `alembic/versions/0009_add_settlements.py`, `app/services/balances.py::unit_balances`,

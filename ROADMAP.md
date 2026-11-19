@@ -32,8 +32,14 @@ is tried on a Neon branch with a fictional trip-sized directory first.
    [#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114); design in
    [ADR-0052](docs/decisions/0052-settle-up-by-typed-message.md), agreed 2026-11-19). The same
    method serves everyday bills, for a later `/bals`. Typed path first, with a new
-   `settlement_bills` table (migration 0011, applied to production by hand before the merge);
-   a "Settle up" button on `/trip_bals` follows if time allows before the freeze.
+   `settlement_bills` table (migration 0011, applied to production by hand before the merge).
+   A payback in another currency is converted at a reference rate and flagged for a statement
+   check ([#138](https://github.com/sujayjangam/unified-ledger-pipeline/issues/138),
+   [ADR-0053](docs/decisions/0053-other-currency-paybacks-at-a-reference-rate.md)). Build plan,
+   four PRs: `docs/superpowers/plans/2026-11-19-settle-up.md`. The bot's screen speed is timed
+   on a phone before the freeze
+   ([#137](https://github.com/sujayjangam/unified-ledger-pipeline/issues/137)). A "Settle up"
+   button on `/trip_bals` waits until after the trip.
 2. Simplify trip debts to the fewest payments, only along existing debt lines
    ([#129](https://github.com/sujayjangam/unified-ledger-pipeline/issues/129), the last part of
    [#127](https://github.com/sujayjangam/unified-ledger-pipeline/issues/127); rule in
