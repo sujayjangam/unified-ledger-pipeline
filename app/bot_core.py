@@ -1665,7 +1665,6 @@ async def _new_settlement(update, context):
         if number > len(payments) or payments[number - 1][1].cents != cents:
             raise _SettlementUnavailable(SETTLE_STALE)
         currency, payment = payments[number - 1]
-        receiver_unit = unit_of(payment.to_unit[1], families)
         member_ids = ((payment.from_unit[1],) if payment.from_unit[0] == 'person' else
                       tuple(pid for pid in trip.member_ids if unit_of(pid, families) == payment.from_unit))
         payer = (payment.from_unit[1] if payment.from_unit[0] == 'person' else
@@ -1677,11 +1676,12 @@ async def _new_settlement(update, context):
                     date=get_sgt_now().date(), entered_by_participant_id=sender.id,
                     family=payment.from_unit[1] if payment.from_unit[0] == 'family' else None,
                     names={p.id: p.display_name for p in directory.participants},
-                    # Who can hand the money over: anyone on the trip except the receiver's
-                    # own family. Money from inside that family isn't a payback, it's the
-                    # family paying itself. Owing family first, then everyone else by name.
+                    # Who can hand the money over: anyone on the trip but the receiver, even
+                    # the receiver's own relative (ADR-0051: debts are per person, so a
+                    # family isn't one wallet). Someone outside the owing unit pays on its
+                    # behalf. Owing unit first, then everyone else by name.
                     people=tuple(sorted((p for p in directory.participants if p.id in trip.member_ids
-                                         and unit_of(p.id, families) != receiver_unit),
+                                         and p.id != payment.to_unit[1]),
                                         key=lambda p: (p.id not in member_ids, p.display_name.lower(), p.id))),
                     # Currencies already on the trip are always accepted; any real ISO code is
                     # accepted too (app/services/currencies.py), so no extra database read.

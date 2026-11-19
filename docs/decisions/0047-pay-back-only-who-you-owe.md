@@ -1,6 +1,6 @@
 # ADR-0047: Pay back only who you owe, and paying on someone's behalf
 
-**Status:** Accepted
+**Status:** Accepted; the in-family cancel, the family-pair cancel, "never route" and the receiver's-family ban superseded by [ADR-0051](0051-debts-per-person-then-families.md)
 **Date:** 2026-11-17
 **Plan:** step 5 of group-trip splitting in `ROADMAP.md`, with ADR-0046
 **Code:** `app/services/balances.py`, `app/services/settlements.py`, `app/bot_core.py::handle_settle_button`

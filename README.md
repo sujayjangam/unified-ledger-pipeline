@@ -160,8 +160,10 @@ the options turned down, and what it cost. The ones that shaped the system most:
   turn trip mode off. Each person has their own switch, and a banner is pinned in your chat
   while it's on. The card shows the trip, with a button to leave a single entry out of it.
 - `/trip_bals` shows who owes whom on a trip, worked out from the saved splits: a balance per
-  family and per currency, and a short list of payments that settles it. Money goes back to the
-  person who paid the bill. It's plain text, so it can be forwarded to the group.
+  family and per currency, with each member underneath, and a short list of payments that
+  settles it. Debts are worked out per person, so relatives who paid for each other settle up
+  too; a family's debts to someone outside it are paid as one. Money goes back to the person
+  who paid the bill. It's plain text, so it can be forwarded to the group.
 - Paybacks: a "Mark paid" button under each suggested payment opens a payback card, saved only on
   Confirm. You can type a different amount, and the money handed over can be in another
   currency. A payback is its own record, never spending. Paying more than is owed gets a warning

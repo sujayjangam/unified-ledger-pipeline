@@ -1,6 +1,6 @@
 # ADR-0051: Debts are worked out per person, then rolled up to families
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-11-19
 **Issues:** [#128](https://github.com/sujayjangam/unified-ledger-pipeline/issues/128), [#129](https://github.com/sujayjangam/unified-ledger-pipeline/issues/129) (parent [#127](https://github.com/sujayjangam/unified-ledger-pipeline/issues/127))
 **Code:** `app/services/balances.py`, `app/bot_core.py::handle_settle_button`
