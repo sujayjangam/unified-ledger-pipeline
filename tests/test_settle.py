@@ -222,15 +222,15 @@ def test_named_receiver_narrows_and_no_debt_refusals():
     bills = [bill("alice"), bill("bob", payer=2)]
     result = settle("Settle Carol paid Alice 120 for saree pleating", bills)
     assert result.rows == (SettleRow("alice", 3, 12000),)
-    with pytest.raises(SettleRefused, match="Carol owes Alice nothing\\."):
-        settle("Settle Carol paid Alice 120", [bill(payer=2)])
-    with pytest.raises(SettleRefused, match="Erin owes Alice nothing on these bills\\."):
+    question = settle("Settle Carol paid Alice 120", [bill(payer=2)])
+    assert question.question == 'owes_nothing'
+    assert question.receiver_options == ((2, 12000),)
+    assert not question.rows and not question.can_confirm
+    with pytest.raises(SettleRefused, match="No match\\."):
         settle("Settle Carol paid Alice 120 for Erin", [bill()])
 
 
 @pytest.mark.parametrize("text, bills, trip, message", [
-    ("Settle Carol paid Alice 120 for airbnb", [bill(description="airbnb", payer=2)], 10,
-     "The airbnb was paid by Bob, not Alice."),
     ("Settle Carol paid 120 for car", [bill("a", "car", payer=1), bill("b", "car", payer=2)], 10,
      "These bills were paid by Alice and Bob. Send one settle message for each."),
     ("Settle Carol paid 120 for car", [bill("a", "car"), bill("b", "car", trip=None)], None,
@@ -304,7 +304,7 @@ def test_repeated_share_is_merged_not_paid_twice():
 
 def test_owing_nobody_is_refused_not_a_dead_card():
     """No receiver, no rows and no Confirm would be a dead end: say why instead."""
-    with pytest.raises(SettleRefused, match=r"Carol doesn't owe anyone on these bills\."):
+    with pytest.raises(SettleRefused, match=r"No match\."):
         settle("Settle Carol paid 50", [])
 
 
@@ -409,3 +409,19 @@ def test_everyday_only_wins_over_trip_debts_in_two_currencies():
              bill("bed", "Bed", trip=None)]
     result = settle("Settle Carol paid 120 for bed", bills)
     assert result.parts[0].kind == "everyday_only" and not result.can_confirm
+
+
+def test_paid_by_other_uses_the_named_bills_currency():
+    """Found on the test bot: Carol owes Alice in SGD and INR, and the menu picks Bob.
+
+    The saree bill is Alice's, so the card asks "Did you mean Alice?". It must ask
+    in the saree's currency (SGD), not refuse because Carol's other Alice debt is INR.
+    """
+    bills = [bill(), bill("deco", "diwali deco", currency="INR", amount=726000),
+             bill("car", "car rental", payer=2)]
+    result = settle("Settle Carol paid 90 for saree pleating", bills,
+                    choices=SettleChoices(receiver_id=2))
+    assert result.question == 'paid_by_other' and result.question_payer == 1
+    assert result.currency == 'SGD'
+    assert result.receiver_options == ((1, 12000),)
+    assert not result.rows and not result.can_confirm

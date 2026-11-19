@@ -88,9 +88,20 @@ def test_every_example_is_in_the_model_check():
     text: importing the script would load .env and build an OpenAI client."""
     from pathlib import Path
     script = (Path(__file__).parent.parent / "scripts" / "check_extraction.py").read_text(encoding="utf-8").casefold()
-    examples = [line.removeprefix("• ") for _, text in TOPICS.values() for line in text.splitlines()
+    examples = [line.removeprefix("• ") for key, (_, text) in TOPICS.items() if key != 'settle' for line in text.splitlines()
                 # An example has an amount and no double quotes; the rule lines quote wordings.
                 if line.startswith("• ") and any(ch.isdigit() for ch in line) and '"' not in line]
     assert examples  # the filter below must still be finding them
     missing = [e for e in examples if e.casefold() not in script]
     assert not missing
+
+
+def test_settle_examples_use_the_python_reader():
+    """Settle examples have no model dependency: exercise their actual reader."""
+    from test_settle import PEOPLE, FAMILIES
+    from app.services.settle import read_settle
+
+    examples = [line.removeprefix('• ') for line in TOPICS['settle'][1].splitlines() if line.startswith('• ')]
+    assert len(examples) == 3
+    for example in examples:
+        assert read_settle(example, PEOPLE, PEOPLE[0], FAMILIES).cents > 0

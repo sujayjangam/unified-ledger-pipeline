@@ -49,6 +49,12 @@ def format_cents(amount_cents: int) -> str:
     dollars, cents = divmod(abs(int(amount_cents)), 100)
     return f"{sign}{dollars}.{cents:02d}"
 
+def format_money(cents: int, currency: str) -> str:
+    """Settle-screen money, grouped for readability without passing through a float."""
+    whole, fraction = format_cents(cents).split(".")
+    return f"{currency} {int(whole):,}.{fraction}" if cents >= 0 else f"{currency} -{int(whole.lstrip('-')):,}.{fraction}"
+
+
 def add_expense(date_str, description, amount_dollars, category, currency="SGD", transaction_type="Expense", source="Manual CLI", idempotency_key=None,
                 account_id=None, entered_by_participant_id=None, trip_id=None, paid_by_participant_id=None, splits=None):
     try:

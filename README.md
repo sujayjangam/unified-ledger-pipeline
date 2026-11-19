@@ -120,8 +120,9 @@ the options turned down, and what it cost. The ones that shaped the system most:
 - A warning before saving something that looks like an entry from the last 5 minutes (same
   amount and currency, logged by anyone in the household). It says who logged it when that's
   known. You can save anyway or cancel.
-- `/help` shows how to word an entry, as topic buttons: splitting, splitting by nights, who
-  paid, and dates. Every example in it is checked against the real model.
+- `/help` shows how to word an entry, as topic buttons: settling up, splitting, splitting by
+  nights, who paid, and dates. Every expense example in it is checked against the real model;
+  the settling-up examples are checked against the settle reader, which uses no model.
 
 **People and cards**
 
@@ -168,6 +169,15 @@ the options turned down, and what it cost. The ones that shaped the system most:
   Confirm. You can type a different amount, and the money handed over can be in another
   currency. A payback is its own record, never spending. Paying more than is owed gets a warning
   and a "Confirm overpayment" button, not a refusal.
+- Settling up by message: a message starting "settle" ("Settle Carol paid 381 for saree
+  pleating") is read in Python, never by the model, and shows a card of the bills it pays off,
+  each share cleared or still owed, before anything is saved. With no bill named it pays the
+  oldest bills first; "Did you mean", Change bills, Change who paid and Change receiver fix a
+  wrong guess. Each payback records which bill shares it cleared. A payback in another
+  currency is converted at a reference rate (Frankfurter; only the two currency codes and a
+  date are sent) and flagged to check against the statement
+  ([ADR-0052](docs/decisions/0052-settle-up-by-typed-message.md),
+  [ADR-0053](docs/decisions/0053-other-currency-paybacks-at-a-reference-rate.md)).
 
 **Reading the ledger**
 
@@ -191,7 +201,6 @@ the options turned down, and what it cost. The ones that shaped the system most:
 
 What's coming is tracked in [`ROADMAP.md`](ROADMAP.md):
 
-- **Linking each payback to the bill it paid off.**
 - **Reconciliation engine** (Phase 1): read PDF bank statements
   ([ADR-0016](docs/decisions/0016-pdf-statements-over-csv.md)) into a staging table and match
   them to ledger entries with step-by-step rules. A line is matched automatically only when

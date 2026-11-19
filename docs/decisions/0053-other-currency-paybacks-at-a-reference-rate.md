@@ -4,8 +4,8 @@
 **Date:** 2026-11-19
 **Issue:** [#138](https://github.com/sujayjangam/unified-ledger-pipeline/issues/138) (part of
 [#134](https://github.com/sujayjangam/unified-ledger-pipeline/issues/134))
-**Code:** not built. Planned: rate columns on `settlements` in migration `0011`, a rate reader in
-`app/services/`, and the settle card in `app/bot_core.py` (PR 3 of the settle-up plan).
+**Code:** `alembic/versions/0011_*` (rate columns), `app/services/fx.py`,
+`app/bot_core.py::_settle_message` and `_settle_up_reply`
 **Changes:** [ADR-0046](0046-settlements-as-their-own-records.md) rejected "converting
 currencies at a market rate". That stays true for "Mark paid", where both amounts are typed; the
 typed settle message

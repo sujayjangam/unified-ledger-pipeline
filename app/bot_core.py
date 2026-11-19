@@ -3,6 +3,7 @@ import os
 import uuid
 import datetime
 from dataclasses import replace
+from decimal import Decimal
 from dotenv import load_dotenv
 from telegram import BotCommand, Update, InlineKeyboardButton, InlineKeyboardMarkup, ForceReply
 from telegram.helpers import escape_markdown
@@ -35,10 +36,13 @@ from app.services.trips import (
     Trip, load_active_trip, trip_families, switch_trip_off, switch_trip_on, member_trips,
     member_trip, banner_message_id, set_banner_message_id, format_trip_dates,
 )
-from app.services.balances import trip_balance_lines, trip_payments, unit_of
+from app.services.balances import trip_balance_lines, trip_payments, unit_of, open_bill_shares
 from app.services.settlements import (
-    add_settlement, is_overpayment, settlement_card_text, change_settlement_amount,
+    add_settlement, is_overpayment, settlement_card_text, change_settlement_amount, parse_settlement_amount,
 )
+from app.services.settle import Bill, SettleChoices, SettleRefused, is_settle, read_settle
+from app.services.settle_card import build_settle_card, settle_card_state
+from app.services.fx import reference_rate, convert, rate_cached
 from app.services.help_topics import INTRO as HELP_INTRO, TOPICS as HELP_TOPICS
 
 # use the local windows persmissions
@@ -1419,6 +1423,9 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
     'directory' is the participants and accounts authorize() just read - the same snapshot is
     used for the prompt's account list, the payment rules and the card, so they can't disagree.
     """
+    if is_settle(raw_text):
+        await _settle_message(update, context, raw_text, status_msg, directory)
+        return
     # One "today" for this whole entry, in Singapore time: the prompt reads the message
     # against it and the date resolver counts back from it, so they can't disagree (#15).
     today = get_sgt_now().date()
@@ -1601,6 +1608,372 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Clean up manually since we used delete=False
         if os.path.exists(temp_filepath):
             os.remove(temp_filepath)
+
+SETTLE_UP_READ_ERROR = "Couldn't load the bills. Try again."
+SETTLE_UP_FAILED = "Couldn't read that settle message. Nothing was saved."
+SETTLE_UP_GONE = 'This settle card is no longer available. Send the settle message again.'
+
+
+def _bill_date(value):
+    """`transactions.date` is ISO text ("2026-10-19"), but the card prints a day and month
+    from it, so turn it into a date here. Text that doesn't parse stays as it is; the
+    card shows it raw rather than crash (a str here once crashed the close-match card)."""
+    try:
+        return datetime.date.fromisoformat(value) if isinstance(value, str) else value
+    except ValueError:
+        return value
+
+
+def _load_settle_bills(trip):
+    """Read and fold one scope with its own families; None is failure, never empty debts."""
+    scope = trip.id if trip else None
+    entries = get_trip_split_entries(scope)
+    settlements = get_trip_settlements(scope)
+    if entries is None or settlements is None:
+        raise RuntimeError('Bills or paybacks unavailable')
+    opened = open_bill_shares(entries, dict(trip.families) if trip else {}, settlements)
+    return tuple(Bill(e['transaction_id'], scope, _bill_date(e['date']), e['description'],
+                      dollars_to_cents(e['amount']), e['currency'], e['paid_by'],
+                      {p: cents for (bid, p), cents in opened.items() if bid == e['transaction_id']})
+                 for e in entries if e['paid_by'] is not None)
+
+
+def _load_settle_snapshot(sender, directory):
+    """Capture every allowed scope once; taps use only this result.
+
+    An absent active trip is normal. Missing membership details or failed pages
+    are errors, because silently omitting a trip could match the wrong bill.
+    """
+    active = _load_bals_trip(sender.id, None)
+    trips = [active] if active else []
+    if active is None:
+        offset = 0
+        while True:
+            page = _load_bals_choices(sender.id, offset)
+            if page is None:
+                raise RuntimeError('Trip list unavailable')
+            choices, more = page
+            for choice in choices:
+                trip = _load_bals_trip(sender.id, choice.id)
+                if trip is None:
+                    raise RuntimeError('Trip unavailable')
+                trips.append(trip)
+            if not more:
+                break
+            if not choices:
+                raise RuntimeError('Empty unfinished trip page')
+            offset += TRIP_PAGE_SIZE
+    bills = list(_load_settle_bills(None))
+    for trip in trips:
+        bills.extend(_load_settle_bills(trip))
+    # Stable sorting retains the query's created_at ordering for same-day bills.
+    # str() keeps an unparsed date (left as text by _bill_date) from crashing the sort;
+    # a date's str is its ISO text, so the order is the same.
+    bills.sort(key=lambda b: str(b.date))
+    people = tuple(p for p in directory.participants if not active or p.id in active.member_ids)
+    return dict(bills=tuple(bills), trip_id=active.id if active else None,
+                scope_labels={None: 'Everyday', **{t.id: t.name for t in trips}},
+                scope_people={None: tuple(p.id for p in directory.participants),
+                              **{t.id: t.member_ids for t in trips}},
+                names={p.id: p.display_name for p in directory.participants},
+                people=tuple(p.id for p in people)), people, dict(active.families) if active else {}
+
+
+def _su_state(card):
+    """Drop conversion provenance when a choice changes the currency pair.
+
+    A tap never fetches a rate. A newly foreign pair asks for a typed amount;
+    conversion from a different pair must never silently follow the choice.
+    """
+    changed = dict(card)
+    probe = settle_card_state({**changed, 'clears_cents': None})
+    pair = (probe['result'].paid_currency, probe['result'].currency)
+    if changed.get('fx_pair') != pair or pair[0] == pair[1]:
+        for key in ('clears_cents', 'fx_rate', 'fx_rate_date', 'fx_source', 'fx_pair'):
+            changed.pop(key, None)
+    return settle_card_state(changed)
+
+
+def _su_markup(rows):
+    """Translate the pure renderer's index-only buttons at the Telegram boundary."""
+    return InlineKeyboardMarkup([[InlineKeyboardButton(label, callback_data=data)
+                                  for label, data in row] for row in rows]) if rows else None
+
+
+async def _clear_settle_prompt(context, chat_id, card_id, replied_id=None):
+    """Delete the card's open amount prompt (and a stale reply target) and drop the links.
+
+    Mirrors _clear_split_prompt. Deletes are best effort (_delete_quietly), so a failed
+    delete can never block a redraw or a save.
+    """
+    prompt_id = context.user_data.get('settle_up_prompt_of_card', {}).pop(card_id, None)
+    for previous in dict.fromkeys((prompt_id, replied_id)):
+        if previous is not None:
+            context.user_data.get('settle_up_prompts', {}).pop(previous, None)
+            await _delete_quietly(context.bot, chat_id, previous)
+
+
+async def _su_prompt(message, context, card_id, card):
+    """Link a ForceReply to its card; no amount reply can fall into expense extraction.
+
+    A card keeps one open prompt: the old one is deleted only after the new one was sent,
+    so a failed send leaves the old prompt usable.
+    """
+    currency = card['result'].currency
+    prompt = f'Reply with how much {currency} this clears, e.g. 6452'
+    sent = await message.reply_text(prompt, reply_markup=ForceReply(selective=True))
+    old_id = context.user_data.get('settle_up_prompt_of_card', {}).get(card_id)
+    if old_id is not None:
+        context.user_data.get('settle_up_prompts', {}).pop(old_id, None)
+        await _delete_quietly(context.bot, message.chat_id, old_id)
+    _bounded_put(context.user_data.setdefault('settle_up_prompts', {}), sent.message_id, (card_id, currency))
+    _bounded_put(context.user_data.setdefault('settle_up_prompt_of_card', {}), card_id, sent.message_id)
+
+
+async def _settle_message(update, context, raw_text, status_msg, directory):
+    """Read a settle message without extraction, capture bills, then look up at most one rate."""
+    started, rate_ms, cached = time.perf_counter(), 0, False
+    try:
+        sender = directory.participant_by_telegram_id(str(update.effective_user.id))
+        try:
+            snapshot, people, families = _load_settle_snapshot(sender, directory)
+        except Exception as exc:
+            print(f'Settle snapshot unavailable: {type(exc).__name__}')
+            await status_msg.edit_text(SETTLE_UP_READ_ERROR)
+            return
+        reading = read_settle(raw_text, people, sender, families)
+        card = settle_card_state(dict(snapshot, reading=reading, choices=SettleChoices(), view='card',
+                                      date=get_sgt_now().date(), entered_by_participant_id=sender.id,
+                                      sender_telegram_id=str(update.effective_user.id),
+                                      idempotency_key=str(uuid.uuid4())))
+        if card['result'].needs_rate:
+            pair = card['result'].needs_rate
+            cached = rate_cached(*pair, card['date'])
+            rate_started = time.perf_counter()
+            rate = await reference_rate(*pair, card['date'])
+            rate_ms = (time.perf_counter() - rate_started) * 1000
+            if rate is not None:
+                try:
+                    cleared = convert(reading.cents, rate[0])
+                except ValueError:
+                    cleared = None
+                if cleared is not None:
+                    card.update(clears_cents=cleared, fx_rate=rate[0], fx_rate_date=rate[1],
+                                fx_source='frankfurter', fx_pair=pair)
+                    card = settle_card_state(card)
+        text, rows = build_settle_card(card)
+        await status_msg.edit_text(text, reply_markup=_su_markup(rows))
+        _bounded_put(context.user_data.setdefault('pending_settle_ups', {}), status_msg.message_id, card)
+        if card['result'].needs_rate:
+            await _su_prompt(update.effective_message, context, status_msg.message_id, card)
+    except SettleRefused as exc:
+        await status_msg.edit_text(str(exc))
+    except Exception as exc:
+        # Never leave "Extracting data..." up with no answer: a crash while drawing
+        # the card once did exactly that on the test bot. Nothing was saved.
+        print(f'Settle card failed: {type(exc).__name__}: {exc}')
+        try:
+            await status_msg.edit_text(SETTLE_UP_FAILED)
+        except Exception as edit_exc:
+            print(f'Settle error message failed: {type(edit_exc).__name__}')
+    finally:
+        print(f'settle card {(time.perf_counter() - started) * 1000:.0f} ms '
+              f'(rate {rate_ms:.0f} ms, cached {"yes" if cached else "no"})')
+
+
+async def handle_settle_up_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Serialize every tap, answer once, and commit copied state only after its redraw."""
+    query = update.callback_query
+    card_id = query.message.message_id
+    toast, answered, alert = None, False, False
+    try:
+        async with _card_lock(context, card_id):
+            outcome = _card_outcome(context, card_id)
+            if outcome:
+                toast = '✅ Payback already saved.' if outcome == 'saved' else '❌ Cancelled.'
+                return
+            if query.data == 'su:saving':
+                toast = '⏳ Saving...'
+                return
+            pending = context.user_data.setdefault('pending_settle_ups', {})
+            card = pending.get(card_id)
+            if card is None:
+                # A toast only: editing would wipe a card someone else may still be
+                # reading (pending cards live in the tapper's own user_data).
+                toast = SETTLE_UP_GONE
+                return
+            if card['sender_telegram_id'] != str(update.effective_user.id):
+                return
+            # Only a button currently displayed can act. This also rejects negative
+            # indexes and fabricated Confirm callbacks on unanswered questions.
+            _, displayed = build_settle_card(card)
+            if query.data not in {data for row in displayed for _, data in row}:
+                return
+            action = query.data.split(':')[1]
+            if action == 'amount':
+                await _su_prompt(query.message, context, card_id, card)
+                return
+            if action == 'confirm':
+                # Answer now, before the blocking save, so the button stops spinning;
+                # the "⏳ Saving..." redraw below is what stops a second tap.
+                # Set the guard first: if answer() itself fails, it must not be retried.
+                answered = True
+                await query.answer()
+                text, rows = build_settle_card({**card, 'saving': True})
+                await query.edit_message_text(text, reply_markup=_su_markup(rows))
+                result = card['result']
+                try:
+                    add_settlement(from_id=result.giver_id, to_id=result.receiver_id, for_id=None,
+                                   clears_amount=format_cents(card.get('clears_cents', card['reading'].cents)),
+                                   clears_currency=result.currency, paid_amount=format_cents(card['reading'].cents),
+                                   paid_currency=result.paid_currency, trip_id=result.trip_id, date=card['date'],
+                                   source='telegram_bot', entered_by_participant_id=card['entered_by_participant_id'],
+                                   idempotency_key=card['idempotency_key'],
+                                   bills=[dict(transaction_id=r.transaction_id, for_id=r.for_id, cents=r.cents) for r in result.rows],
+                                   fx_rate=card.get('fx_rate'), fx_rate_date=card.get('fx_rate_date'),
+                                   fx_source=card.get('fx_source'), needs_statement_check=result.paid_currency != result.currency)
+                except Exception as exc:
+                    print(f'Could not save settle: {type(exc).__name__}')
+                    text, rows = build_settle_card(card)
+                    await query.edit_message_text(text + "\nCouldn't save. Try Confirm again.", reply_markup=_su_markup(rows))
+                    return
+                # Once persisted, resolve even if Telegram's final edit fails: retrying
+                # an old button must not create a second write or reopen the card.
+                pending.pop(card_id)
+                _mark_card_resolved(context, card_id, 'saved')
+                # Saved: the amount prompt is now clutter. Only after a successful save,
+                # so a failed save (returned above) keeps it for another try.
+                await _clear_settle_prompt(context, query.message.chat_id, card_id)
+                text, _ = build_settle_card({**card, 'outcome': 'saved'})
+                await query.edit_message_text(text, reply_markup=None)
+                return
+            if action == 'cancel':
+                text, _ = build_settle_card({**card, 'outcome': 'cancelled'})
+                await query.edit_message_text(text, reply_markup=None)
+                pending.pop(card_id)
+                _mark_card_resolved(context, card_id, 'cancelled')
+                await _clear_settle_prompt(context, query.message.chat_id, card_id)
+                return
+            changed = dict(card)
+            choices = card['choices']
+            if action in ('bills', 'giver', 'receivers', 'back'):
+                changed['view'] = {'receivers': 'receiver', 'back': 'card'}.get(action, action)
+                if action == 'bills':
+                    # Freeze the row order for this visit to the menu (ticked first), and
+                    # start on the first page.
+                    options = card['share_options']
+                    changed['bills_order'] = tuple(sorted(range(len(options)), key=lambda i: not options[i][3]))
+                    changed['bills_page'] = 0
+            elif action == 'everyday':
+                changed['choices'] = replace(choices, everyday=True, shares=None)
+            else:
+                index = int(query.data.split(':')[2])
+                if action == 'receiver':
+                    changed['choices'] = replace(choices, receiver_id=card['receiver_options'][index][0], shares=None)
+                    changed['view'] = 'card'
+                elif action == 'person':
+                    changed['choices'] = replace(choices, giver_id=card['giver_options'][index], shares=None)
+                    changed['view'] = 'card'
+                elif action == 'pick':
+                    part, bid = card['pick_options'][index]
+                    changed['choices'] = replace(choices, picks={**choices.picks, part: bid})
+                elif action == 'oldest':
+                    changed['choices'] = replace(choices, oldest_first=choices.oldest_first | {card['oldest_options'][index]})
+                elif action == 'page':
+                    changed['bills_page'] = index
+                elif action == 'share':
+                    selected = [(bid, p) for bid, p, _, tick in card['share_options'] if tick]
+                    key = card['share_options'][index][:2]
+                    selected.remove(key) if key in selected else selected.append(key)
+                    changed['choices'] = replace(choices, shares=tuple(selected))
+            try:
+                changed = _su_state(changed)
+            except SettleRefused as exc:
+                # A menu choice that can't work (say, a new giver who owes nothing here)
+                # is an alert, still inside the lock; the card and its pending state stay.
+                # An alert, not a toast: a toast vanishes in a second and the tap looks
+                # dead, as the payer button's "no account fits" learned (show_alert).
+                toast, alert = str(exc), True
+                return
+            text, rows = build_settle_card(changed)
+            await query.edit_message_text(text, reply_markup=_su_markup(rows))
+            pending[card_id] = changed
+            if changed['result'].needs_rate and changed.get('view') == 'card':
+                await _su_prompt(query.message, context, card_id, changed)
+            elif changed['result'].paid_currency == changed['result'].currency:
+                # No longer paid in another currency (say, a receiver whose bills are in
+                # the paid currency): an open amount prompt has nothing left to set.
+                await _clear_settle_prompt(context, query.message.chat_id, card_id)
+    except Exception as exc:
+        print(f'Settle tap failed: {type(exc).__name__}')
+    finally:
+        if not answered:
+            if alert:
+                await query.answer(toast, show_alert=True)
+            else:
+                await query.answer(toast) if toast else await query.answer()
+
+
+async def _settle_up_reply(update, context):
+    """Consume FX replies under the card lock, validating currency before any change.
+
+    The reply message is always deleted (inside the lock, like split replies). The prompt
+    is deleted too once the amount was read, or if the card is gone; a refused amount keeps
+    the prompt so the user can reply again.
+    """
+    message = update.message
+    replied = message.reply_to_message
+    link = context.user_data.get('settle_up_prompts', {}).get(replied.message_id) if replied else None
+    chat_id = message.chat_id
+    if link is None:
+        if (replied and isinstance(replied.text, str) and replied.text.startswith('Reply with how much ')
+                and replied.from_user and replied.from_user.id == context.bot.id):
+            await _delete_quietly(context.bot, chat_id, message.message_id)
+            await _delete_quietly(context.bot, chat_id, replied.message_id)
+            await message.reply_text(SETTLE_UP_GONE)
+            return True
+        return False
+    card_id, currency = link
+    async with _card_lock(context, card_id):
+        await _delete_quietly(context.bot, chat_id, message.message_id)
+        pending = context.user_data.get('pending_settle_ups', {})
+        card = pending.get(card_id)
+        if card is None:
+            await _clear_settle_prompt(context, chat_id, card_id, replied.message_id)
+            await message.reply_text(SETTLE_UP_GONE)
+            return True
+        if currency != card['result'].currency:
+            await message.reply_text('The bills changed. Use Change amount cleared on the card.')
+            return True
+        try:
+            cents, code = parse_settlement_amount(message.text, currency, (currency,))
+            if code != currency:
+                raise ValueError(f'Use {currency} for the amount it clears')
+        except ValueError as exc:
+            await message.reply_text(str(exc))
+            return True
+        changed = dict(card, clears_cents=cents, fx_rate=Decimal(cents) / Decimal(card['reading'].cents),
+                       fx_rate_date=get_sgt_now().date(), fx_source='typed', view='card',
+                       fx_pair=(card['result'].paid_currency, currency))
+        # The reply is already deleted, so a failure here must still say something; the
+        # card and its prompt stay as they were, ready for another reply.
+        try:
+            changed = settle_card_state(changed)
+            text, rows = build_settle_card(changed)
+            await context.bot.edit_message_text(chat_id=chat_id, message_id=card_id,
+                                                text=text, reply_markup=_su_markup(rows))
+        except SettleRefused as exc:
+            await message.reply_text(str(exc))
+            return True
+        except Exception as exc:
+            print(f'Settle amount reply failed: {type(exc).__name__}')
+            await message.reply_text("Couldn't change the card. Reply again.")
+            return True
+        pending[card_id] = changed
+        # Read and redrawn: the prompt has done its job.
+        await _clear_settle_prompt(context, chat_id, card_id, replied.message_id)
+    return True
+
 
 # typed expense entry - no transcription step, the message body IS the input
 SETTLE_STALE = "Balances changed, open /trip_bals again."
@@ -1909,6 +2282,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     # Authorize first (every message, fail closed), then check whether this text is a reply
     # to a payback amount prompt. Such a reply is never an expense, so it stops here.
+    if await _settle_up_reply(update, context):
+        return
     if await _settlement_reply(update, context):
         return
     if await _split_amounts_reply(update, context, directory):
@@ -2390,6 +2765,7 @@ def get_application():
     app.add_handler(CallbackQueryHandler(handle_trip_button, pattern=r"^trip:"))
     app.add_handler(CallbackQueryHandler(handle_bals_button, pattern=r"^bals:"))
     app.add_handler(CallbackQueryHandler(handle_settle_button, pattern=r"^settle:"))
+    app.add_handler(CallbackQueryHandler(handle_settle_up_button, pattern=r"^su:"))
     app.add_handler(CallbackQueryHandler(handle_payer_button, pattern=r"^payer:"))
     app.add_handler(CallbackQueryHandler(handle_split_button, pattern=r"^split:"))
     app.add_handler(CallbackQueryHandler(handle_help_button, pattern=r"^help:"))

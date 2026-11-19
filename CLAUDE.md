@@ -214,6 +214,17 @@ Env vars (`.env.example` shows the format):
   never as "nobody owes anything". A split entry still with no payer after the fallback (account owner, else sender) is left out with a ⚠️ line,
   never guessed. A trip id from a button is loaded only through `member_trip`. The reply is
   plain text with no `parse_mode`.
+- A message whose first word is "settle" is a payback, read by `app/services/settle.py` with
+  no model ([ADR-0052](docs/decisions/0052-settle-up-by-typed-message.md)). The check is the
+  first line of `process_expense_text`, so a settle message never reaches extraction. The
+  settle card (`app/services/settle_card.py`, callback prefix `su:`) follows the card rules:
+  card lock, answer once, toast only on resolved cards, redraw from a copy. Every tap reruns
+  `settle_up` from the reading and the snapshot kept on the card, never the database or the
+  directory. Another currency is converted only through `app/services/fx.py`
+  ([ADR-0053](docs/decisions/0053-other-currency-paybacks-at-a-reference-rate.md)), looked
+  up once when the message is read, never on a tap; a failed lookup asks for a typed amount
+  and never blocks. The amount prompt and each reply are deleted once read, like split
+  prompts; a refused reply keeps the prompt, and a failed delete is only printed. Settle-screen money goes through `format_money` (built on `format_cents`).
 - The duplicate check runs before the card is shown, never inside the insert, and a failed check
   gives a normal card — it must never block a save
   ([ADR-0027](docs/decisions/0027-duplicate-warning-before-the-card.md)).

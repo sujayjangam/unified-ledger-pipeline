@@ -5,8 +5,8 @@
 **Issue:** [#134](https://github.com/sujayjangam/unified-ledger-pipeline/issues/134) (takes in
 [#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113) and
 [#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114))
-**Code:** not built. Planned: migration `0011`, a settle reader in `app/services/`, a settle card
-in `app/bot_core.py`, and bill rows in `app/services/balances.py::_pay_back`.
+**Code:** `alembic/versions/0011_*`, `app/services/settle.py`, `app/services/settle_card.py`,
+`app/bot_core.py::handle_settle_up_button`, `app/services/balances.py::open_bill_shares`
 **Changes:** in [ADR-0046](0046-settlements-as-their-own-records.md), "Taps first" (a typed
 message comes first; the "Mark paid" buttons stay until a "Settle up" button replaces them). The
 rest of ADR-0046, ADR-0047 and ADR-0051 stays.

@@ -10,7 +10,8 @@ from app.services.currencies import ISO_4217
 
 def add_settlement(*, from_id, to_id, clears_amount, clears_currency, paid_amount,
                    paid_currency, date, source, idempotency_key, trip_id=None,
-                   entered_by_participant_id=None, note=None, for_id=None, bills=()) -> bool:
+                   entered_by_participant_id=None, note=None, for_id=None, bills=(),
+                   fx_rate=None, fx_rate_date=None, fx_source=None, needs_statement_check=False) -> bool:
     """Insert once, returning False for a retry already saved; database errors propagate.
 
     Callers supply decimal amounts, as text where possible. Both pass through the same
@@ -20,6 +21,10 @@ def add_settlement(*, from_id, to_id, clears_amount, clears_currency, paid_amoun
     """
     clears_cents = dollars_to_cents(clears_amount)
     paid_cents = dollars_to_cents(paid_amount)
+    # Partial provenance cannot explain a conversion later; reject before any I/O.
+    fx_values = (fx_rate, fx_rate_date, fx_source)
+    if any(v is not None for v in fx_values) and not all(v is not None for v in fx_values):
+        raise ValueError("Set all three FX values together")
     if from_id == to_id or for_id == to_id:
         raise ValueError("A payback needs two different people")
     if clears_currency == paid_currency and clears_cents != paid_cents:
@@ -38,15 +43,19 @@ def add_settlement(*, from_id, to_id, clears_amount, clears_currency, paid_amoun
     params = dict(for_id=for_id, trip_id=trip_id, from_id=from_id, to_id=to_id, clears_cents=clears_cents,
                   clears_currency=clears_currency, paid_cents=paid_cents,
                   paid_currency=paid_currency, date=date, source=source, note=note,
-                  entered_by_participant_id=entered_by_participant_id, idempotency_key=idempotency_key)
+                  entered_by_participant_id=entered_by_participant_id, idempotency_key=idempotency_key,
+                  fx_rate=fx_rate, fx_rate_date=fx_rate_date, fx_source=fx_source,
+                  needs_statement_check=needs_statement_check)
     with get_connection() as conn:
         result = conn.execute(text('''
             INSERT INTO settlements (
                 trip_id, from_participant_id, to_participant_id, for_participant_id, clears_cents, clears_currency,
-                paid_cents, paid_currency, date, source, note, entered_by_participant_id, idempotency_key
+                paid_cents, paid_currency, date, source, note, entered_by_participant_id, idempotency_key,
+                fx_rate, fx_rate_date, fx_source, needs_statement_check
             ) VALUES (
                 :trip_id, :from_id, :to_id, :for_id, :clears_cents, :clears_currency,
-                :paid_cents, :paid_currency, :date, :source, :note, :entered_by_participant_id, :idempotency_key
+                :paid_cents, :paid_currency, :date, :source, :note, :entered_by_participant_id, :idempotency_key,
+                :fx_rate, :fx_rate_date, :fx_source, :needs_statement_check
             ) ON CONFLICT (idempotency_key) DO NOTHING RETURNING id
         '''), params)
         inserted = result.rowcount == 1

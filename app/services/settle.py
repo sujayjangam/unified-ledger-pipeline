@@ -7,7 +7,7 @@ button choice against the same snapshot therefore gives the same card.
 
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 
 from app.add_expense import dollars_to_cents
@@ -78,6 +78,8 @@ class SettleChoices:
     picks: Mapping[int, str] = field(default_factory=dict)
     oldest_first: frozenset[int] = frozenset()
     everyday: bool = False
+    giver_id: int | None = None
+    shares: tuple[tuple[str, int], ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -115,6 +117,47 @@ class SettleResult:
     clears_all: bool
     receiver_options: tuple[tuple[int, int], ...] = ()
     needs_rate: tuple[str, str] | None = None
+    question: str | None = None
+    question_said: str | None = None
+    question_payer: int | None = None
+
+
+def card_people(reading: SettleReading, choices: SettleChoices) -> tuple[int, ...]:
+    """Names explicitly said survive changing the giver; unnamed parts follow the giver."""
+    giver = choices.giver_id if choices.giver_id is not None else reading.giver_id
+    return tuple(dict.fromkeys(p for part in reading.parts for p in (part.people or (giver,)))) or (giver,)
+
+
+def receiver_options(reading: SettleReading, bills: Sequence[Bill], result: SettleResult,
+                     choices: SettleChoices = SettleChoices()) -> tuple[tuple[int, int], ...]:
+    """People owed in this card's scope and currency, largest debt first."""
+    totals = {}
+    for bill in bills:
+        if bill.trip_id != result.trip_id or result.currency and bill.currency != result.currency:
+            continue
+        cents = sum(max(0, bill.open.get(p, 0)) for p in card_people(reading, choices))
+        if cents and bill.payer_id != result.giver_id:
+            totals[bill.payer_id] = totals.get(bill.payer_id, 0) + cents
+    return tuple(sorted(totals.items(), key=lambda item: (-item[1], item[0])))
+
+
+def bill_share_options(reading: SettleReading, bills: Sequence[Bill], result: SettleResult,
+                       choices: SettleChoices = SettleChoices()) -> tuple[tuple[str, int, int, bool], ...]:
+    """Open shares as (bill id, person id, cents, ticked), oldest bill then named person.
+
+    Ticks include selected shares receiving zero cents, so a short payment can still
+    show every intended bill. The menu may move ticked rows first for display only.
+    """
+    selected = choices.shares
+    if selected is None:
+        parts = reading.parts or (SettlePart((), (), ""),)
+        selected = tuple((bid, p) for part, found in zip(parts, result.parts)
+                         for bid in found.ticked
+                         for p in (part.people or (result.giver_id,)))
+    return tuple((b.transaction_id, p, b.open[p], (b.transaction_id, p) in selected)
+                 for b in bills if b.trip_id == result.trip_id and b.payer_id == result.receiver_id
+                 and (result.currency is None or b.currency == result.currency)
+                 for p in card_people(reading, choices) if b.open.get(p, 0) > 0)
 
 
 def is_settle(text: str) -> bool:
@@ -193,7 +236,9 @@ def read_settle(text: str, candidates: Sequence[Participant], sender: Participan
     # Consume only actual ISO codes, never the first three letters of a name.
     prefix = re.search(r"(?<!\w)([A-Za-z]{3})$", before)
     suffix = re.match(r"^([A-Za-z]{3})(?!\w)", after)
-    if prefix and prefix[1].upper() in ISO_4217:
+    # A known receiver wins over a coincidentally valid code (Bob / BOB).
+    # Currency after the amount remains unambiguous for that rare collision.
+    if prefix and prefix[1].upper() in ISO_4217 and _person(prefix[1], candidates, sender) is None:
         currency, before = prefix[1].upper(), before[:prefix.start()].strip()
     if suffix and suffix[1].upper() in ISO_4217:
         if currency and currency != suffix[1].upper():
@@ -278,6 +323,23 @@ def _walk(parts, bills, amount, choices, names, *, everyday=(), paid=None):
     All selected shares are kept, even after money runs out, for clears_all.
     `paid` is the currency the message said, if any (see match_bills).
     """
+    if choices.shares is not None:
+        # Manual ticks replace phrase matching, but retain chronological allocation.
+        people = tuple(dict.fromkeys(p for part in parts for p in part.people))
+        left, rows, selected, explicit = amount, [], {}, []
+        for bill in bills:
+            for person in people:
+                key = (bill.transaction_id, person)
+                if key not in choices.shares or bill.open.get(person, 0) <= 0:
+                    continue
+                selected[key] = bill.open[person]
+                explicit.append((0, bill))
+                cents = min(left, bill.open[person])
+                if cents:
+                    rows.append(SettleRow(*key, cents))
+                    left -= cents
+        return (tuple(rows), left, (), explicit,
+                bool(selected) and sum(selected.values()) == amount)
     rows, selected, explicit, results = {}, {}, [], []
     left = amount
     for i, part in enumerate(parts):
@@ -291,7 +353,9 @@ def _walk(parts, bills, amount, choices, names, *, everyday=(), paid=None):
         if kind == "close":
             pick = choices.picks.get(i)
             ticks = (pick,) if pick in match.matched else ticks
-            warning = f"❓ Did you mean this bill? {len(match.matched)} bills could fit."
+            # "1 bills could fit" read badly on the test bot: one candidate needs no count.
+            fit = f" {len(match.matched)} bills could fit." if len(match.matched) > 1 else ""
+            warning = f"❓ Did you mean this bill?{fit}"
         elif kind == "full" and len(ticks) > 1:
             warning = f"⚠️ {len(ticks)} bills matched"
         if kind in {"full", "close"}:
@@ -333,9 +397,18 @@ def settle_up(reading: SettleReading, bills: Sequence[Bill], *, trip_id: int | N
     order also breaks close-match ties. A rate question never guesses converted
     cents; the caller returns with clears_cents after obtaining the conversion.
     """
+    if choices.giver_id is not None:
+        reading = replace(reading, giver_id=choices.giver_id)
     amount = reading.cents if clears_cents is None else clears_cents
     if type(amount) is not int or amount <= 0:
         raise ValueError("The amount to clear must be positive integer cents")
+    if choices.shares == ():
+        # Unticking the last share must leave an editable menu, not lose the
+        # inferred scope/receiver and turn into a refusal or an everyday payment.
+        original = settle_up(reading, bills, trip_id=trip_id, names=names,
+                             choices=replace(choices, shares=None), clears_cents=clears_cents)
+        return replace(original, rows=(), overpaid_cents=amount, parts=(),
+                       can_confirm=False, clears_all=False)
     parts = tuple(SettlePart(p.people or (reading.giver_id,), p.words, p.said)
                   for p in reading.parts) or (SettlePart((reading.giver_id,), (), ""),)
     concerned = tuple(dict.fromkeys(p for part in parts for p in part.people))
@@ -357,7 +430,7 @@ def settle_up(reading: SettleReading, bills: Sequence[Bill], *, trip_id: int | N
         With no currency said, nothing is filtered, so bills in two currencies still
         reach the "Say which" refusal.
         """
-        if reading.currency is None:
+        if reading.currency is None or choices.shares is not None:
             return candidates
         # Per part: a part whose words match bills in the paid currency (and others)
         # keeps only those, but two parts naming bills in different currencies keep
@@ -376,12 +449,40 @@ def settle_up(reading: SettleReading, bills: Sequence[Bill], *, trip_id: int | N
     def discover(candidates):
         return _walk(parts, candidates, amount, choices, names, paid=reading.currency)[3]
 
+    def question(kind, said=None, payer=None, bill_currency=None):
+        # Questions never carry writable allocations. The same option helper powers
+        # both these suggestions and Change receiver, preventing divergent debts.
+        scoped = tuple(b for b in base if b.trip_id == scope and (payer is None or b.payer_id == payer))
+        # "The saree was paid by Carol" is about that one bill: its currency decides,
+        # so the giver's other debts to Carol in another currency can't turn the
+        # suggestion into a "Say which" refusal (found on the test bot).
+        codes = ({bill_currency} if bill_currency and reading.currency is None
+                 else {b.currency for b in currency_filter(scoped)})
+        if len(codes) > 1:
+            ordered = sorted(codes)
+            raise SettleRefused(f'{names[reading.giver_id]} owes in {" and ".join(ordered)}. '
+                                f'Say which, e.g. "Settle {names[reading.giver_id]} paid 50 {ordered[0]}".')
+        currency = next(iter(codes)) if len(codes) == 1 else reading.currency
+        result = SettleResult(reading.giver_id, receiver, scope, currency,
+                              reading.currency or currency, (), amount, (), False, False,
+                              question=kind, question_said=said, question_payer=payer)
+        options = receiver_options(reading, bills, result, choices)
+        if payer is not None:
+            options = tuple(item for item in options if item[0] == payer)
+        if not options:
+            raise SettleRefused("No match.")
+        return replace(result, receiver_options=options)
+
     pool = tuple(b for b in base if receiver is None or b.payer_id == receiver)
     if trip_id is None and not choices.everyday:
         # Trip mode off: the bills named decide the scope (none named: everyday). This
         # runs before the paid currency filters anything, so an unrelated trip debt in
         # that currency can't hide the everyday bill the payback is really for.
         scopes = {b.trip_id for _, b in discover(pool)}
+        if not scopes and receiver is not None:
+            # A wrongly named receiver must not hide the trip of a named bill;
+            # that scope is needed for the paid-by-other suggestion below.
+            scopes = {b.trip_id for _, b in discover(base)}
         if len(scopes) > 1:
             if None in scopes:
                 raise SettleRefused("These bills are on a trip and outside it. Send one settle message for each.")
@@ -394,10 +495,9 @@ def settle_up(reading: SettleReading, bills: Sequence[Bill], *, trip_id: int | N
         # Narrow first. Only a phrase with no match to this receiver is checked
         # against other payers, so another person's identical dinner is harmless.
         matched_parts = {i for i, _ in ticks}
-        for i, bill in discover(currency_filter(base)):
+        for i, bill in discover(currency_filter(tuple(b for b in base if b.trip_id == scope))):
             if i not in matched_parts and bill.payer_id != receiver:
-                raise SettleRefused(f"The {parts[i].said} was paid by {names[bill.payer_id]}, "
-                                    f"not {names[receiver]}.")
+                return question("paid_by_other", parts[i].said, bill.payer_id, bill.currency)
     payers = {b.payer_id for _, b in ticks}
     if receiver is None and len(payers) > 1:
         who = " and ".join(names[p] for p in sorted(payers))
@@ -427,7 +527,8 @@ def settle_up(reading: SettleReading, bills: Sequence[Bill], *, trip_id: int | N
                      and (receiver is None or guessed or b.payer_id == receiver)) if trip_id is not None and not choices.everyday else ()
     preview = _walk(parts, candidates, amount, choices, names, paid=reading.currency,
                     everyday=currency_filter(everyday))[2]
-    selected_ids = {id for part in preview for id in part.ticked}
+    selected_ids = ({bid for bid, _ in choices.shares} if choices.shares is not None else
+                    {id for part in preview for id in part.ticked})
     currency_bills = tuple(b for b in candidates if b.transaction_id in selected_ids)
     codes = sorted({b.currency for b in currency_bills})
     if len(codes) > 1:
@@ -445,18 +546,14 @@ def settle_up(reading: SettleReading, bills: Sequence[Bill], *, trip_id: int | N
                                           everyday=currency_filter(everyday))
     blocked = any(p.kind == "everyday_only" for p in results)
     if receiver is not None and not candidates and not blocked:
-        suffix = "" if concerned == (reading.giver_id,) else " on these bills"
-        who = names[reading.giver_id] if not suffix else " and ".join(names[p] for p in concerned)
-        raise SettleRefused(f"{who} owes {names[receiver]} nothing{suffix}.")
+        return question("owes_nothing")
     if receiver is None and not options and not blocked:
         # Nobody to pay: a card with no receiver, no rows and no Confirm would be a dead
         # end, so say why instead.
-        who = " and ".join(names[p] for p in concerned)
-        raise SettleRefused(f"{who} doesn't owe anyone on these bills." if len(concerned) == 1
-                            else f"{who} don't owe anyone on these bills.")
+        raise SettleRefused("No match.")
     if options or needs_rate:
         rows, left, cleared = (), amount, False
     return SettleResult(reading.giver_id, receiver, scope, currency, paid_currency,
                         rows, left, results, bool(receiver is not None and not options
-                        and not needs_rate and not blocked), cleared and not blocked,
+                        and not needs_rate and not blocked and bool(rows)), cleared and not blocked,
                         options, needs_rate)

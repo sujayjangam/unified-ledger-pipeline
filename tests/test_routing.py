@@ -12,6 +12,7 @@ from app.bot_core import (
     handle_text,
     handle_unsupported,
     handle_voice,
+    handle_settle_up_button,
 )
 
 # CommandHandler.check_update() calls message.get_bot().username to resolve the
@@ -65,6 +66,7 @@ def test_captioned_photo_routes_to_handle_unsupported():
     ("confirm_save", handle_button_click), ("trip_toggle", handle_button_click),
     ("trip:on:7", handle_trip_button), ("trip:off", handle_trip_button),
     ("trip:page:3", handle_trip_button),
+    ("su:confirm", handle_settle_up_button),
 ])
 def test_button_press_routes_to_correct_handler(data, expected):
     # The CallbackQueryHandler is registered last and has no pattern=, so it must not be

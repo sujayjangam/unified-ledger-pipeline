@@ -357,6 +357,49 @@ def write_args(**changes):
     return result
 
 
+@pytest.mark.parametrize('fx_values', [dict(fx_rate=1), dict(fx_rate_date=date(2026, 11, 19)),
+                                    dict(fx_source='typed'), dict(fx_rate=1, fx_source='typed')])
+def test_fx_provenance_must_be_complete_before_connection(monkeypatch, fx_values):
+    connect = MagicMock()
+    monkeypatch.setattr(settlements, 'get_connection', connect)
+    with pytest.raises(ValueError, match='all three'):
+        settlements.add_settlement(**write_args(**fx_values))
+    connect.assert_not_called()
+
+
+def test_fx_provenance_is_written_with_payment(monkeypatch):
+    from decimal import Decimal
+    manager = MagicMock()
+    conn = manager.__enter__.return_value
+    conn.execute.return_value.rowcount = 1
+    monkeypatch.setattr(settlements, 'get_connection', lambda: manager)
+    values = dict(fx_rate=Decimal('64.52'), fx_rate_date=date(2026, 11, 18), fx_source='frankfurter',
+                  needs_statement_check=True)
+    assert settlements.add_settlement(**write_args(paid_currency='SGD', clears_currency='INR', **values))
+    sql, params = conn.execute.call_args.args
+    for key, value in values.items():
+        assert f':{key}' in str(sql) and params[key] == value
+    conn.commit.assert_called_once()
+
+
+@pytest.mark.parametrize('trip_id', [None, 10])
+def test_everyday_reads_use_null_safe_scope(monkeypatch, trip_id):
+    manager = MagicMock()
+    conn = manager.__enter__.return_value
+    conn.execute.return_value.mappings.return_value.all.return_value = []
+    conn.execute.return_value.fetchall.return_value = []
+    monkeypatch.setattr(ledger_queries, 'get_connection', lambda: manager)
+    assert ledger_queries.get_trip_split_entries(trip_id) == []
+    assert ledger_queries.get_trip_settlements(trip_id) == []
+    for call in conn.execute.call_args_list:
+        sql, params = call.args
+        assert 'trip_id IS NOT DISTINCT FROM :trip_id' in str(sql)
+        assert params == {'trip_id': trip_id}
+    conn.execute.side_effect = RuntimeError('offline')
+    assert ledger_queries.get_trip_split_entries(trip_id) is None
+    assert ledger_queries.get_trip_settlements(trip_id) is None
+
+
 @pytest.mark.parametrize('bills', [
     [dict(transaction_id='bill', for_id=3, cents=cents)] for cents in (0, -1, True, 1.5, '100', None)
 ] + [
@@ -426,7 +469,7 @@ def test_trip_paybacks_include_ordered_bill_rows_and_fail_closed(monkeypatch):
     connect.assert_called_once_with()
     sql, params = conn.execute.call_args.args
     assert 'ORDER BY b.settlement_id, b.transaction_id, b.for_participant_id' in str(sql)
-    assert 's.trip_id = :trip_id' in str(sql) and params == {'trip_id': 7}
+    assert 's.trip_id IS NOT DISTINCT FROM :trip_id' in str(sql) and params == {'trip_id': 7}
     conn.execute.side_effect = [rows, RuntimeError('offline')]
     assert ledger_queries.get_trip_settlements(7) is None
 
