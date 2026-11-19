@@ -32,9 +32,9 @@ is tried on a Neon branch with a fictional trip-sized directory first.
    [#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114); design in
    [ADR-0052](docs/decisions/0052-settle-up-by-typed-message.md), agreed 2026-11-19). The same
    method serves everyday bills, for a later `/bals`. Typed path first, with a new
-   `settlement_bills` table (migration 0011, on production). PR 1 and PR 2 (the reader) are
-   merged; PR 3, the settle card with its change buttons and rates, is built and waits on
-   test-bot timing before it merges.
+   `settlement_bills` table (migration 0011, on production). PR 1, PR 2 (the reader) and PR 3
+   (the settle card with its change buttons and rates,
+   [#142](https://github.com/sujayjangam/unified-ledger-pipeline/pull/142)) are merged.
    A payback in another currency is converted at a reference rate and flagged for a statement
    check ([#138](https://github.com/sujayjangam/unified-ledger-pipeline/issues/138),
    [ADR-0053](docs/decisions/0053-other-currency-paybacks-at-a-reference-rate.md)). Build plan,
@@ -46,7 +46,12 @@ is tried on a Neon branch with a fictional trip-sized directory first.
 2. Simplify trip debts to the fewest payments, only along existing debt lines
    ([#129](https://github.com/sujayjangam/unified-ledger-pipeline/issues/129), the last part of
    [#127](https://github.com/sujayjangam/unified-ledger-pipeline/issues/127); rule in
-   [ADR-0051](docs/decisions/0051-debts-per-person-then-families.md)).
+   [ADR-0051](docs/decisions/0051-debts-per-person-then-families.md)). In progress. Decided
+   2026-11-19: loops of debts cancel too, so paying a shortened amount clears it, and each
+   shortcut gets a 💡 note line under "To settle".
+   Required (decided 2026-11-19), in its own PR after #129: offset rows (ADR-0052) that mark
+   the bills on a shortened line as paid when it is paid, so the settle card's bill list
+   matches `/trip_bals`, and a shortcut paid by any family member clears in full.
 
 Later: load a finished trip's hand-kept spreadsheet as real bills, and work out the trip from the
 message itself for costs logged before it starts.

@@ -6,10 +6,11 @@ net out. Paybacks then reduce those debts; any excess is owed back to whoever ha
 money over (ADR-0047). Only at the end are debts rolled up: a family's debts to someone
 outside it become one line, while a debt inside a family stays person to person. So each
 person's total is fixed by the bills and paybacks; rolling up only groups who hands money
-to whom. Never route a debt through a third person (simplifying is #129).
+to whom. Before roll-up, cancel person-level loops and shortcut only along existing
+rolled debt lines, choosing the fewest payments within a bounded deterministic search.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app.add_expense import format_cents
 
@@ -24,10 +25,14 @@ class Balances:
               when the creditor is outside it, otherwise the person.
     no_payer: the split entries that had no payer recorded. They are left out of `net`, and
               handed back here so the caller can show a warning rather than lose them quietly.
+    shortcuts: {currency: tuple of notes} explaining visible moves on the winning path;
+               each note is (shown payer, creditor, middle unit, incoming unit, middle id, cents).
     """
     net: dict
     lines: dict
     no_payer: tuple = ()
+    # Per currency: (shown payer, creditor, middle unit, incoming unit, middle person, cents).
+    shortcuts: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -39,15 +44,18 @@ class Payment:
 
 
 def unit_balances(entries, families: dict, settlements=()) -> Balances:
-    """Debts per person from the bills, less paybacks, then rolled up to families.
+    """Debts per person from the bills, less paybacks, simplified and rolled up to families.
 
     Entries contain currency, paid_by and splits ({person id: whole cents}).
     Settlements contain from_id, to_id, cents, currency and optional for_id and bills.
     Keep empty currencies to distinguish settled bills from no bills.
     """
     debts, no_payer, _ = _fold_debts(entries, families, settlements)
-    net, lines = {}, {}
+    net, lines, shortcuts = {}, {}, {}
     for currency, owed in debts.items():
+        owed, notes = _simplify_debts(owed, families)
+        if notes:
+            shortcuts[currency] = notes
         people: dict = {}
         rolled: dict = {}
         for (debtor, creditor), cents in owed.items():
@@ -57,7 +65,114 @@ def unit_balances(entries, families: dict, settlements=()) -> Balances:
             rolled[key] = rolled.get(key, 0) + cents
         net[currency] = {("person", pid): cents for pid, cents in people.items() if cents}
         lines[currency] = rolled
-    return Balances(net=net, lines=lines, no_payer=tuple(no_payer))
+    return Balances(net=net, lines=lines, no_payer=tuple(no_payer), shortcuts=shortcuts)
+
+
+# How many debt states the search may look at, per currency. Measured 2026-11-19 on random
+# 10-person trips (10-60 bills): 20,000 states took ~3.7 s and 1,000 ~0.15 s, while 200 took
+# ~0.03 s and found within one or two payments of the 20,000 result. /trip_bals works this out
+# two or three times per screen, so the bot must stay well under a second.
+SIMPLIFY_BUDGET = 200
+
+
+def _cancel_loops(owed: dict) -> dict:
+    """Cancel cycles in sorted person/creditor DFS order, never through a family."""
+    owed = dict(owed)
+    while True:
+        adjacent = {}
+        for debtor, creditor in sorted(owed):
+            adjacent.setdefault(debtor, []).append(creditor)
+        visited, active, path = set(), {}, []
+
+        def cycle_from(person):
+            """Return the first back-edge cycle from this person, or no cycle."""
+            if person in active:
+                loop = path[active[person]:] + [person]
+                return list(zip(loop, loop[1:]))
+            if person in visited:
+                return None
+            visited.add(person)
+            active[person] = len(path)
+            path.append(person)
+            for creditor in adjacent.get(person, ()):
+                cycle = cycle_from(creditor)
+                if cycle:
+                    return cycle
+            path.pop()
+            del active[person]
+            return None
+
+        cycle = None
+        for person in sorted(adjacent):
+            cycle = cycle_from(person)
+            if cycle:
+                break
+        if not cycle:
+            return owed
+        amount = min(owed[edge] for edge in cycle)
+        for edge in cycle:
+            owed[edge] -= amount
+            if not owed[edge]:
+                del owed[edge]
+
+
+def _rolled_keys(owed: dict, families: dict) -> set:
+    """Count payment lines without merging the underlying people's balances."""
+    return {(debtor_unit(u, c, families), c) for u, c in owed}
+
+
+def _shortcut_moves(owed: dict, families: dict) -> list:
+    """Find full shortcuts whose destination already exists in the rolled report."""
+    rolled = _rolled_keys(owed, families)
+    moves = []
+    for (p, c), outgoing in owed.items():
+        for (u, receiver), incoming in owed.items():
+            if receiver == p and u != c and (debtor_unit(u, c, families), c) in rolled:
+                moves.append((min(incoming, outgoing), p, c, u))
+    return sorted(moves, key=lambda move: (-move[0], *move[1:]))
+
+
+def _simplify_debts(owed: dict, families: dict) -> tuple:
+    """Search loop-normalized states depth first; keep the first best payment count.
+
+    Memoization ignores the path: revisiting identical debts cannot improve the result,
+    and keeping the first path also preserves the specified deterministic tie-breaking.
+    """
+    best = _cancel_loops(owed)
+    best_path, best_count = (), len(_rolled_keys(best, families))
+    seen = set()
+    # An explicit stack avoids depending on Python's recursion limit for shortcut paths.
+    pending = [(best, ())]
+    while pending and len(seen) < SIMPLIFY_BUDGET:
+        state, path = pending.pop()
+        state = _cancel_loops(state)
+        key = frozenset(state.items())
+        if key in seen:
+            continue
+        seen.add(key)
+        count = len(_rolled_keys(state, families))
+        if count < best_count:
+            best, best_path, best_count = state, path, count
+        # Reverse insertion makes the largest shortcut the next DFS branch visited.
+        for x, p, c, u in reversed(_shortcut_moves(state, families)):
+            child = dict(state)
+            for edge in ((u, p), (p, c)):
+                child[edge] -= x
+                if not child[edge]:
+                    del child[edge]
+            # Keep both directions until loop cancellation, so its fixed order decides.
+            child[(u, c)] = child.get((u, c), 0) + x
+            pending.append((child, path + ((x, p, c, u),)))
+
+    notes = {}
+    for x, p, c, u in best_path:
+        shown, middle = debtor_unit(u, c, families), debtor_unit(p, c, families)
+        if shown == middle:
+            continue  # Moving within the same displayed line needs no explanation.
+        key = (shown, c, middle, debtor_unit(u, p, families), p)
+        notes[key] = notes.get(key, 0) + x
+    return best, tuple((*key, cents) for key, cents in
+                       sorted(notes.items(), key=lambda item: (-item[1], item[0])))
 
 
 def open_bill_shares(entries, families: dict, settlements=()) -> dict:
@@ -321,6 +436,11 @@ def trip_balance_lines(entries, names: dict, families: dict, show_members: bool 
                          for n, p in payments)
         else:
             lines.append("Everyone is settled.")
+        for shown, creditor, middle, incoming, p, cents in result.shortcuts.get(currency, ()):
+            amount = format_cents(cents)
+            payer = "" if incoming == shown else unit_name(incoming) + " "
+            lines.append(f"💡 {unit_name(shown)} pays {person(creditor)} the {amount} "
+                         f"{unit_name(middle)} owes, and {payer}pays {person(p)} {amount} less.")
         paid_back = [s for s in settlements if s["currency"] == currency]
         if paid_back:
             lines.append("Already paid back:")
