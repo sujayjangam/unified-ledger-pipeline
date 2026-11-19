@@ -32,7 +32,8 @@ is tried on a Neon branch with a fictional trip-sized directory first.
    [#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114); design in
    [ADR-0052](docs/decisions/0052-settle-up-by-typed-message.md), agreed 2026-11-19). The same
    method serves everyday bills, for a later `/bals`. Typed path first, with a new
-   `settlement_bills` table (migration 0011, applied to production by hand before the merge).
+   `settlement_bills` table (migration 0011, on production; PR 1 merged). PR 2, the reader
+   (`app/services/settle.py`, no bot change yet), is next to merge.
    A payback in another currency is converted at a reference rate and flagged for a statement
    check ([#138](https://github.com/sujayjangam/unified-ledger-pipeline/issues/138),
    [ADR-0053](docs/decisions/0053-other-currency-paybacks-at-a-reference-rate.md)). Build plan,
