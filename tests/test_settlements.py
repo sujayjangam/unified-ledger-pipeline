@@ -61,10 +61,10 @@ async def test_new_card_requires_family_choice_and_checks_membership(flow):
     assert pending['from_id'] is None and pending['debtor_member_ids'] == (3,)
     buttons = _buttons(query.message.reply_text.await_args.kwargs['reply_markup'])
     assert buttons['Carol'] == 'settle:person:3' and 'Confirm' not in buttons
-    # Alice is owed, and Bob is in her family: money from either is the family paying itself.
-    assert 'Alice' not in buttons and 'Bob' not in buttons
+    # Alice is owed, so she can't pay herself. Bob, her relative, may pay on Lee's behalf.
+    assert 'Alice' not in buttons and buttons['Bob'] == 'settle:person:2'
     query.answer.assert_awaited_once()
-    update, query = tap('settle:person:2')
+    update, query = tap('settle:person:1')
     await bot.handle_settle_button(update, flow)
     assert flow.user_data['pending_settlements'][20]['from_id'] is None
     update, query = tap('settle:person:999')
@@ -92,8 +92,7 @@ async def test_new_card_defaults_to_sender_in_family(flow, monkeypatch):
 def three_families(monkeypatch):
     """Bob settles alone here (family "Ng"), so he can pay Carol's debt to Alice as a gift.
 
-    The gift giver must come from a third family: the receiver's own family (Alice's) is never
-    offered, because money from inside it is that family paying itself.
+    Anyone but the receiver may be the giver, even the receiver's own relative (ADR-0051).
     """
     from dataclasses import replace
     bot._load_bals_trip.return_value = replace(BEACH, families=((1, "Tan"), (2, "Ng"), (3, "Lee")))
@@ -163,7 +162,7 @@ def test_overpaid_gift_names_giver_and_handles_lone_debtor():
         assert 'owed back to Bob.' in text
 
 
-@pytest.mark.parametrize('data', ['settle:new:7:1:2999', 'settle:new:7:2:3000', 'settle:new:7:0:3000'])
+@pytest.mark.parametrize('data', ['settle:new:7:1:2999', 'settle:new:7:3:3000', 'settle:new:7:0:3000'])
 async def test_stale_or_invalid_buttons_change_nothing(flow, data):
     """Old suggestions cannot silently create a card for a different amount."""
     update, query = tap(data, 10)
@@ -401,3 +400,14 @@ def test_read_shape_order_and_failure(monkeypatch):
     assert 'ORDER BY date, created_at, id' in str(sql) and params == {'trip_id': 7}
     conn.execute.side_effect = RuntimeError('offline')
     assert ledger_queries.get_trip_settlements(7) is None
+
+
+async def test_a_debt_inside_a_family_gets_its_own_payback_card(flow):
+    """"2. Bob pays Alice" is a line between relatives (ADR-0051): Bob is already the payer,
+    and Confirm is offered straight away."""
+    update, query = tap('settle:new:7:2:3000', 10)
+    await bot.handle_settle_button(update, flow)
+    pending = flow.user_data['pending_settlements'][20]
+    assert (pending['from_id'], pending['to_id'], pending['debtor_member_ids']) == (2, 1, (2,))
+    assert pending['family'] is None
+    assert 'Confirm' in _buttons(query.message.reply_text.await_args.kwargs['reply_markup'])

@@ -199,16 +199,18 @@ Env vars (`.env.example` shows the format):
   only on Confirm. Payback taps use the directory snapshot kept with the report or card,
   never reload it; new cards recheck trip membership and the suggested amount. Amount replies
   are parsed in Python before expense extraction, and use a separate pending-card map.
-  Debt lines link each owing unit to the person who paid (ADR-0047); only opposite lines
-  between the same two units cancel, largest first, then lowest creditor id. No pooling.
-  A payback pays down one line; excess is owed back to whoever handed over the money.
-  Anyone on the trip outside the receiver's own family can pay another unit's line as a gift,
-  recorded only at payback time; nobody owes the giver. The paid side records money handed
+  Debts are worked out per person first, even inside the payer's own family, and rolled up
+  only at the end ([ADR-0051](docs/decisions/0051-debts-per-person-then-families.md)): a
+  family's debts to someone outside it are one line, a debt inside a family stays person to
+  person. Only opposite debts between the same two people cancel; never net two families'
+  debts to different people, and never route through a third person (#129 will simplify
+  only along existing debt lines). Each person's total never changes. A payback pays down one
+  line, the beneficiary's own debt first; excess is owed back to whoever handed over the money.
+  Anyone on the trip but the receiver can pay any line on someone's behalf, recorded only at
+  payback time; nobody owes the giver in `/trip_bals`. The paid side records money handed
   over, never spending totals, and may be any ISO 4217 currency (`app/services/currencies.py`).
   An overpayment gets a warning and a Confirm overpayment button, never a refusal.
-  Pure whole-cent maths in `app/services/balances.py` keeps currencies apart. Shares inside
-  the payer's unit cancel per bill (ADR-0044); outside shares owe the payer in person. It
-  counts only entries tagged to the trip that have split rows. A failed read of bills or paybacks is shown as an error,
+  Pure whole-cent maths in `app/services/balances.py` keeps currencies apart. It counts only entries tagged to the trip that have split rows. A failed read of bills or paybacks is shown as an error,
   never as "nobody owes anything". A split entry still with no payer after the fallback (account owner, else sender) is left out with a ⚠️ line,
   never guessed. A trip id from a button is loaded only through `member_trip`. The reply is
   plain text with no `parse_mode`.
