@@ -29,6 +29,11 @@ is tried on a Neon branch with a fictional trip-sized directory first.
    ([#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113)).
 2. Clearer "Mark paid" buttons than "Mark paid 1, 2, 3"
    ([#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114)).
+3. Trip balances: show debts inside a family, then route a debt to save a payment, only along
+   an existing debt line
+   ([#127](https://github.com/sujayjangam/unified-ledger-pipeline/issues/127): sub-issues
+   [#128](https://github.com/sujayjangam/unified-ledger-pipeline/issues/128),
+   [#129](https://github.com/sujayjangam/unified-ledger-pipeline/issues/129)).
 
 Later: load a finished trip's hand-kept spreadsheet as real bills, and work out the trip from the
 message itself for costs logged before it starts.
@@ -38,7 +43,8 @@ message itself for costs logged before it starts.
 - A split reader written only in Python
   ([#122](https://github.com/sujayjangam/unified-ledger-pipeline/issues/122)). It gets scored
   offline against the check cases and the trip's real messages before it replaces the model's
-  split fields.
+  split fields. First, stop reading per-person counts: an uneven stay is logged as separate
+  even entries ([#130](https://github.com/sujayjangam/unified-ledger-pipeline/issues/130)).
 - Everyday groups in the split menu ("splits PR 2b"), designed in
   [ADR-0043](docs/decisions/0043-everyday-groups-for-the-split-menu.md) and parked. An unfinished
   first pass sits on the local branch `feat/splits-family-group`; the splits plan says how to pick
@@ -150,6 +156,7 @@ message itself for costs logged before it starts.
 **Open top-level issues:**
 [#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113) and
 [#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114) trip follow-ups (next up) ·
+[#127](https://github.com/sujayjangam/unified-ledger-pipeline/issues/127) trip balances hide debts inside a family (next up) ·
 [#122](https://github.com/sujayjangam/unified-ledger-pipeline/issues/122) Python-only split reader (after the trip) ·
 [#83](https://github.com/sujayjangam/unified-ledger-pipeline/issues/83) cards from Telegram ·
 [#27](https://github.com/sujayjangam/unified-ledger-pipeline/issues/27) unpinned dependencies (Phase 1) ·
