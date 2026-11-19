@@ -172,7 +172,7 @@ Close match, two bills could fit ("Settle Carol paid 261 for airbnb booking"):
 ```
 🤝 Settle up · Beach trip
 Carol pays Alice $261.00
- • Airbnb 2300 (12 Nov): Erin's share $261.00, cleared
+ • Airbnb 2300 (12 Nov): Carol's share $261.00, cleared
 ❓ Did you mean this bill? 2 bills could fit.
 [✅ Airbnb 2300 · 12 Nov] [Airbnb 900 · 14 Nov]
 [Pay oldest first]
