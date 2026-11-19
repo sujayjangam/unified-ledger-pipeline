@@ -244,3 +244,27 @@ async def test_a_report_too_long_for_one_message_is_shortened_not_lost(bals):
     text = update.effective_message.reply_text.await_args.args[0]
     assert len(text) <= bot_core.TELEGRAM_MESSAGE_LIMIT and text.endswith(bot_core.BALS_CUT_SHORT)
     assert text.startswith("\U0001f9f3 Beach_Trip")
+
+
+async def test_simplified_report_notes_and_mark_paid_buttons(bals, monkeypatch, directory):
+    """The report and its buttons agree on the simplified Tan-to-Alice/Bob payments."""
+    from app.services.participants import Participant
+
+    directory = replace(directory, participants=directory.participants[:2] + (
+        Participant(3, 'Tom', None, None), Participant(4, 'Tia', None, None)))
+    monkeypatch.setattr(bot_core, '_load_directory', lambda: directory)
+    bals['_load_bals_trip'].return_value = replace(
+        BEACH, member_ids=(1, 2, 3, 4), families=((3, 'Tan'), (4, 'Tan')))
+    bals['get_trip_split_entries'].return_value = [
+        dict(currency='AUD', paid_by=1, splits={2: 6000, 3: 22500, 4: 22500}),
+        dict(currency='AUD', paid_by=2, splits={3: 16500, 4: 16500})]
+    update = _update(ALICE)
+    await bot_core.trip_bals_command(update, _context())
+    reply = update.effective_message.reply_text.await_args
+    assert reply.args[0].split('To settle:')[1] == (
+        '\n1. Tan family pays Alice 510.00\n2. Tan family pays Bob 270.00\n'
+        '💡 Tan family pays Alice the 60.00 Bob owes, and pays Bob 60.00 less.')
+    assert 'parse_mode' not in reply.kwargs
+    assert _buttons(reply.kwargs['reply_markup']) == {
+        'Mark paid 1': 'settle:new:7:1:51000', 'Mark paid 2': 'settle:new:7:2:27000',
+        'Other trip': 'bals:page:0'}

@@ -202,9 +202,13 @@ Env vars (`.env.example` shows the format):
   Debts are worked out per person first, even inside the payer's own family, and rolled up
   only at the end ([ADR-0051](docs/decisions/0051-debts-per-person-then-families.md)): a
   family's debts to someone outside it are one line, a debt inside a family stays person to
-  person. Only opposite debts between the same two people cancel; never net two families'
-  debts to different people, and never route through a third person (#129 will simplify
-  only along existing debt lines). Each person's total never changes. A payback pays down one
+  person. Debts are simplified per person before the roll-up (`_simplify_debts`, #129): loops
+  of person-to-person debts cancel, and a debt moves only onto a line that already exists (P
+  owes C, U owes P and already owes C: U pays C, and P that much less). Never a new pair, and
+  never a loop through a family, which would move money between relatives' own totals. Fewest
+  payments are found by a bounded search (`SIMPLIFY_BUDGET`, sized by measurement; a bigger
+  one made `/trip_bals` take seconds). Each visible shortcut gets a 💡 line. Never net two
+  families' debts to different people any other way. Each person's total never changes. A payback pays down one
   line, the beneficiary's own debt first; excess is owed back to whoever handed over the money.
   Anyone on the trip but the receiver can pay any line on someone's behalf, recorded only at
   payback time; nobody owes the giver in `/trip_bals`. The paid side records money handed

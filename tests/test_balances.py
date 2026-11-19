@@ -1,6 +1,7 @@
 """Trip repayments use fictional people and whole cents, without network or database."""
 
 import pytest
+from app.services import balances
 
 from app.services.balances import (
     NO_PAYER_LINE,
@@ -160,14 +161,11 @@ def test_only_joes_family_pays_ben():
     assert sum(unit_balances(entries, families).net['SGD'].values()) == 0
 
 
-def test_three_family_cycle_keeps_every_line():
-    """A zero net position does not erase debts through a third family."""
+def test_three_family_person_cycle_cancels():
+    """A cycle of actual people cancels even when each belongs to a different family."""
     families = {1: 'T', 2: 'J', 3: 'M'}
     entries = [entry(1, {2: 100}), entry(2, {3: 100}), entry(3, {1: 100})]
-    assert trip_payments(entries, families) == [
-        ('SGD', Payment(('family', 'J'), ('person', 1), 100)),
-        ('SGD', Payment(('family', 'M'), ('person', 2), 100)),
-        ('SGD', Payment(('family', 'T'), ('person', 3), 100))]
+    assert trip_payments(entries, families) == []
     assert sum(unit_balances(entries, families).net['SGD'].values()) == 0
 
 
@@ -265,8 +263,10 @@ def test_uneven_whole_cents_are_conserved():
     # 185 each of the 555; of the 10000, 3572 / 3571 / 2857 (the spare cent to the lowest id).
     units = unit_balances(entries, families).net['SGD']
     assert units == {('person', 1): -3202, ('person', 2): -3756, ('person', 3): 6958}
+    # Person 2 can pay 185 of person 1's debt to person 3 along the existing family
+    # line. That removes their internal payment without changing the family's total.
     assert [p for _, p in trip_payments(entries, families)] == [
-        Payment(('family', 'T'), ('person', 3), 6958), Payment(('person', 2), ('person', 1), 185)]
+        Payment(('family', 'T'), ('person', 3), 6958)]
 
 
 def test_no_splits_and_missing_payers():
@@ -429,7 +429,7 @@ TAN_LEE_NAMES = {1: 'Alice', 2: 'Bob', 3: 'Carol', 4: 'Dave'}
 
 def test_adr_0051_example():
     """Alice paid 400 and Bob paid 200, each shared by all four. Bob's 100 for Alice's bill
-    and Alice's 50 for Bob's net to "Bob pays Alice 50"; the Lees pay each payer in full."""
+    and Alice's 50 for Bob's net to 50; the Lees shortcut that amount to Alice."""
     entries = [entry(1, dict.fromkeys((1, 2, 3, 4), 10000)),
                entry(2, dict.fromkeys((1, 2, 3, 4), 5000))]
     result = unit_balances(entries, TAN_LEE)
@@ -438,8 +438,8 @@ def test_adr_0051_example():
     assert trip_balance_lines(entries, TAN_LEE_NAMES, TAN_LEE) == [
         'SGD', 'Lee family owes 300.00', '    Carol owes 150.00', '    Dave owes 150.00',
         'Tan family is owed 300.00', '    Alice is owed 250.00', '    Bob is owed 50.00',
-        'To settle:', '1. Lee family pays Alice 200.00', '2. Lee family pays Bob 100.00',
-        '3. Bob pays Alice 50.00']
+        'To settle:', '1. Lee family pays Alice 250.00', '2. Lee family pays Bob 50.00',
+        '💡 Lee family pays Alice the 50.00 Bob owes, and pays Bob 50.00 less.']
 
 
 def test_family_payback_clears_the_beneficiarys_own_debt_first():
@@ -515,3 +515,153 @@ def test_payback_history_names_the_line_it_cleared(giver, note):
     payback = dict(from_id=giver, to_id=1, for_id=2 if giver != 2 else None, cents=3000, currency='SGD')
     report = trip_balance_lines([entry(1, {2: 3000})], names, families, settlements=[payback])
     assert f' • {names[giver]} paid Alice 30.00 SGD{note}' in report
+
+# --- #129: simplify per person before rolling up. ---
+
+SIMPLIFY_NAMES = {1: 'Alice', 2: 'Bob', 3: 'Tom', 4: 'Tia'}
+SIMPLIFY_FAMILIES = {3: 'Tan', 4: 'Tan'}
+
+
+def tan_bills():
+    """Bob and both Tans owe Alice; both Tans also owe Bob, in AUD cents."""
+    return [bill('alice', 1, {2: 6000, 3: 22500, 4: 22500}, 'AUD'),
+            bill('bob', 2, {3: 16500, 4: 16500}, 'AUD')]
+
+
+@pytest.mark.parametrize('show_members', [True, False])
+def test_simplified_tan_report_and_notes(show_members):
+    """The family takes over Bob's debt, with an explanation even in the short report."""
+    entries = tan_bills()
+    result = unit_balances(entries, SIMPLIFY_FAMILIES)
+    assert result.lines == {'AUD': {(('family', 'Tan'), 1): 51000,
+                                    (('family', 'Tan'), 2): 27000}}
+    assert result.shortcuts == {'AUD': ((('family', 'Tan'), 1, ('person', 2),
+                                         ('family', 'Tan'), 2, 6000),)}
+    report = trip_balance_lines(entries, SIMPLIFY_NAMES, SIMPLIFY_FAMILIES,
+                                show_members=show_members)
+    assert report[report.index('To settle:'):] == [
+        'To settle:', '1. Tan family pays Alice 510.00', '2. Tan family pays Bob 270.00',
+        '💡 Tan family pays Alice the 60.00 Bob owes, and pays Bob 60.00 less.']
+    assert open_bill_shares(entries, SIMPLIFY_FAMILIES) == {
+        ('alice', 2): 6000, ('alice', 3): 22500, ('alice', 4): 22500,
+        ('bob', 3): 16500, ('bob', 4): 16500}
+
+
+def test_shortcut_of_inside_family_debt():
+    """Dave's own debt to Carol can be paid along the Ngs' existing line to her."""
+    entries = [entry(1, {2: 5000, 3: 6000, 4: 6000}, 'AUD'),
+               entry(2, {3: 4000, 4: 4000}, 'AUD')]
+    families = {1: 'Lee', 2: 'Lee', 3: 'Ng', 4: 'Ng'}
+    report = trip_balance_lines(entries, {1: 'Carol', 2: 'Dave', 3: 'Ian', 4: 'Jo'}, families)
+    assert report[report.index('To settle:'):] == [
+        'To settle:', '1. Ng family pays Carol 170.00', '2. Ng family pays Dave 30.00',
+        '💡 Ng family pays Carol the 50.00 Dave owes, and pays Dave 50.00 less.']
+
+
+def test_shortcut_never_adds_a_destination():
+    """Erin cannot pay Carol when she only owes Dave."""
+    result = unit_balances([entry(1, {2: 4000}, 'AUD'), entry(2, {3: 2500}, 'AUD')], {})
+    assert result.lines == {'AUD': {(('person', 2), 1): 4000, (('person', 3), 2): 2500}}
+    assert result.shortcuts == {}
+
+
+def test_paying_suggested_family_amount_clears_it():
+    """A rowless Mark paid payback makes a person cycle which must cancel completely."""
+    paid = [dict(from_id=3, to_id=1, cents=51000, currency='AUD')]
+    result = unit_balances(tan_bills(), SIMPLIFY_FAMILIES, paid)
+    assert result.lines == {'AUD': {(('family', 'Tan'), 2): 27000}}
+    assert ('person', 1) not in result.net['AUD']
+    assert result.shortcuts == {}
+    assert trip_payments(tan_bills(), SIMPLIFY_FAMILIES, paid) == [
+        ('AUD', Payment(('family', 'Tan'), ('person', 2), 27000))]
+
+
+def person_net(owed):
+    """Compute signed person totals independently of the simplifier and roll-up."""
+    result = {}
+    for (u, c), cents in owed.items():
+        result[u] = result.get(u, 0) - cents
+        result[c] = result.get(c, 0) + cents
+    return {pid: cents for pid, cents in result.items() if cents}
+
+
+@pytest.mark.parametrize('budget', [1, 20000])
+def test_simplification_preserves_people_lines_currencies_and_order(monkeypatch, budget):
+    """Check invariants after paybacks as well as family-only destinations and cycles."""
+    monkeypatch.setattr(balances, 'SIMPLIFY_BUDGET', budget)
+    shapes = [
+        (tan_bills(), SIMPLIFY_FAMILIES, []),
+        (tan_bills(), SIMPLIFY_FAMILIES,
+         [dict(from_id=3, to_id=1, cents=51000, currency='AUD')]),
+        ([entry(1, {2: 5000, 3: 6000, 4: 6000}, 'AUD'),
+          entry(2, {3: 4000, 4: 4000}, 'AUD')],
+         {1: 'Lee', 2: 'Lee', 3: 'Ng', 4: 'Ng'}, []),
+        ([entry(1, {2: 4000}, 'AUD'), entry(2, {3: 2500}, 'AUD')], {}, []),
+        # Tom has no debt to Alice, but Tia provides the existing Tan-to-Alice line.
+        ([entry(1, {2: 60, 4: 20}, 'AUD'), entry(2, {3: 100}, 'AUD')],
+         SIMPLIFY_FAMILIES, []),
+        ([entry(1, {2: 80}, 'AUD'), entry(2, {3: 60}, 'AUD'),
+          entry(3, {1: 40}, 'AUD')], {}, []),
+        (tan_bills() + [entry(3, {1: 100}, 'SGD')], SIMPLIFY_FAMILIES, []),
+    ]
+    for entries, families, paid in shapes:
+        original, _, _ = balances._fold_debts(entries, families, paid)
+        result = unit_balances(entries, families, paid)
+        assert result == unit_balances(entries, families, paid)
+        assert result == unit_balances(list(reversed(entries)), families, paid)
+        for currency, owed in original.items():
+            simplified, _ = balances._simplify_debts(owed, families)
+            assert person_net(simplified) == person_net(owed)
+            assert result.net[currency] == {('person', p): x for p, x in person_net(owed).items()}
+            assert set(result.lines[currency]) <= balances._rolled_keys(owed, families)
+            assert all(isinstance(x, int) and x > 0 for x in simplified.values())
+
+
+def test_family_destination_can_use_a_relatives_line():
+    """A new person edge is allowed only because its family already pays that creditor."""
+    owed = {(2, 1): 60, (4, 1): 20, (3, 2): 100}
+    simplified, notes = balances._simplify_debts(owed, SIMPLIFY_FAMILIES)
+    assert simplified == {(4, 1): 20, (3, 1): 60, (3, 2): 40}
+    assert notes == ((('family', 'Tan'), 1, ('person', 2), ('family', 'Tan'), 2, 60),)
+
+
+def test_notes_name_a_different_incoming_unit():
+    """Hide invisible moves; distinguish a personal payer from their incoming family."""
+    families = {2: 'Tan', 3: 'Tan'}
+    entries = [entry(1, {2: 60, 3: 20}, 'AUD'), entry(2, {3: 100}, 'AUD')]
+    report = trip_balance_lines(entries, SIMPLIFY_NAMES, families)
+    # Both outgoing debts roll to the same line, so the invisible move has no note.
+    assert not any(line.startswith('💡') for line in report)
+    families = {1: 'Tan', 3: 'Tan'}
+    report = trip_balance_lines(entries, SIMPLIFY_NAMES, families)
+    assert ('💡 Tom pays Alice the 0.60 Bob owes, and Tan family pays Bob 0.60 less.'
+            in report)
+
+
+def test_search_beats_greedy_on_small_debt_shapes():
+    """The id-tied first shortcut leaves four payments; the other leaves three."""
+    owed = {(3, 1): 200, (3, 2): 100, (4, 1): 100, (4, 2): 100, (4, 3): 100}
+    assert balances._shortcut_moves(owed, {}) == [(100, 3, 1, 4), (100, 3, 2, 4)]
+    greedy = dict(owed)
+    while moves := balances._shortcut_moves(greedy, {}):
+        x, p, c, u = moves[0]
+        for edge in ((u, p), (p, c)):
+            greedy[edge] -= x
+            if not greedy[edge]:
+                del greedy[edge]
+        greedy[(u, c)] += x
+    best, _ = balances._simplify_debts(owed, {})
+    assert len(greedy) == 4
+    assert best == {(3, 1): 200, (4, 1): 100, (4, 2): 200}
+    assert person_net(best) == person_net(owed)
+    # These are the only two first moves and both lead to terminal states, so three
+    # is the minimum reachable under the full-amount shortcut rule.
+    assert balances._shortcut_moves(best, {}) == []
+    assert len(best) == 3
+
+
+def test_family_cycle_without_person_cycle_stays():
+    """Relatives cannot trade balances merely because their rolled families form a loop."""
+    families = {1: 'Tan', 2: 'Tan', 3: 'Lee', 4: 'Lee', 5: 'Ng', 6: 'Ng'}
+    owed = {(1, 3): 100, (4, 5): 100, (6, 2): 100}
+    assert balances._simplify_debts(owed, families) == (owed, ())
