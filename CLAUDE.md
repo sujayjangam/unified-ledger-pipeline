@@ -199,6 +199,11 @@ Env vars (`.env.example` shows the format):
   only on Confirm. Payback taps use the directory snapshot kept with the report or card,
   never reload it; new cards recheck trip membership and the suggested amount. Amount replies
   are parsed in Python before expense extraction, and use a separate pending-card map.
+  Each reply is deleted inside the card lock, and its prompt once read; a refused amount's
+  error goes into a replacement prompt, never a separate message (#149). After a saved
+  payback a new report is sent from the card's snapshot, and only then are the old report
+  and the last redraw deleted; a failed redraw or bills read is only printed and keeps the
+  old report, never touching the saved card.
   Debts are worked out per person first, even inside the payer's own family, and rolled up
   only at the end ([ADR-0051](docs/decisions/0051-debts-per-person-then-families.md)): a
   family's debts to someone outside it are one line, a debt inside a family stays person to
@@ -234,7 +239,8 @@ Env vars (`.env.example` shows the format):
   ([ADR-0053](docs/decisions/0053-other-currency-paybacks-at-a-reference-rate.md)), looked
   up once when the message is read, never on a tap; a failed lookup asks for a typed amount
   and never blocks. The amount prompt and each reply are deleted once read, like split
-  prompts; a refused reply keeps the prompt, and a failed delete is only printed. Settle-screen money goes through `format_money` (built on `format_cents`).
+  prompts; a refused reply gets a replacement prompt with the error under its fixed first
+  line, and a failed delete is only printed. Settle-screen money goes through `format_money` (built on `format_cents`).
 - The duplicate check runs before the card is shown, never inside the insert, and a failed check
   gives a normal card — it must never block a save
   ([ADR-0027](docs/decisions/0027-duplicate-warning-before-the-card.md)).
