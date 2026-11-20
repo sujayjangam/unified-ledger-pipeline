@@ -164,11 +164,16 @@ the options turned down, and what it cost. The ones that shaped the system most:
   family and per currency, with each member underneath, and a short list of payments that
   settles it. Debts are worked out per person, so relatives who paid for each other settle up
   too; a family's debts to someone outside it are paid as one. Money goes back to the person
-  who paid the bill. It's plain text, so it can be forwarded to the group.
+  who paid the bill. The list uses as few payments as it can, moving a debt only onto a line
+  that already exists, and each shortcut gets a 💡 line saying what it moved
+  ([ADR-0051](docs/decisions/0051-debts-per-person-then-families.md)). It's plain text, so it
+  can be forwarded to the group.
 - Paybacks: a "Mark paid" button under each suggested payment opens a payback card, saved only on
   Confirm. You can type a different amount, and the money handed over can be in another
   currency. A payback is its own record, never spending. Paying more than is owed gets a warning
-  and a "Confirm overpayment" button, not a refusal.
+  and a "Confirm overpayment" button, not a refusal. Paying a line with a 💡 shortcut also marks
+  the bills behind the shortcut as paid, so the bills match `/trip_bals` and anyone in the
+  family can pay the line in full.
 - Settling up by message: a message starting "settle" ("Settle Carol paid 381 for saree
   pleating") is read in Python, never by the model, and shows a card of the bills it pays off,
   each share cleared or still owed, before anything is saved. With no bill named it pays the
