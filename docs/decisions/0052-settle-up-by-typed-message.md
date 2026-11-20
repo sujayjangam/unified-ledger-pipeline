@@ -9,7 +9,10 @@
 `app/bot_core.py::handle_settle_up_button`, `app/services/balances.py::open_bill_shares`
 **Changes:** in [ADR-0046](0046-settlements-as-their-own-records.md), "Taps first" (a typed
 message comes first; the "Mark paid" buttons stay until a "Settle up" button replaces them). The
-rest of ADR-0046, ADR-0047 and ADR-0051 stays.
+rest of ADR-0046, ADR-0047 and ADR-0051 stays. From 2026-11-20, one exception to
+[ADR-0050](0050-soft-delete-behind-a-view.md): the payback read (`get_trip_settlements`) names
+`raw_transactions` too, for one column, who paid a row's bill (see "A deleted bill breaks its
+chain").
 
 ## Problem
 
@@ -119,12 +122,39 @@ An amount with no word in common is no match: common amounts (20, 50) would pick
   fires in normal use. A bill row on a deleted bill clears nothing: its cents count as left over,
   owed back to the giver. The hand-run test-row cleanup in `docs/LOCAL_TESTING.md` removes bill
   rows first.
-- **A payment along a simplified line** (#129, offered only by the "Settle up" button) clears
-  bills on both lines. Dave owes Carol 40, Carol owes Alice 40, Dave owes Alice 60, and Dave pays
-  Alice 100: rows clear Dave's 60 of Alice's bills, Carol's 40 of Alice's bills (on Carol's
-  behalf), and Dave's 40 of Carol's bills (by offset, no money moved). Rows owed to a middle
-  person must equal the rows paying that person's debts on their behalf, so money still moves
-  only along existing debt lines (ADR-0051). Every bill ends up marked paid.
+- **A payment along a simplified line** (#129, #145; a "Mark paid" on `/trip_bals`, later the
+  "Settle up" button) clears bills on both lines. Dave owes Carol 40, Carol owes Alice 40, Dave
+  owes Alice 60, and Dave pays Alice 100: rows clear Dave's 60 of Alice's bills, Carol's 40 of
+  Alice's bills (on Carol's behalf), and Dave's 40 of Carol's bills (by offset, no money moved).
+  Rows owed to a middle person may not exceed the rows paying that person's debts on their
+  behalf, so money still moves only along existing debt lines (ADR-0051). Every bill ends up
+  marked paid, whoever in the family hands the money over.
+  - **Worked out when the payback card opens, never stored.** The search's winning steps are
+    replayed to find which person-to-person debts make up the line, kept on the card, and
+    trimmed to the amount on Confirm; the same bills and paybacks always give the same lines. The rows saved with the payback are the permanent record. A stored copy of
+    the simplification was rejected: deletes, Undo, split edits, paybacks and hand-run SQL all
+    change it, and one missed rebuild would save wrong rows.
+  - **Only shortened lines get rows.** A line with no shortcut is saved with no rows, as before.
+    A chain with a step no open bill share covers (a debt left by an earlier overpayment) also
+    saves no rows.
+  - **Read all or nothing.** The offset rows of one payback are used only if every one still
+    fits its open share and its debt; otherwise they are all dropped with the middle people's
+    rows, and the money is owed back to the giver. Paybacks saved before this have no offset
+    rows and read as before.
+  - **A deleted bill breaks its chain (added 2026-11-20).** Erin pays Alice 100: her 60 dinner
+    share, Bob's 40 dinner share, and her 40 share of Bob's taxi by offset. If the taxi is later
+    deleted, it drops out of the bills read and nothing shows Bob was a middle person, so his
+    dinner row would still clear and Erin would lose 40 unseen. The payback read therefore
+    takes each row's bill payer from `raw_transactions`, deleted or not: only the payer, never
+    an amount, so a deleted bill still clears nothing. A row on a deleted bill paid by someone
+    other than the receiver marks that payer as a middle person, and the chain fails as a
+    whole: Bob owes Alice 40 again, and Alice owes Erin 40 back. A row on a deleted bill the
+    receiver paid is unchanged. Undo brings the chain back. Found by the Codex review of PR
+    [#146](https://github.com/sujayjangam/unified-ledger-pipeline/pull/146). Rejected: storing
+    the payer on each row (a migration days before the deploy freeze, and a second copy of a
+    fact the bill holds); refusing to delete a bill a payback points at (paybacks can't be
+    deleted from the bot, so a wrong bill would be stuck); letting any deleted row break the
+    payback (a plain payback would stop clearing its live bills).
 - **On someone's behalf, never "gift".** A share paid for someone else says "paid on Erin's
   behalf". As in ADR-0051, it clears their debt and nobody owes the giver.
 

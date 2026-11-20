@@ -458,17 +458,20 @@ def test_trip_paybacks_include_ordered_bill_rows_and_fail_closed(monkeypatch):
     rows, bills = MagicMock(), MagicMock()
     rows.mappings.return_value.all.return_value = [dict(id=2), dict(id=1)]
     bills.mappings.return_value.all.return_value = [
-        dict(settlement_id=1, transaction_id='a', for_id=3, cents=100),
-        dict(settlement_id=1, transaction_id='b', for_id=4, cents=200),
+        dict(settlement_id=1, transaction_id='a', for_id=3, cents=100, payer_id=1),
+        dict(settlement_id=1, transaction_id='b', for_id=4, cents=200, payer_id=2),
     ]
     conn.execute.side_effect = [rows, bills]
     connect = MagicMock(return_value=manager)
     monkeypatch.setattr(ledger_queries, 'get_connection', connect)
     assert ledger_queries.get_trip_settlements(7) == [dict(id=2, bills=[]), dict(id=1, bills=[
-        dict(transaction_id='a', for_id=3, cents=100), dict(transaction_id='b', for_id=4, cents=200)])]
+        dict(transaction_id='a', for_id=3, cents=100, payer_id=1),
+        dict(transaction_id='b', for_id=4, cents=200, payer_id=2)])]
     connect.assert_called_once_with()
     sql, params = conn.execute.call_args.args
     assert 'ORDER BY b.settlement_id, b.transaction_id, b.for_participant_id' in str(sql)
+    # The bill's payer comes from the real table, so a deleted bill still names it (ADR-0052).
+    assert 'JOIN raw_transactions t ON t.transaction_id = b.transaction_id' in str(sql)
     assert 's.trip_id IS NOT DISTINCT FROM :trip_id' in str(sql) and params == {'trip_id': 7}
     conn.execute.side_effect = [rows, RuntimeError('offline')]
     assert ledger_queries.get_trip_settlements(7) is None
@@ -531,3 +534,106 @@ async def test_a_debt_inside_a_family_gets_its_own_payback_card(flow):
     assert (pending['from_id'], pending['to_id'], pending['debtor_member_ids']) == (2, 1, (2,))
     assert pending['family'] is None
     assert 'Confirm' in _buttons(query.message.reply_text.await_args.kwargs['reply_markup'])
+
+
+@pytest.mark.parametrize('bills', [
+    [dict(transaction_id='dinner', for_id=2, payer_id=2, cents=100)],
+    [dict(transaction_id='dinner', for_id=2, cents=100)],
+    [dict(transaction_id='taxi', for_id=4, payer_id=3, cents=100)],
+    [dict(transaction_id='dinner', for_id=3, payer_id=2, cents=99),
+     dict(transaction_id='taxi', for_id=4, payer_id=3, cents=100)],
+    [dict(transaction_id='dinner', for_id=3, payer_id=2, cents=1001)],
+])
+def test_offset_validation_precedes_connection(monkeypatch, bills):
+    connect = MagicMock()
+    monkeypatch.setattr(settlements, 'get_connection', connect)
+    with pytest.raises(ValueError):
+        settlements.add_settlement(**write_args(bills=bills))
+    connect.assert_not_called()
+
+
+@pytest.mark.parametrize('explicit_payer', [True, False])
+def test_offset_rows_insert_without_payer_metadata(monkeypatch, explicit_payer):
+    manager = MagicMock()
+    conn = manager.__enter__.return_value
+    conn.execute.return_value.rowcount = 1
+    conn.execute.return_value.scalar_one.return_value = 42
+    monkeypatch.setattr(settlements, 'get_connection', lambda: manager)
+    bills = [dict(transaction_id='dinner', for_id=3, cents=1000),
+             dict(transaction_id='taxi', for_id=4, payer_id=3, cents=1000),
+             dict(transaction_id='lunch', for_id=5, payer_id=4, cents=1000)]
+    if explicit_payer:
+        bills[0]['payer_id'] = 2
+    assert settlements.add_settlement(**write_args(bills=bills))
+    sql, params = conn.execute.call_args_list[1].args
+    assert 'payer_id' not in str(sql)
+    assert params == [dict(settlement_id=42, transaction_id=b['transaction_id'],
+                           for_id=b['for_id'], cents=b['cents']) for b in bills]
+    conn.commit.assert_called_once()
+
+
+@pytest.mark.parametrize('shortened', [True, False])
+async def test_mark_paid_keeps_parts_and_confirm_uses_snapshot(flow, monkeypatch, shortened):
+    from app.services.balances import payment_rows
+    entries = [dict(transaction_id='dinner', currency='AUD', paid_by=1, splits={3: 6000})]
+    if shortened:
+        entries[0]['splits'][2] = 4000
+        entries.append(dict(transaction_id='taxi', currency='AUD', paid_by=2, splits={3: 4000}))
+    monkeypatch.setattr(bot, 'get_trip_split_entries', MagicMock(return_value=entries))
+    amount = 10000 if shortened else 6000
+    update, _ = tap(f'settle:new:7:1:{amount}', 10)
+    await bot.handle_settle_button(update, flow)
+    pending = flow.user_data['pending_settlements'][20]
+    parts = pending['line_parts']
+    assert bool(parts) is shortened
+    # Payer changes and Confirm must use the card, even if the stored bills have changed.
+    for name in ('get_trip_split_entries', 'get_trip_settlements', '_load_bals_trip'):
+        monkeypatch.setattr(bot, name, MagicMock(side_effect=AssertionError('Do not reload')))
+    update, _ = tap('settle:person:3')
+    await bot.handle_settle_button(update, flow)
+    writer = MagicMock(return_value=True)
+    monkeypatch.setattr(bot, 'add_settlement', writer)
+    update, _ = tap('settle:confirm')
+    await bot.handle_settle_button(update, flow)
+    writer.assert_called_once()
+    if shortened:
+        assert writer.call_args.kwargs['bills'] == payment_rows(parts, 3, amount)
+        assert len(writer.call_args.kwargs['bills']) == 3
+    else:
+        assert 'bills' not in writer.call_args.kwargs
+
+
+async def test_outside_part_payment_clears_named_member_first(flow, monkeypatch):
+    """Dan, outside the Ng family, pays 30 of its shortened 130 line to Alice.
+
+    The card names Bob, the lowest id, for the family. Bob's 30 goes first, as it would on
+    a line with no shortcut, even though Carol owes more.
+    """
+    from app.services.participants import Directory, Participant
+    from app.services import trips
+    people = (Participant(1, "Alice", str(ALICE), 10, True), Participant(2, "Bob", None, None),
+              Participant(3, "Carol", None, None), Participant(4, "Erin", None, None),
+              Participant(5, "Dan", None, None))
+    flow.user_data['bals_reports'][10] = Directory(people, ())
+    trip = trips.Trip(7, "Beach", date(2026, 12, 1), date(2026, 12, 7), member_ids=(1, 2, 3, 4, 5),
+                      families=((1, "Tan"), (2, "Ng"), (3, "Ng"), (4, "Lee"), (5, "Ong")))
+    monkeypatch.setattr(bot, '_load_bals_trip', MagicMock(return_value=trip))
+    # Alice paid dinner for Bob 30, Carol 60 and Erin 40; Erin paid a taxi for Carol 40.
+    # The shortcut moves Carol's taxi debt onto her line to Alice: Ngs owe Alice 130.
+    entries = [dict(transaction_id='dinner', currency='AUD', paid_by=1, splits={2: 3000, 3: 6000, 4: 4000}),
+               dict(transaction_id='taxi', currency='AUD', paid_by=4, splits={3: 4000})]
+    monkeypatch.setattr(bot, 'get_trip_split_entries', MagicMock(return_value=entries))
+    update, _ = tap('settle:new:7:1:13000', 10)
+    await bot.handle_settle_button(update, flow)
+    update, _ = tap('settle:person:5')
+    await bot.handle_settle_button(update, flow)
+    card = flow.user_data['pending_settlements'][20]
+    assert card['for_id'] == 2 and card['line_parts']
+    # As if Dan had typed 30 as the amount; the reply itself is tested elsewhere.
+    card.update(clears_cents=3000, paid_cents=3000)
+    writer = MagicMock(return_value=True)
+    monkeypatch.setattr(bot, 'add_settlement', writer)
+    update, _ = tap('settle:confirm')
+    await bot.handle_settle_button(update, flow)
+    assert writer.call_args.kwargs['bills'] == [
+        dict(transaction_id='dinner', for_id=2, payer_id=1, cents=3000)]

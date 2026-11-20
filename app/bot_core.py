@@ -36,7 +36,9 @@ from app.services.trips import (
     Trip, load_active_trip, trip_families, switch_trip_off, switch_trip_on, member_trips,
     member_trip, banner_message_id, set_banner_message_id, format_trip_dates,
 )
-from app.services.balances import trip_balance_lines, trip_payments, unit_of, open_bill_shares
+from app.services.balances import (
+    trip_balance_lines, trip_payments, unit_of, open_bill_shares, line_parts, payment_rows,
+)
 from app.services.settlements import (
     add_settlement, is_overpayment, settlement_card_text, change_settlement_amount, parse_settlement_amount,
 )
@@ -2043,6 +2045,8 @@ async def _new_settlement(update, context):
         payer = (payment.from_unit[1] if payment.from_unit[0] == 'person' else
                  sender.id if sender.id in member_ids else None)
         card = dict(trip_id=trip.id, trip_name=trip.name, from_id=payer,
+                    line_parts=line_parts(entries, families, settlements, currency,
+                                          payment.from_unit, payment.to_unit[1]),
                     to_id=payment.to_unit[1], clears_cents=cents, clears_currency=currency,
                     paid_cents=cents, paid_currency=currency, suggested_cents=cents,
                     debtor_member_ids=member_ids, for_id=None, idempotency_key=str(uuid.uuid4()),
@@ -2109,13 +2113,20 @@ async def _settle_tap(query, context):
         await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton("⏳ Saving...", callback_data="settle:saving")]]))
         pending.pop(message_id)
+        # Whose debt a shortened line clears first: the giver's own, or, when someone outside
+        # the owing family pays, the member the card names (for_id: the lowest id). A line
+        # with no shortcut clears that same member first (_pay_back), so both kinds agree.
+        first = card['from_id'] if card['for_id'] is None else card['for_id']
         try:
             add_settlement(from_id=card['from_id'], to_id=card['to_id'], for_id=card['for_id'],
                            clears_amount=format_cents(card['clears_cents']), clears_currency=card['clears_currency'],
                            paid_amount=format_cents(card['paid_cents']), paid_currency=card['paid_currency'],
                            trip_id=card['trip_id'], date=card['date'], source="telegram_bot",
                            entered_by_participant_id=card['entered_by_participant_id'],
-                           idempotency_key=card['idempotency_key'])
+                           idempotency_key=card['idempotency_key'],
+                           **({'bills': payment_rows(card['line_parts'], first,
+                                                     card['clears_cents'])}
+                              if card.get('line_parts') else {}))
         except Exception as e:
             print(f"Could not save payback: {e}")
             _bounded_put(pending, message_id, card)

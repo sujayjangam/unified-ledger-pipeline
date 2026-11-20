@@ -65,7 +65,7 @@ def soft_delete_entry(transaction_id: str, deleted_by_participant_id: int):
     """Marks a live entry deleted (ADR-0050). True if this call deleted it, False if it was
     already deleted or doesn't exist, None if the write FAILED.
 
-    One of only two queries that name raw_transactions: the view hides deleted rows, so the
+    One of the few queries that name raw_transactions: the view hides deleted rows, so the
     real table is the only place a row can be marked or unmarked. "AND deleted_at IS NULL"
     makes two overlapping taps safe: the second one changes nothing and gets False.
     The split rows are left alone; every reader reaches them through the view, so they drop
@@ -209,15 +209,24 @@ def get_trip_settlements(trip_id: int | None = None):
                 ORDER BY date, created_at, id
             '''), {"trip_id": trip_id}).mappings().all()
             paybacks = {row['id']: dict(row, bills=[]) for row in rows}
+            # Who paid each row's bill, even a deleted one (ADR-0052). A deleted bill drops
+            # out of the bills read, which would hide that its payer was the middle person
+            # of an offset chain. Only the payer is read from raw_transactions, never an
+            # amount, so a deleted bill still clears nothing. Payer as in
+            # get_trip_split_entries: recorded, else the account's owner, else the sender.
             bills = conn.execute(text('''
-                SELECT b.settlement_id, b.transaction_id, b.for_participant_id AS for_id, b.cents
+                SELECT b.settlement_id, b.transaction_id, b.for_participant_id AS for_id, b.cents,
+                       COALESCE(t.paid_by_participant_id, a.owner_participant_id,
+                                t.entered_by_participant_id) AS payer_id
                 FROM settlement_bills b JOIN settlements s ON s.id = b.settlement_id
+                JOIN raw_transactions t ON t.transaction_id = b.transaction_id
+                JOIN accounts a ON a.id = t.account_id
                 WHERE s.trip_id IS NOT DISTINCT FROM :trip_id
                 ORDER BY b.settlement_id, b.transaction_id, b.for_participant_id
             '''), {"trip_id": trip_id}).mappings().all()
             for bill in bills:
                 paybacks[bill['settlement_id']]['bills'].append(
-                    {key: bill[key] for key in ('transaction_id', 'for_id', 'cents')})
+                    {key: bill[key] for key in ('transaction_id', 'for_id', 'cents', 'payer_id')})
             return list(paybacks.values())
     except Exception as e:
         print(f"Could not read trip paybacks: {e}")
