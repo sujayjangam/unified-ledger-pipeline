@@ -33,6 +33,8 @@ def flow(monkeypatch, directory):
     monkeypatch.setattr(bot, 'get_sgt_now', lambda: MagicMock(date=lambda: date(2026, 11, 17)))
     context = _context()
     context.bot.edit_message_text = AsyncMock()
+    context.bot.delete_message = AsyncMock()
+    context.bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=40))
     context.user_data['bals_reports'] = {10: directory}
     return context
 
@@ -47,6 +49,7 @@ def tap(data, message_id=20):
     """Make the awaited Telegram methods behave like a real callback's methods."""
     update, query = _tap(data)
     query.message.message_id = message_id
+    query.message.chat_id = 100
     query.edit_message_reply_markup = AsyncMock()
     query.message.reply_text = AsyncMock(return_value=MagicMock(message_id=20))
     return update, query
@@ -58,12 +61,15 @@ async def test_new_card_requires_family_choice_and_checks_membership(flow):
     await bot.handle_settle_button(update, flow)
     bot._load_bals_trip.assert_called_once_with(1, 7)
     pending = flow.user_data['pending_settlements'][20]
+    assert pending['directory'] is flow.user_data['bals_reports'][10]
+    assert pending['report_message_id'] == 10
     assert pending['from_id'] is None and pending['debtor_member_ids'] == (3,)
     buttons = _buttons(query.message.reply_text.await_args.kwargs['reply_markup'])
     assert buttons['Carol'] == 'settle:person:3' and 'Confirm' not in buttons
     # Alice is owed, so she can't pay herself. Bob, her relative, may pay on Lee's behalf.
     assert 'Alice' not in buttons and buttons['Bob'] == 'settle:person:2'
     query.answer.assert_awaited_once()
+
     update, query = tap('settle:person:1')
     await bot.handle_settle_button(update, flow)
     assert flow.user_data['pending_settlements'][20]['from_id'] is None
@@ -211,7 +217,8 @@ async def test_confirm_and_double_tap_save_once(flow, monkeypatch, inserted):
 
 async def test_failed_save_restores_same_key_and_buttons(flow, monkeypatch):
     """A retry keeps the original key even if the failed call reached Postgres."""
-    pending = card(clears_cents=4000, paid_cents=4000)
+    pending = card(clears_cents=4000, paid_cents=4000,
+                   directory=flow.user_data['bals_reports'][10], report_message_id=10)
     flow.user_data['pending_settlements'] = {20: pending}
     monkeypatch.setattr(bot, 'add_settlement', MagicMock(side_effect=RuntimeError('offline')))
     update, query = tap('settle:confirm')
@@ -220,11 +227,13 @@ async def test_failed_save_restores_same_key_and_buttons(flow, monkeypatch):
     assert bot._card_outcome(flow, 20) is None
     assert '⚠️ Confirm overpayment' in _buttons(query.edit_message_text.await_args.kwargs['reply_markup'])
     query.answer.assert_awaited_once()
+    flow.bot.send_message.assert_not_awaited()
 
 
 async def test_cancel_and_resolved_menu_are_toast_only(flow):
     """Cancelling removes the buttons and no later tap redraws the card."""
-    flow.user_data['pending_settlements'] = {20: card()}
+    flow.user_data['pending_settlements'] = {
+        20: card(directory=flow.user_data['bals_reports'][10], report_message_id=10)}
     update, query = tap('settle:cancel')
     await bot.handle_settle_button(update, flow)
     assert query.edit_message_text.await_args.args[0].endswith('❌ Cancelled.')
@@ -232,6 +241,7 @@ async def test_cancel_and_resolved_menu_are_toast_only(flow):
     await bot.handle_settle_button(update, flow)
     query.answer.assert_awaited_once()
     query.edit_message_text.assert_not_awaited()
+    flow.bot.send_message.assert_not_awaited()
 
 
 @pytest.mark.parametrize('value,side,expected', [('40', 'clears', (4000, 'AUD', 4000)),
@@ -253,6 +263,9 @@ async def test_prompt_reply_routes_before_expenses(flow, authorized, monkeypatch
     assert (updated['clears_cents'], updated['paid_currency'], updated['paid_cents']) == expected
     extract.assert_not_awaited()
     assert flow.bot.edit_message_text.await_args.kwargs['message_id'] == 20
+    assert [c.kwargs['message_id'] for c in flow.bot.delete_message.await_args_list] == [reply.message.message_id, 30]
+    assert flow.user_data['settlement_prompts'] == {}
+    assert flow.user_data['settlement_prompt_of_card'] == {}
 
 
 @pytest.mark.parametrize('value', ['banana', '-5', '0', 'NaN', '50 XYZ', '50 SGF', '50 SGD extra'])
@@ -264,9 +277,16 @@ async def test_bad_reply_does_not_change_card_or_reach_model(flow, authorized, m
     monkeypatch.setattr(bot, 'process_expense_text', extract)
     update = _update(ALICE, value)
     update.message.reply_to_message.message_id = 30
+    update.message.reply_text.return_value.message_id = 31
     await bot.handle_text(update, flow)
     assert flow.user_data['pending_settlements'][20] is pending
     update.message.reply_text.assert_awaited_once()
+    assert update.message.reply_text.await_args.args[0].startswith(bot.SETTLE_PROMPTS['paid'] + '\n⚠️ ')
+    assert update.message.reply_text.await_args.kwargs['reply_markup'].force_reply
+    assert [c.kwargs['message_id'] for c in flow.bot.delete_message.await_args_list] == [update.message.message_id, 30]
+    assert flow.user_data['settlement_prompts'] == {31: (20, 'paid')}
+    assert flow.user_data['settlement_prompt_of_card'] == {20: 31}
+    flow.bot.edit_message_text.assert_not_awaited()
     extract.assert_not_awaited()
 
 
@@ -280,18 +300,146 @@ async def test_reply_to_resolved_prompt_never_becomes_expense(flow, authorized, 
     await bot.handle_text(update, flow)
     extract.assert_not_awaited()
     update.message.reply_text.assert_awaited_once_with(bot.SETTLE_GONE)
+    assert [c.kwargs['message_id'] for c in flow.bot.delete_message.await_args_list] == [update.message.message_id, 30]
+    assert flow.user_data['settlement_prompts'] == {}
 
 
-async def test_reply_after_restart_never_becomes_expense(flow, authorized, monkeypatch):
+@pytest.mark.parametrize('suffix', ['', '\n⚠️ Use a positive amount.'])
+async def test_reply_after_restart_never_becomes_expense(flow, authorized, monkeypatch, suffix):
     """The bot's own prompt text protects replies even when its memory has been lost."""
     update = _update(ALICE, '50 SGD')
-    update.message.reply_to_message.text = bot.SETTLE_PROMPTS['paid']
+    update.message.reply_to_message.text = bot.SETTLE_PROMPTS['paid'] + suffix
     update.message.reply_to_message.from_user.id = flow.bot.id
     extract = AsyncMock()
     monkeypatch.setattr(bot, 'process_expense_text', extract)
     await bot.handle_text(update, flow)
     extract.assert_not_awaited()
     update.message.reply_text.assert_awaited_once_with(bot.SETTLE_GONE)
+    assert [c.kwargs['message_id'] for c in flow.bot.delete_message.await_args_list] == [
+        update.message.message_id, update.message.reply_to_message.message_id]
+
+
+@pytest.mark.parametrize('side', ['clears', 'paid'])
+async def test_second_prompt_sends_before_deleting_first(flow, side):
+    """Switching either amount prompt leaves only the newly sent prompt linked."""
+    flow.user_data.update(pending_settlements={20: card()}, settlement_prompts={30: (20, 'clears')},
+                          settlement_prompt_of_card={20: 30})
+    update, query = tap('settle:' + side)
+    async def send(*args, **kwargs):
+        flow.bot.delete_message.assert_not_awaited()
+        return SimpleNamespace(message_id=31)
+    query.message.reply_text.side_effect = send
+    await bot.handle_settle_button(update, flow)
+    flow.bot.delete_message.assert_awaited_once_with(chat_id=query.message.chat_id, message_id=30)
+    assert flow.user_data['settlement_prompts'] == {31: (20, side)}
+    assert flow.user_data['settlement_prompt_of_card'] == {20: 31}
+    query.answer.assert_awaited_once()
+
+async def test_failed_prompt_send_keeps_old_links(flow):
+    """A failed replacement must leave the old prompt usable."""
+    flow.user_data.update(pending_settlements={20: card()}, settlement_prompts={30: (20, 'clears')},
+                          settlement_prompt_of_card={20: 30})
+    update, query = tap('settle:paid')
+    query.message.reply_text.side_effect = RuntimeError('offline')
+    with pytest.raises(RuntimeError):
+        await bot.handle_settle_button(update, flow)
+    flow.bot.delete_message.assert_not_awaited()
+    assert flow.user_data['settlement_prompts'] == {30: (20, 'clears')}
+    assert flow.user_data['settlement_prompt_of_card'] == {20: 30}
+    query.answer.assert_awaited_once()
+
+
+async def test_failed_amount_redraw_replaces_prompt_without_changing_card(flow):
+    """A redraw error belongs in the next ForceReply, preserving the previous amount."""
+    original = card()
+    flow.user_data.update(pending_settlements={20: original}, settlement_prompts={30: (20, 'clears')},
+                          settlement_prompt_of_card={20: 30})
+    flow.bot.edit_message_text.side_effect = RuntimeError('offline')
+    update = _update(ALICE, '40')
+    update.message.reply_to_message.message_id = 30
+    update.message.reply_text.return_value.message_id = 31
+    assert await bot._settlement_reply(update, flow)
+    update.message.reply_text.assert_awaited_once()
+    assert update.message.reply_text.await_args.args[0] == (
+        bot.SETTLE_PROMPTS['clears'] + "\n⚠️ Couldn't change the card. Reply again.")
+    assert flow.user_data['pending_settlements'][20] is original
+    assert flow.user_data['settlement_prompt_of_card'] == {20: 31}
+    assert [c.kwargs['message_id'] for c in flow.bot.delete_message.await_args_list] == [update.message.message_id, 30]
+
+
+@pytest.mark.parametrize('action', ['confirm', 'cancel'])
+@pytest.mark.parametrize('delete_fails', [False, True])
+async def test_resolving_card_clears_prompt_despite_delete_failure(flow, monkeypatch, action, delete_fails):
+    """Cleanup failures cannot prevent saving or cancelling."""
+    flow.user_data.update(pending_settlements={20: card()}, settlement_prompts={30: (20, 'clears')},
+                          settlement_prompt_of_card={20: 30})
+    writer = MagicMock(return_value=True)
+    monkeypatch.setattr(bot, 'add_settlement', writer)
+    if delete_fails:
+        flow.bot.delete_message.side_effect = RuntimeError('too old')
+    update, query = tap('settle:' + action)
+    await bot.handle_settle_button(update, flow)
+    assert writer.call_count == (1 if action == 'confirm' else 0)
+    flow.bot.delete_message.assert_awaited_once_with(chat_id=query.message.chat_id, message_id=30)
+    assert flow.user_data['settlement_prompts'] == {}
+    assert flow.user_data['settlement_prompt_of_card'] == {}
+    assert bot._card_outcome(flow, 20) == ('saved' if action == 'confirm' else 'cancelled')
+    query.answer.assert_awaited_once()
+
+
+async def test_saved_payback_redraw_uses_snapshot_and_retires_both_reports(flow, monkeypatch):
+    """Two cards from one source leave only the latest report, using captured names."""
+    directory = flow.user_data['bals_reports'][10]
+    flow.user_data['pending_settlements'] = {
+        i: card(directory=directory, report_message_id=10) for i in (20, 21)}
+    monkeypatch.setattr(bot, 'add_settlement', MagicMock(return_value=True))
+    screen = MagicMock(return_value=('fresh balances', None))
+    monkeypatch.setattr(bot, '_bals_screen', screen)
+    for card_id, report_id in ((20, 40), (21, 41)):
+        update, query = tap('settle:confirm', card_id)
+        async def send(**kwargs):
+            assert query.edit_message_text.await_args.args[0].endswith('✅ Payback saved.')
+            assert flow.bot.delete_message.await_count == (0 if card_id == 20 else 1)
+            assert report_id not in flow.user_data['bals_reports']
+            assert 'parse_mode' not in kwargs
+            return SimpleNamespace(message_id=report_id)
+        flow.bot.send_message.side_effect = send
+        await bot.handle_settle_button(update, flow)
+        screen.assert_called_with(BEACH, directory, date(2026, 11, 17))
+        assert flow.user_data['bals_reports'][report_id] is directory
+    assert [c.kwargs['message_id'] for c in flow.bot.delete_message.await_args_list] == [10, 10, 40]
+    bot._load_bals_trip.assert_called_with(1, 7)
+    bot._load_directory.assert_not_called()
+    assert flow.user_data['bals_last_redraw'] == {(query.message.chat_id, 7): 41}
+
+
+@pytest.mark.parametrize('failure', ['send', 'read', 'bills', 'not_member'])
+async def test_report_failure_leaves_saved_card_and_old_report(flow, monkeypatch, failure):
+    """A refresh is optional after saving; membership loss sends nothing.
+
+    'bills' is a failed read of the bills behind the report: the old report stays rather
+    than being swapped for an error message.
+    """
+    directory = flow.user_data['bals_reports'][10]
+    flow.user_data['pending_settlements'] = {20: card(directory=directory, report_message_id=10)}
+    monkeypatch.setattr(bot, 'add_settlement', MagicMock(return_value=True))
+    if failure == 'send':
+        flow.bot.send_message.side_effect = RuntimeError('offline')
+    elif failure == 'read':
+        bot._load_bals_trip.side_effect = RuntimeError('offline')
+    elif failure == 'bills':
+        monkeypatch.setattr(bot, 'get_trip_split_entries', lambda trip_id: None)
+    else:
+        bot._load_bals_trip.return_value = None
+    update, query = tap('settle:confirm')
+    await bot.handle_settle_button(update, flow)
+    assert bot._card_outcome(flow, 20) == 'saved'
+    assert 20 not in flow.user_data['pending_settlements']
+    assert query.edit_message_text.await_args.args[0].endswith('✅ Payback saved.')
+    flow.bot.delete_message.assert_not_awaited()
+    assert flow.user_data['bals_reports'] == {10: directory}
+    if failure != 'send':
+        flow.bot.send_message.assert_not_awaited()
 
 
 async def test_unauthorized_reply_never_touches_a_card(flow, monkeypatch):

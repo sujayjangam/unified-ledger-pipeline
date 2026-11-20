@@ -272,8 +272,8 @@ async def test_rate_found_or_missing_and_typed_reply(flow, monkeypatch, rate, ca
     original = pending(flow)
     for invalid in ('bad', '6400 SGD', '0', '-1'):
         reply.message.text = invalid
-        # A read reply drops its prompt link; re-open the prompt so these refused
-        # replies still reach the card (a refused reply keeps its prompt).
+        # Each consumed reply drops its old prompt link; restore this target so
+        # every invalid amount exercises the same pending card.
         flow.user_data.setdefault('settle_up_prompts', {})[prompt_id] = (20, 'INR')
         assert await bot._settle_up_reply(reply, flow)
         assert pending(flow) is original
@@ -425,15 +425,22 @@ async def test_read_reply_deletes_reply_and_prompt_and_drops_links(flow):
     assert flow.user_data['settle_up_prompt_of_card'] == {}
 
 
-async def test_refused_reply_deletes_only_the_reply_and_keeps_the_prompt(flow):
+async def test_refused_reply_replaces_prompt_with_error(flow):
+    """Refused amounts get one replacement prompt instead of a separate error message."""
     flow.bot.delete_message = AsyncMock()
     prompt_id = await _open_prompt(flow)
     reply = _reply(prompt_id, 'bad')
+    reply.message.reply_text.return_value.message_id = 31
+    before = pending(flow)
     assert await bot._settle_up_reply(reply, flow)
     reply.message.reply_text.assert_awaited_once()
-    assert _deleted(flow) == [77]
-    assert prompt_id in flow.user_data['settle_up_prompts']
-    assert flow.user_data['settle_up_prompt_of_card'] == {20: prompt_id}
+    assert reply.message.reply_text.await_args.args[0].startswith(
+        'Reply with how much INR this clears, e.g. 6452\n⚠️ ')
+    assert reply.message.reply_text.await_args.kwargs['reply_markup'].force_reply
+    assert _deleted(flow) == [77, 30]
+    assert flow.user_data['settle_up_prompts'] == {31: (20, 'INR')}
+    assert flow.user_data['settle_up_prompt_of_card'] == {20: 31}
+    assert pending(flow) is before
 
 
 async def test_second_change_amount_deletes_the_first_prompt(flow):
@@ -482,17 +489,23 @@ async def test_failing_delete_does_not_stop_the_redraw(flow):
     flow.bot.edit_message_text.assert_awaited()
 
 
-async def test_failed_redraw_after_a_reply_says_so_and_keeps_card_and_prompt(flow, capsys):
+async def test_failed_redraw_after_a_reply_replaces_prompt_and_keeps_card(flow, capsys):
+    """The unchanged card gets a fresh prompt explaining why the redraw failed."""
     # The reply is already deleted by then, so silence would look like the bot ignored it.
     flow.bot.delete_message = AsyncMock()
     prompt_id = await _open_prompt(flow)
     flow.bot.edit_message_text = AsyncMock(side_effect=RuntimeError('telegram down'))
     reply = _reply(prompt_id, '381')
+    reply.message.reply_text.return_value.message_id = 31
     assert await bot._settle_up_reply(reply, flow)
-    reply.message.reply_text.assert_awaited_once_with("Couldn't change the card. Reply again.")
+    reply.message.reply_text.assert_awaited_once()
+    assert reply.message.reply_text.await_args.args[0] == (
+        "Reply with how much INR this clears, e.g. 6452\n⚠️ Couldn't change the card. Reply again.")
+    assert reply.message.reply_text.await_args.kwargs['reply_markup'].force_reply
     assert pending(flow)['clears_cents'] == 645200
-    assert flow.user_data['settle_up_prompt_of_card'] == {20: prompt_id}
-    assert _deleted(flow) == [77]
+    assert flow.user_data['settle_up_prompt_of_card'] == {20: 31}
+    assert flow.user_data['settle_up_prompts'] == {31: (20, 'INR')}
+    assert _deleted(flow) == [77, 30]
     assert 'Settle amount reply failed: RuntimeError' in capsys.readouterr().out
 
 

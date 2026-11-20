@@ -1715,7 +1715,7 @@ async def _clear_settle_prompt(context, chat_id, card_id, replied_id=None):
             await _delete_quietly(context.bot, chat_id, previous)
 
 
-async def _su_prompt(message, context, card_id, card):
+async def _su_prompt(message, context, card_id, card, error=None, replied_id=None):
     """Link a ForceReply to its card; no amount reply can fall into expense extraction.
 
     A card keeps one open prompt: the old one is deleted only after the new one was sent,
@@ -1723,11 +1723,10 @@ async def _su_prompt(message, context, card_id, card):
     """
     currency = card['result'].currency
     prompt = f'Reply with how much {currency} this clears, e.g. 6452'
+    if error:
+        prompt += '\n⚠️ ' + error
     sent = await message.reply_text(prompt, reply_markup=ForceReply(selective=True))
-    old_id = context.user_data.get('settle_up_prompt_of_card', {}).get(card_id)
-    if old_id is not None:
-        context.user_data.get('settle_up_prompts', {}).pop(old_id, None)
-        await _delete_quietly(context.bot, message.chat_id, old_id)
+    await _clear_settle_prompt(context, message.chat_id, card_id, replied_id)
     _bounded_put(context.user_data.setdefault('settle_up_prompts', {}), sent.message_id, (card_id, currency))
     _bounded_put(context.user_data.setdefault('settle_up_prompt_of_card', {}), card_id, sent.message_id)
 
@@ -1920,8 +1919,8 @@ async def _settle_up_reply(update, context):
     """Consume FX replies under the card lock, validating currency before any change.
 
     The reply message is always deleted (inside the lock, like split replies). The prompt
-    is deleted too once the amount was read, or if the card is gone; a refused amount keeps
-    the prompt so the user can reply again.
+    is deleted too once the amount was read, or if the card is gone; a refused amount
+    replaces the prompt with the error below its fixed first line.
     """
     message = update.message
     replied = message.reply_to_message
@@ -1952,24 +1951,25 @@ async def _settle_up_reply(update, context):
             if code != currency:
                 raise ValueError(f'Use {currency} for the amount it clears')
         except ValueError as exc:
-            await message.reply_text(str(exc))
+            await _su_prompt(message, context, card_id, card, str(exc), replied.message_id)
             return True
         changed = dict(card, clears_cents=cents, fx_rate=Decimal(cents) / Decimal(card['reading'].cents),
                        fx_rate_date=get_sgt_now().date(), fx_source='typed', view='card',
                        fx_pair=(card['result'].paid_currency, currency))
         # The reply is already deleted, so a failure here must still say something; the
-        # card and its prompt stay as they were, ready for another reply.
+        # card stays as it was, with the error in a replacement prompt.
         try:
             changed = settle_card_state(changed)
             text, rows = build_settle_card(changed)
             await context.bot.edit_message_text(chat_id=chat_id, message_id=card_id,
                                                 text=text, reply_markup=_su_markup(rows))
         except SettleRefused as exc:
-            await message.reply_text(str(exc))
+            await _su_prompt(message, context, card_id, card, str(exc), replied.message_id)
             return True
         except Exception as exc:
             print(f'Settle amount reply failed: {type(exc).__name__}')
-            await message.reply_text("Couldn't change the card. Reply again.")
+            await _su_prompt(message, context, card_id, card,
+                             "Couldn't change the card. Reply again.", replied.message_id)
             return True
         pending[card_id] = changed
         # Read and redrawn: the prompt has done its job.
@@ -2011,7 +2011,7 @@ def _settle_people(card: dict) -> InlineKeyboardMarkup:
 
 
 async def _new_settlement(update, context):
-    """Recheck membership and the numbered suggestion using the report's directory snapshot."""
+    """Recheck the suggestion and keep its report and snapshot for a redraw after saving."""
     query = update.callback_query
     directory = context.user_data.get('bals_reports', {}).get(query.message.message_id)
     if directory is None:
@@ -2045,6 +2045,8 @@ async def _new_settlement(update, context):
         payer = (payment.from_unit[1] if payment.from_unit[0] == 'person' else
                  sender.id if sender.id in member_ids else None)
         card = dict(trip_id=trip.id, trip_name=trip.name, from_id=payer,
+                    # Keep the names the user saw; saving must never reload the directory.
+                    report_message_id=query.message.message_id, directory=directory,
                     line_parts=line_parts(entries, families, settlements, currency,
                                           payment.from_unit, payment.to_unit[1]),
                     to_id=payment.to_unit[1], clears_cents=cents, clears_currency=currency,
@@ -2092,7 +2094,7 @@ async def handle_settle_button(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def _settle_tap(query, context):
-    """Change or save this payback while holding its lock; never reload the directory."""
+    """Change or save under the card lock, clearing prompts and refreshing saved balances."""
     message_id = query.message.message_id
     outcome = _card_outcome(context, message_id)
     if outcome:
@@ -2135,19 +2137,20 @@ async def _settle_tap(query, context):
             return
         # False from the writer means this key was saved before: it is still a success.
         _mark_card_resolved(context, message_id, 'saved')
+        await _clear_settlement_prompt(context, query.message.chat_id, message_id)
         await query.edit_message_text(settlement_card_text(card) + "\n✅ Payback saved.", reply_markup=None)
+        await _redraw_settlement_balances(context, query.message.chat_id, card)
         return
     if action == 'cancel':
         await query.answer()
         await query.edit_message_text(settlement_card_text(card) + "\n❌ Cancelled.", reply_markup=None)
         pending.pop(message_id)
         _mark_card_resolved(context, message_id, 'cancelled')
+        await _clear_settlement_prompt(context, query.message.chat_id, message_id)
         return
     if action in ('clears', 'paid'):
         await query.answer()
-        message = await query.message.reply_text(SETTLE_PROMPTS[action], reply_markup=ForceReply(selective=True))
-        _bounded_put(context.user_data.setdefault('settlement_prompts', {}), message.message_id,
-                     (message_id, action))
+        await _settlement_prompt(query.message, context, message_id, action)
         return
     changed = dict(card)
     if action.startswith('person:'):
@@ -2168,33 +2171,97 @@ async def _settle_tap(query, context):
 
 
 async def _settlement_reply(update, context) -> bool:
-    """Consume replies to amount prompts before expense extraction, even on finished cards."""
+    """Delete typed replies under the card lock and keep errors in replacement prompts."""
     message = update.message
     replied = message.reply_to_message
     link = context.user_data.get('settlement_prompts', {}).get(replied.message_id) if replied else None
     if link is None:
         # Prompt links are bounded and disappear on restart. Their bot-authored wording
         # still tells us this is a payback reply, never a fresh expense to extract.
-        if (replied and replied.text in SETTLE_PROMPTS.values() and replied.from_user
+        if (replied and isinstance(replied.text, str)
+                and replied.text.startswith(tuple(SETTLE_PROMPTS.values())) and replied.from_user
                 and replied.from_user.id == context.bot.id):
+            await _delete_quietly(context.bot, message.chat_id, message.message_id)
+            await _delete_quietly(context.bot, message.chat_id, replied.message_id)
             await message.reply_text(SETTLE_GONE)
             return True
         return False
     card_id, side = link
     async with _card_lock(context, card_id):
+        await _delete_quietly(context.bot, message.chat_id, message.message_id)
         card = context.user_data.get('pending_settlements', {}).get(card_id)
-        if card is None:
+        if card is None or _card_outcome(context, card_id):
+            await _clear_settlement_prompt(context, message.chat_id, card_id, replied.message_id)
             await message.reply_text(SETTLE_GONE)
             return True
         try:
             changed = change_settlement_amount(card, message.text, side)
         except ValueError as e:
-            await message.reply_text(str(e))
+            await _settlement_prompt(message, context, card_id, side, str(e), replied.message_id)
             return True
-        await context.bot.edit_message_text(chat_id=message.chat_id, message_id=card_id,
-                                            text=settlement_card_text(changed), reply_markup=_settle_keyboard(changed))
+        try:
+            await context.bot.edit_message_text(chat_id=message.chat_id, message_id=card_id,
+                                                text=settlement_card_text(changed), reply_markup=_settle_keyboard(changed))
+        except Exception as exc:
+            print(f'Payback amount redraw failed: {exc}')
+            await _settlement_prompt(message, context, card_id, side,
+                                     "Couldn't change the card. Reply again.", replied.message_id)
+            return True
+        # Commit only what Telegram showed, then remove the now-used prompt.
         context.user_data['pending_settlements'][card_id] = changed
+        await _clear_settlement_prompt(context, message.chat_id, card_id, replied.message_id)
     return True
+
+
+async def _clear_settlement_prompt(context, chat_id, card_id, replied_id=None):
+    """Drop both prompt links and best-effort delete current and stale reply targets."""
+    current = context.user_data.get('settlement_prompt_of_card', {}).pop(card_id, None)
+    for previous in dict.fromkeys((current, replied_id)):
+        if previous is not None:
+            context.user_data.get('settlement_prompts', {}).pop(previous, None)
+            await _delete_quietly(context.bot, chat_id, previous)
+
+
+async def _settlement_prompt(message, context, card_id, side, error=None, replied_id=None):
+    """Send one prompt with a fixed first line, replacing the old prompt only on success."""
+    text = SETTLE_PROMPTS[side] + ('\n⚠️ ' + error if error else '')
+    sent = await message.reply_text(text, reply_markup=ForceReply(selective=True))
+    # Send first so a Telegram failure leaves the old prompt usable.
+    await _clear_settlement_prompt(context, message.chat_id, card_id, replied_id)
+    _bounded_put(context.user_data.setdefault('settlement_prompts', {}), sent.message_id, (card_id, side))
+    _bounded_put(context.user_data.setdefault('settlement_prompt_of_card', {}), card_id, sent.message_id)
+
+
+async def _redraw_settlement_balances(context, chat_id, card):
+    """Send fresh balances from the card's snapshot before removing superseded reports."""
+    try:
+        trip = _load_bals_trip(card['entered_by_participant_id'], card['trip_id'])
+        if trip is None:
+            return
+        directory = card['directory']
+        text, keyboard = _bals_screen(trip, directory, get_sgt_now().date())
+        if BALS_ERROR in text.splitlines():
+            # The bills or paybacks couldn't be read just now. Keep the old report rather than
+            # swap it for an error: the card already says the payback is saved, and
+            # /trip_bals can be asked for again.
+            print('Could not read balances for the redraw; old report kept.')
+            return
+        sent = await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard)
+    except Exception as exc:
+        # The payback is already saved; a report failure must not disguise that success.
+        print(f'Could not redraw payback balances: {exc}')
+        return
+    _bounded_put(context.user_data.setdefault('bals_reports', {}), sent.message_id, directory)
+    redraws = context.user_data.setdefault('bals_last_redraw', {})
+    # user_data spans chats; include the chat so cleanup never targets another chat's report.
+    key = (chat_id, card['trip_id'])
+    previous = redraws.get(key)
+    _bounded_put(redraws, key, sent.message_id)
+    # Two cards may originate from one report. Retire the last redraw as well as that source.
+    for old_id in dict.fromkeys((card['report_message_id'], previous)):
+        if old_id is not None and old_id != sent.message_id:
+            await _delete_quietly(context.bot, chat_id, old_id)
+            context.user_data.get('bals_reports', {}).pop(old_id, None)
 
 
 async def _delete_quietly(bot, chat_id, message_id):
