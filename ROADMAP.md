@@ -23,13 +23,12 @@ forward from Phase 3. The scope is under "Group-trip splitting" in Phase 1 below
 means nothing gets logged. So nothing merges in the last two days before the trip. Anything new
 is tried on a Neon branch with a fictional trip-sized directory first.
 
-**Next up**, in this order:
+**Next up:**
 
 1. Settling up redesigned: a typed "settle" message read by Python, each payback linked to the
    bills it clears, no "gift" wording
    ([#134](https://github.com/sujayjangam/unified-ledger-pipeline/issues/134), which takes in
-   [#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113) and
-   [#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114); design in
+   [#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113); design in
    [ADR-0052](docs/decisions/0052-settle-up-by-typed-message.md), agreed 2026-11-19). The same
    method serves everyday bills, for a later `/bals`. Typed path first, with a new
    `settlement_bills` table (migration 0011, on production). PR 1, PR 2 (the reader) and PR 3
@@ -43,22 +42,6 @@ is tried on a Neon branch with a fictional trip-sized directory first.
    phone before the freeze
    ([#137](https://github.com/sujayjangam/unified-ledger-pipeline/issues/137)). A "Settle up"
    button on `/trip_bals` waits until after the trip.
-2. Simplify trip debts to the fewest payments, only along existing debt lines
-   ([#129](https://github.com/sujayjangam/unified-ledger-pipeline/issues/129), the last part of
-   [#127](https://github.com/sujayjangam/unified-ledger-pipeline/issues/127); rule in
-   [ADR-0051](docs/decisions/0051-debts-per-person-then-families.md)). Done 2026-11-19
-   ([#144](https://github.com/sujayjangam/unified-ledger-pipeline/pull/144)): loops of debts
-   cancel too, and each shortcut gets a 💡 note line under "To settle".
-   Required before the freeze, in its own PR: offset rows (ADR-0052,
-   [#145](https://github.com/sujayjangam/unified-ledger-pipeline/issues/145)) that mark the
-   bills on a shortened line as paid when it is paid, so the settle card's bill list matches
-   `/trip_bals`, and a shortcut paid by any family member clears in full. Worked out again
-   from the bills when the payback card opens, kept on the card, never stored. Built on `feat/offset-rows` (2026-11-20, gate green, in
-   review). Tried on a Neon branch and in the test bot, and a read-only production check
-   found no saved payback with a row on a bill its receiver didn't pay, so no old payback
-   changes meaning. The review found that deleting a bill behind an offset row hid money owed
-   back; fixed in the same PR
-   ([ADR-0052](docs/decisions/0052-settle-up-by-typed-message.md)).
 
 Later: load a finished trip's hand-kept spreadsheet as real bills, and work out the trip from the
 message itself for costs logged before it starts.
@@ -78,6 +61,21 @@ message itself for costs logged before it starts.
 
 **Recently shipped**, newest first. Each PR and ADR has the full story.
 
+- **2026-11-20: paying a shortened line marks its bills paid**
+  ([#145](https://github.com/sujayjangam/unified-ledger-pipeline/issues/145), PR
+  [#146](https://github.com/sujayjangam/unified-ledger-pipeline/pull/146),
+  [ADR-0052](docs/decisions/0052-settle-up-by-typed-message.md)). A "Mark paid" on a line with
+  a 💡 shortcut also saves offset rows, so the bill list matches `/trip_bals` and a relative
+  paying the line clears it in full. They are worked out from the bills when the card opens,
+  never stored. A deleted bill behind an offset row breaks its chain, so the money shows as owed
+  back. No migration. Tried on a Neon branch and the test bot first; a read-only production
+  check found no saved payback that changes meaning.
+- **2026-11-19: trip debts simplified to the fewest payments**
+  ([#129](https://github.com/sujayjangam/unified-ledger-pipeline/issues/129), PR
+  [#144](https://github.com/sujayjangam/unified-ledger-pipeline/pull/144),
+  [ADR-0051](docs/decisions/0051-debts-per-person-then-families.md)). A debt moves only onto a
+  line that already exists, loops of debts cancel, and each shortcut gets a 💡 line under "To
+  settle". No migration.
 - **2026-11-19: trip debts worked out per person, then rolled up to families**
   ([#128](https://github.com/sujayjangam/unified-ledger-pipeline/issues/128), PR
   [#133](https://github.com/sujayjangam/unified-ledger-pipeline/pull/133),
@@ -187,9 +185,10 @@ message itself for costs logged before it starts.
 
 **Open top-level issues:**
 [#134](https://github.com/sujayjangam/unified-ledger-pipeline/issues/134) settle-up redesign, with
-[#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113) and
-[#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114) (next up, design first) ·
-[#127](https://github.com/sujayjangam/unified-ledger-pipeline/issues/127) trip balances, [#145](https://github.com/sujayjangam/unified-ledger-pipeline/issues/145) offset rows left (in progress) ·
+[#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113) (PRs 1–3 merged) ·
+[#143](https://github.com/sujayjangam/unified-ledger-pipeline/issues/143) bot screens hard to scan, with [#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114), [#148](https://github.com/sujayjangam/unified-ledger-pipeline/issues/148) and
+[#149](https://github.com/sujayjangam/unified-ledger-pipeline/issues/149) (after the trip; #149's timing to decide) ·
+[#127](https://github.com/sujayjangam/unified-ledger-pipeline/issues/127) trip balances (both sub-issues and the offset rows shipped) ·
 [#132](https://github.com/sujayjangam/unified-ledger-pipeline/issues/132) early ADRs too long ·
 [#122](https://github.com/sujayjangam/unified-ledger-pipeline/issues/122) Python-only split reader (after the trip) ·
 [#83](https://github.com/sujayjangam/unified-ledger-pipeline/issues/83) cards from Telegram ·
