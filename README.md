@@ -173,7 +173,9 @@ the options turned down, and what it cost. The ones that shaped the system most:
   currency. A payback is its own record, never spending. Paying more than is owed gets a warning
   and a "Confirm overpayment" button, not a refusal. Paying a line with a 💡 shortcut also marks
   the bills behind the shortcut as paid, so the bills match `/trip_bals` and anyone in the
-  family can pay the line in full.
+  family can pay the line in full. A typed amount and its prompt disappear once the card has
+  updated, with any error shown in the next prompt, and after Confirm a fresh `/trip_bals` is
+  sent below the card and the old one removed.
 - Settling up by message: a message starting "settle" ("Settle Carol paid 381 for saree
   pleating") is read in Python, never by the model, and shows a card of the bills it pays off,
   each share cleared or still owed, before anything is saved. With no bill named it pays the

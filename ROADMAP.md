@@ -61,6 +61,11 @@ message itself for costs logged before it starts.
 
 **Recently shipped**, newest first. Each PR and ADR has the full story.
 
+- **2026-11-20: typed amounts cleared from the chat, and `/trip_bals` redrawn after a payback**
+  ([#149](https://github.com/sujayjangam/unified-ledger-pipeline/issues/149), PR [#150](https://github.com/sujayjangam/unified-ledger-pipeline/pull/150)). On a "Mark paid" card, the typed amount
+  and its prompt are deleted once read, and an error goes into the next prompt. After
+  Confirm a fresh `/trip_bals` is sent and the old one deleted. The settle card's refused
+  amounts work the same way. No migration. Tried on the test bot first.
 - **2026-11-20: paying a shortened line marks its bills paid**
   ([#145](https://github.com/sujayjangam/unified-ledger-pipeline/issues/145), PR
   [#146](https://github.com/sujayjangam/unified-ledger-pipeline/pull/146),
@@ -186,8 +191,8 @@ message itself for costs logged before it starts.
 **Open top-level issues:**
 [#134](https://github.com/sujayjangam/unified-ledger-pipeline/issues/134) settle-up redesign, with
 [#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113) (PRs 1–3 merged) ·
-[#143](https://github.com/sujayjangam/unified-ledger-pipeline/issues/143) bot screens hard to scan, with [#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114), [#148](https://github.com/sujayjangam/unified-ledger-pipeline/issues/148) and
-[#149](https://github.com/sujayjangam/unified-ledger-pipeline/issues/149) (after the trip; #149's timing to decide) ·
+[#143](https://github.com/sujayjangam/unified-ledger-pipeline/issues/143) bot screens hard to scan, with [#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114) and
+[#148](https://github.com/sujayjangam/unified-ledger-pipeline/issues/148) (after the trip) ·
 [#127](https://github.com/sujayjangam/unified-ledger-pipeline/issues/127) trip balances (both sub-issues and the offset rows shipped) ·
 [#132](https://github.com/sujayjangam/unified-ledger-pipeline/issues/132) early ADRs too long ·
 [#122](https://github.com/sujayjangam/unified-ledger-pipeline/issues/122) Python-only split reader (after the trip) ·

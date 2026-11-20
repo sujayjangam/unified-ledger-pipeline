@@ -326,7 +326,7 @@ async def test_reply_redraw_and_confirm(monkeypatch, directory, state):
             context.user_data['pending_cards'][500] = {'replacement': True}
         context.bot.edit_message_text.side_effect = replace
     assert await bot_core._split_amounts_reply(update, context, directory)
-    assert context.bot.delete_message.await_args_list[0].kwargs == {'chat_id': 123, 'message_id': 601}
+    assert context.bot.delete_message.await_args_list[-1].kwargs == {'chat_id': 123, 'message_id': 601}
     assert any(call.kwargs['message_id'] == 600 for call in context.bot.delete_message.await_args_list)
     if state != 'live':
         assert entry == before
@@ -366,6 +366,11 @@ async def test_expired_or_ordinary_reply(monkeypatch, directory, own, prompt, ex
     monkeypatch.setattr(bot_core, 'authorize', AsyncMock(return_value=directory))
     extract = AsyncMock()
     monkeypatch.setattr(bot_core, 'process_expense_text', extract)
+
+    async def answer(*args, **kwargs):
+        # In a group chat the answer quotes the reply; Telegram refuses a deleted one.
+        context.bot.delete_message.assert_not_awaited()
+    update.message.reply_text.side_effect = answer
     await bot_core.handle_text(update, context)
     assert bool(extract.await_count) == extracted
     if not extracted:
@@ -440,4 +445,5 @@ async def test_reply_order_and_lock(monkeypatch, directory):
     context.bot.edit_message_text.side_effect = redraw
     update.message.reply_text.side_effect = send
     await bot_core._split_amounts_reply(update, context, directory)
-    assert events == [('delete', 601), ('redraw', 500), ('send', 602), ('delete', 600)]
+    # The reply goes last: in a group chat the answer quotes it (bot_core._reply_deleted_last).
+    assert events == [('redraw', 500), ('send', 602), ('delete', 600), ('delete', 601)]
