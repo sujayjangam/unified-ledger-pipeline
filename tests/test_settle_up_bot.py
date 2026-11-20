@@ -437,7 +437,7 @@ async def test_refused_reply_replaces_prompt_with_error(flow):
     assert reply.message.reply_text.await_args.args[0].startswith(
         'Reply with how much INR this clears, e.g. 6452\n⚠️ ')
     assert reply.message.reply_text.await_args.kwargs['reply_markup'].force_reply
-    assert _deleted(flow) == [77, 30]
+    assert _deleted(flow) == [30, 77]
     assert flow.user_data['settle_up_prompts'] == {31: (20, 'INR')}
     assert flow.user_data['settle_up_prompt_of_card'] == {20: 31}
     assert pending(flow) is before
@@ -505,7 +505,7 @@ async def test_failed_redraw_after_a_reply_replaces_prompt_and_keeps_card(flow, 
     assert pending(flow)['clears_cents'] == 645200
     assert flow.user_data['settle_up_prompt_of_card'] == {20: 31}
     assert flow.user_data['settle_up_prompts'] == {31: (20, 'INR')}
-    assert _deleted(flow) == [77, 30]
+    assert _deleted(flow) == [30, 77]
     assert 'Settle amount reply failed: RuntimeError' in capsys.readouterr().out
 
 
@@ -518,3 +518,25 @@ async def test_tap_that_leaves_no_other_currency_deletes_the_open_prompt(flow):
     assert _deleted(flow) == [prompt_id]
     assert flow.user_data['settle_up_prompts'] == {}
     assert flow.user_data['settle_up_prompt_of_card'] == {}
+
+
+@pytest.mark.parametrize('case', ['refused', 'gone', 'restart'])
+async def test_answer_is_sent_before_the_reply_is_deleted(flow, case):
+    """In a group chat the answer quotes the reply, and Telegram refuses to quote a deleted one."""
+    flow.bot.delete_message = AsyncMock()
+    prompt_id = await _open_prompt(flow)
+    reply = _reply(prompt_id, 'bad' if case == 'refused' else '381')
+    if case == 'gone':
+        flow.user_data['pending_settle_ups'].clear()
+    if case == 'restart':
+        flow.user_data['settle_up_prompts'].clear()
+        reply.message.reply_to_message.text = 'Reply with how much INR this clears, e.g. 6452'
+        reply.message.reply_to_message.from_user.id = flow.bot.id
+
+    async def answer(*args, **kwargs):
+        assert 77 not in _deleted(flow), 'answered a reply that was already deleted'
+        return MagicMock(message_id=31)
+    reply.message.reply_text.side_effect = answer
+    assert await bot._settle_up_reply(reply, flow)
+    reply.message.reply_text.assert_awaited_once()
+    assert 77 in _deleted(flow)

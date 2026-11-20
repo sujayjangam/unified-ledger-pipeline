@@ -186,7 +186,9 @@ Env vars (`.env.example` shows the format):
   `share_out`, by count if any, so the card always adds up. `amounts_misfit` is the only
   refusal: a misfit reply changes nothing; a tick change that misfits clears the amounts into
   `cleared_amounts` with a ⚠️ line. Each reply and the old prompt are deleted once read, the
-  last prompt on Confirm or Cancel; a failed delete is only printed, never blocks a save. The
+  last prompt on Confirm or Cancel; a failed delete is only printed, never blocks a save. A
+  typed reply (split, payback or settle) is deleted last, after any answer to it is sent
+  (`_reply_deleted_last`): in a group chat the answer quotes it. The
   expense message is never deleted.
 - `/recent` (`handle_recent_button`, ADR-0050) is stateless: each button carries an entry id
   and a page offset, every tap reads the database fresh, and there is no pending entry or card
@@ -203,7 +205,8 @@ Env vars (`.env.example` shows the format):
   error goes into a replacement prompt, never a separate message (#149). After a saved
   payback a new report is sent from the card's snapshot, and only then are the old report
   and the last redraw deleted; a failed redraw or bills read is only printed and keeps the
-  old report, never touching the saved card.
+  old report, never touching the saved card. Redraws for one chat and trip run one at a time
+  (`_redraw_lock`), so a slow one can't delete a newer report.
   Debts are worked out per person first, even inside the payer's own family, and rolled up
   only at the end ([ADR-0051](docs/decisions/0051-debts-per-person-then-families.md)): a
   family's debts to someone outside it are one line, a debt inside a family stays person to

@@ -10,6 +10,7 @@ from telegram.helpers import escape_markdown
 from telegram.error import BadRequest
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 import asyncio
+import contextlib
 import tempfile
 import time
 from app.add_expense import add_expense, dollars_to_cents, format_cents
@@ -1918,9 +1919,10 @@ async def handle_settle_up_button(update: Update, context: ContextTypes.DEFAULT_
 async def _settle_up_reply(update, context):
     """Consume FX replies under the card lock, validating currency before any change.
 
-    The reply message is always deleted (inside the lock, like split replies). The prompt
-    is deleted too once the amount was read, or if the card is gone; a refused amount
-    replaces the prompt with the error below its fixed first line.
+    The reply message is always deleted (inside the lock, like split replies), but only
+    after the bot's answer to it was sent. The prompt is deleted too once the amount was
+    read, or if the card is gone; a refused amount replaces the prompt with the error below
+    its fixed first line.
     """
     message = update.message
     replied = message.reply_to_message
@@ -1929,14 +1931,14 @@ async def _settle_up_reply(update, context):
     if link is None:
         if (replied and isinstance(replied.text, str) and replied.text.startswith('Reply with how much ')
                 and replied.from_user and replied.from_user.id == context.bot.id):
+            # Answer first, then delete: see _reply_deleted_last.
+            await message.reply_text(SETTLE_UP_GONE)
             await _delete_quietly(context.bot, chat_id, message.message_id)
             await _delete_quietly(context.bot, chat_id, replied.message_id)
-            await message.reply_text(SETTLE_UP_GONE)
             return True
         return False
     card_id, currency = link
-    async with _card_lock(context, card_id):
-        await _delete_quietly(context.bot, chat_id, message.message_id)
+    async with _card_lock(context, card_id), _reply_deleted_last(context, message):
         pending = context.user_data.get('pending_settle_ups', {})
         card = pending.get(card_id)
         if card is None:
@@ -1956,7 +1958,7 @@ async def _settle_up_reply(update, context):
         changed = dict(card, clears_cents=cents, fx_rate=Decimal(cents) / Decimal(card['reading'].cents),
                        fx_rate_date=get_sgt_now().date(), fx_source='typed', view='card',
                        fx_pair=(card['result'].paid_currency, currency))
-        # The reply is already deleted, so a failure here must still say something; the
+        # The reply is about to be deleted, so a failure here must still say something; the
         # card stays as it was, with the error in a replacement prompt.
         try:
             changed = settle_card_state(changed)
@@ -2171,7 +2173,10 @@ async def _settle_tap(query, context):
 
 
 async def _settlement_reply(update, context) -> bool:
-    """Delete typed replies under the card lock and keep errors in replacement prompts."""
+    """Delete typed replies under the card lock and keep errors in replacement prompts.
+
+    The reply is deleted only after the bot's answer to it was sent (_reply_deleted_last).
+    """
     message = update.message
     replied = message.reply_to_message
     link = context.user_data.get('settlement_prompts', {}).get(replied.message_id) if replied else None
@@ -2181,14 +2186,14 @@ async def _settlement_reply(update, context) -> bool:
         if (replied and isinstance(replied.text, str)
                 and replied.text.startswith(tuple(SETTLE_PROMPTS.values())) and replied.from_user
                 and replied.from_user.id == context.bot.id):
+            # Answer first, then delete: see _reply_deleted_last.
+            await message.reply_text(SETTLE_GONE)
             await _delete_quietly(context.bot, message.chat_id, message.message_id)
             await _delete_quietly(context.bot, message.chat_id, replied.message_id)
-            await message.reply_text(SETTLE_GONE)
             return True
         return False
     card_id, side = link
-    async with _card_lock(context, card_id):
-        await _delete_quietly(context.bot, message.chat_id, message.message_id)
+    async with _card_lock(context, card_id), _reply_deleted_last(context, message):
         card = context.user_data.get('pending_settlements', {}).get(card_id)
         if card is None or _card_outcome(context, card_id):
             await _clear_settlement_prompt(context, message.chat_id, card_id, replied.message_id)
@@ -2232,8 +2237,36 @@ async def _settlement_prompt(message, context, card_id, side, error=None, replie
     _bounded_put(context.user_data.setdefault('settlement_prompt_of_card', {}), card_id, sent.message_id)
 
 
+def _redraw_lock(context, chat_id, trip_id) -> asyncio.Lock:
+    """The lock for one chat's and one trip's /trip_bals redraw after a saved payback.
+
+    Why it is needed: two payback cards have two card locks, so their Confirms can run at the
+    same time. Without this lock the first redraw could read the balances before the second
+    payback was saved, finish sending after the second redraw, and then delete the newer
+    report, leaving only the stale one on screen. One at a time, the redraw that runs last
+    reads after both saves, so the report left showing is always current.
+
+    Kept in user_data and bounded like the card locks. It is taken inside a card lock and never
+    takes one itself, so the two can't wait on each other.
+    """
+    locks = context.user_data.setdefault('bals_redraw_locks', {})
+    key = (chat_id, trip_id)
+    if key not in locks:
+        _bounded_put(locks, key, asyncio.Lock())
+    return locks[key]
+
+
 async def _redraw_settlement_balances(context, chat_id, card):
-    """Send fresh balances from the card's snapshot before removing superseded reports."""
+    """Send fresh balances from the card's snapshot before removing superseded reports.
+
+    Runs one at a time per chat and trip (_redraw_lock), from the read to the last delete.
+    """
+    async with _redraw_lock(context, chat_id, card['trip_id']):
+        await _send_settlement_balances(context, chat_id, card)
+
+
+async def _send_settlement_balances(context, chat_id, card):
+    """The redraw itself; call it only through _redraw_settlement_balances, under its lock."""
     try:
         trip = _load_bals_trip(card['entered_by_participant_id'], card['trip_id'])
         if trip is None:
@@ -2262,6 +2295,22 @@ async def _redraw_settlement_balances(context, chat_id, card):
         if old_id is not None and old_id != sent.message_id:
             await _delete_quietly(context.bot, chat_id, old_id)
             context.user_data.get('bals_reports', {}).pop(old_id, None)
+
+
+@contextlib.asynccontextmanager
+async def _reply_deleted_last(context, message):
+    """Delete a user's typed reply once the bot has answered it, however the handler ends.
+
+    Why last: every answer to a typed reply (a new prompt, an error, "no longer available") is
+    sent with message.reply_text, and in a group chat python-telegram-bot quotes the message it
+    answers. Telegram refuses to quote a message that is already deleted, so deleting the reply
+    first makes the answer fail there. In a private chat the order makes no difference.
+    Entered inside the card lock, so the delete still lands before the next tap or reply runs.
+    """
+    try:
+        yield
+    finally:
+        await _delete_quietly(context.bot, message.chat_id, message.message_id)
 
 
 async def _delete_quietly(bot, chat_id, message_id):
@@ -2308,13 +2357,13 @@ async def _split_amounts_reply(update, context, directory) -> bool:
     if card_id is None:
         if (replied and replied.from_user and replied.from_user.id == context.bot.id
                 and (replied.text or '').startswith(AMOUNTS_PROMPT_LINE + '\n')):
+            # Answer first, then delete: see _reply_deleted_last.
+            await message.reply_text('⚠️ This prompt has expired. Send the entry again.')
             await _delete_quietly(context.bot, message.chat_id, message.message_id)
             await _delete_quietly(context.bot, message.chat_id, replied.message_id)
-            await message.reply_text('⚠️ This prompt has expired. Send the entry again.')
             return True
         return False
-    async with _card_lock(context, card_id):
-        await _delete_quietly(context.bot, message.chat_id, message.message_id)
+    async with _card_lock(context, card_id), _reply_deleted_last(context, message):
         pending = context.user_data.get('pending_cards', {}).get(card_id)
         if _card_outcome(context, card_id) or pending is None:
             await message.reply_text("⚠️ This entry can't be changed now.")

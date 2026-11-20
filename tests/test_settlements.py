@@ -263,7 +263,7 @@ async def test_prompt_reply_routes_before_expenses(flow, authorized, monkeypatch
     assert (updated['clears_cents'], updated['paid_currency'], updated['paid_cents']) == expected
     extract.assert_not_awaited()
     assert flow.bot.edit_message_text.await_args.kwargs['message_id'] == 20
-    assert [c.kwargs['message_id'] for c in flow.bot.delete_message.await_args_list] == [reply.message.message_id, 30]
+    assert [c.kwargs['message_id'] for c in flow.bot.delete_message.await_args_list] == [30, reply.message.message_id]
     assert flow.user_data['settlement_prompts'] == {}
     assert flow.user_data['settlement_prompt_of_card'] == {}
 
@@ -283,7 +283,7 @@ async def test_bad_reply_does_not_change_card_or_reach_model(flow, authorized, m
     update.message.reply_text.assert_awaited_once()
     assert update.message.reply_text.await_args.args[0].startswith(bot.SETTLE_PROMPTS['paid'] + '\n⚠️ ')
     assert update.message.reply_text.await_args.kwargs['reply_markup'].force_reply
-    assert [c.kwargs['message_id'] for c in flow.bot.delete_message.await_args_list] == [update.message.message_id, 30]
+    assert [c.kwargs['message_id'] for c in flow.bot.delete_message.await_args_list] == [30, update.message.message_id]
     assert flow.user_data['settlement_prompts'] == {31: (20, 'paid')}
     assert flow.user_data['settlement_prompt_of_card'] == {20: 31}
     flow.bot.edit_message_text.assert_not_awaited()
@@ -300,7 +300,7 @@ async def test_reply_to_resolved_prompt_never_becomes_expense(flow, authorized, 
     await bot.handle_text(update, flow)
     extract.assert_not_awaited()
     update.message.reply_text.assert_awaited_once_with(bot.SETTLE_GONE)
-    assert [c.kwargs['message_id'] for c in flow.bot.delete_message.await_args_list] == [update.message.message_id, 30]
+    assert [c.kwargs['message_id'] for c in flow.bot.delete_message.await_args_list] == [30, update.message.message_id]
     assert flow.user_data['settlement_prompts'] == {}
 
 
@@ -364,7 +364,7 @@ async def test_failed_amount_redraw_replaces_prompt_without_changing_card(flow):
         bot.SETTLE_PROMPTS['clears'] + "\n⚠️ Couldn't change the card. Reply again.")
     assert flow.user_data['pending_settlements'][20] is original
     assert flow.user_data['settlement_prompt_of_card'] == {20: 31}
-    assert [c.kwargs['message_id'] for c in flow.bot.delete_message.await_args_list] == [update.message.message_id, 30]
+    assert [c.kwargs['message_id'] for c in flow.bot.delete_message.await_args_list] == [30, update.message.message_id]
 
 
 @pytest.mark.parametrize('action', ['confirm', 'cancel'])
@@ -785,3 +785,74 @@ async def test_outside_part_payment_clears_named_member_first(flow, monkeypatch)
     await bot.handle_settle_button(update, flow)
     assert writer.call_args.kwargs['bills'] == [
         dict(transaction_id='dinner', for_id=2, payer_id=1, cents=3000)]
+
+
+def _answer_fails_if_reply_deleted(message, telegram_bot):
+    """Act like Telegram in a group chat: an answer quoting an already-deleted reply fails."""
+    async def answer(*args, **kwargs):
+        deleted = [c.kwargs['message_id'] for c in telegram_bot.delete_message.await_args_list]
+        assert message.message_id not in deleted, 'answered a reply that was already deleted'
+        return SimpleNamespace(message_id=31)
+    message.reply_text.side_effect = answer
+
+
+@pytest.mark.parametrize('case', ['refused', 'redraw_fails', 'gone', 'restart'])
+async def test_answer_is_sent_before_the_reply_is_deleted(flow, authorized, monkeypatch, case):
+    """Every answer to a typed amount goes out before the reply is deleted, so it can quote it."""
+    flow.user_data.update(settlement_prompts={30: (20, 'paid')}, settlement_prompt_of_card={20: 30})
+    if case != 'gone':
+        flow.user_data['pending_settlements'] = {20: card()}
+    if case == 'redraw_fails':
+        flow.bot.edit_message_text.side_effect = RuntimeError('offline')
+    update = _update(ALICE, 'banana' if case == 'refused' else '40')
+    update.message.reply_to_message.message_id = 30
+    if case == 'restart':
+        # Links lost; only the bot's own prompt wording says this is a payback reply.
+        flow.user_data.update(settlement_prompts={}, settlement_prompt_of_card={})
+        update.message.reply_to_message.text = bot.SETTLE_PROMPTS['paid']
+        update.message.reply_to_message.from_user.id = flow.bot.id
+    _answer_fails_if_reply_deleted(update.message, flow.bot)
+    extract = AsyncMock()
+    monkeypatch.setattr(bot, 'process_expense_text', extract)
+    await bot.handle_text(update, flow)
+    update.message.reply_text.assert_awaited_once()
+    assert update.message.message_id in [c.kwargs['message_id'] for c in flow.bot.delete_message.await_args_list]
+    extract.assert_not_awaited()
+
+
+async def test_concurrent_confirms_leave_the_newest_report(flow, monkeypatch):
+    """Two cards confirmed at once: redraws run one at a time, so the newest report is kept.
+
+    Without the redraw lock, the first card's slow send would finish last and delete the
+    second card's newer report, leaving balances that miss the second payback.
+    """
+    directory = flow.user_data['bals_reports'][10]
+    flow.user_data['pending_settlements'] = {
+        i: card(directory=directory, report_message_id=10, idempotency_key=f'key-{i}') for i in (20, 21)}
+    writer = MagicMock(return_value=True)
+    monkeypatch.setattr(bot, 'add_settlement', writer)
+    # Each screen records how many paybacks were saved when its balances were read.
+    monkeypatch.setattr(bot, '_bals_screen',
+                        lambda trip, snapshot, today: (f'after {writer.call_count} saved', None))
+    release, sent = asyncio.Event(), []
+
+    async def send(**kwargs):
+        sent.append(kwargs['text'])
+        if len(sent) == 1:
+            await release.wait()  # the first report is slow to send
+        return SimpleNamespace(message_id=39 + len(sent))
+    flow.bot.send_message.side_effect = send
+    first = asyncio.create_task(bot.handle_settle_button(tap('settle:confirm', 20)[0], flow))
+    while not sent:
+        await asyncio.sleep(0)
+    second = asyncio.create_task(bot.handle_settle_button(tap('settle:confirm', 21)[0], flow))
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert writer.call_count == 2  # the second payback is saved ...
+    assert sent == ['after 1 saved']  # ... but its redraw waits for the first to finish
+    release.set()
+    await asyncio.gather(first, second)
+    assert sent == ['after 1 saved', 'after 2 saved']
+    assert flow.user_data['bals_last_redraw'] == {(100, 7): 41}
+    assert [c.kwargs['message_id'] for c in flow.bot.delete_message.await_args_list] == [10, 10, 40]
+    assert 41 in flow.user_data['bals_reports'] and 40 not in flow.user_data['bals_reports']
