@@ -38,7 +38,7 @@ def flow(monkeypatch):
 def put(context, value=None):
     value = card() if value is None else value
     value.update(sender_telegram_id=str(ALICE), entered_by_participant_id=1,
-                 date=TODAY, idempotency_key='fictional-key')
+                 date=TODAY, idempotency_key='fictional-key', directory=DIRECTORY)
     context.user_data['pending_settle_ups'] = {20: value}
     return value
 
@@ -540,3 +540,76 @@ async def test_answer_is_sent_before_the_reply_is_deleted(flow, case):
     assert await bot._settle_up_reply(reply, flow)
     reply.message.reply_text.assert_awaited_once()
     assert 77 in _deleted(flow)
+
+
+# ---- a fresh /trip_bals after a saved typed payback (#151) ----
+
+def _report_reads(monkeypatch):
+    """Allow the one read a saved trip payback makes: that trip's balances, for a new report."""
+    load = MagicMock(return_value=BEACH)
+    screen = MagicMock(return_value=('fresh balances', None))
+    monkeypatch.setattr(bot, '_load_bals_trip', load)
+    monkeypatch.setattr(bot, '_bals_screen', screen)
+    return load, screen
+
+
+async def test_saved_trip_payback_sends_a_new_report_from_the_card(flow, monkeypatch):
+    """The report goes out below the saved card, with the names the card was read with."""
+    load, screen = _report_reads(monkeypatch)
+    update, query = tap('su:confirm')
+
+    async def send(**kwargs):
+        assert query.edit_message_text.await_args.args[0].endswith('✅ Payback saved.')
+        return MagicMock(message_id=40)
+    flow.bot.send_message = AsyncMock(side_effect=send)
+    await bot.handle_settle_up_button(update, flow)
+    load.assert_called_once_with(1, 10)  # the sender's membership-checked trip read
+    screen.assert_called_once_with(BEACH, DIRECTORY, TODAY)
+    kwargs = flow.bot.send_message.await_args.kwargs
+    assert kwargs['chat_id'] == query.message.chat_id and kwargs['text'] == 'fresh balances'
+    assert 'parse_mode' not in kwargs
+    # Registered like a /trip_bals reply, so its "Mark paid" buttons work.
+    assert flow.user_data['bals_reports'][40] is DIRECTORY
+    bot._load_directory.assert_not_called()
+
+
+async def test_everyday_payback_sends_no_report(flow, monkeypatch):
+    """No trip, no /trip_bals: an everyday payback only shows its saved card."""
+    load, _ = _report_reads(monkeypatch)
+    put(flow, card('Settle Bob paid 330 for bed', [bill('bed', 'Bed', trip=None, shares={2: 33000})]))
+    await click(flow, 'su:everyday')
+    flow.bot.send_message = AsyncMock()
+    query = await click(flow, 'su:confirm')
+    assert query.edit_message_text.await_args.args[0].endswith('✅ Payback saved.')
+    load.assert_not_called()
+    flow.bot.send_message.assert_not_awaited()
+
+
+@pytest.mark.parametrize('case', ['cancel', 'failed_save'])
+async def test_no_report_without_a_save(flow, monkeypatch, case):
+    load, _ = _report_reads(monkeypatch)
+    flow.bot.send_message = AsyncMock()
+    if case == 'failed_save':
+        bot.add_settlement.side_effect = RuntimeError('offline')
+    await click(flow, 'su:cancel' if case == 'cancel' else 'su:confirm')
+    load.assert_not_called()
+    flow.bot.send_message.assert_not_awaited()
+
+
+@pytest.mark.parametrize('failure', ['send', 'read', 'not_member'])
+async def test_report_failure_leaves_the_saved_card(flow, monkeypatch, capsys, failure):
+    """The payback is saved either way; a failed report is only printed."""
+    load, _ = _report_reads(monkeypatch)
+    flow.bot.send_message = AsyncMock(side_effect=RuntimeError('offline') if failure == 'send' else None)
+    if failure == 'read':
+        load.side_effect = RuntimeError('offline')
+    if failure == 'not_member':
+        load.return_value = None
+    query = await click(flow, 'su:confirm')
+    assert query.edit_message_text.await_args.args[0].endswith('✅ Payback saved.')
+    assert bot._card_outcome(flow, 20) == 'saved'
+    assert 'bals_reports' not in flow.user_data or not flow.user_data['bals_reports']
+    if failure != 'send':
+        flow.bot.send_message.assert_not_awaited()
+    else:
+        assert 'Could not send fresh balances' in capsys.readouterr().out

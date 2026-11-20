@@ -202,11 +202,12 @@ Env vars (`.env.example` shows the format):
   never reload it; new cards recheck trip membership and the suggested amount. Amount replies
   are parsed in Python before expense extraction, and use a separate pending-card map.
   Each reply is deleted inside the card lock, and its prompt once read; a refused amount's
-  error goes into a replacement prompt, never a separate message (#149). After a saved
-  payback a new report is sent from the card's snapshot, and only then are the old report
-  and the last redraw deleted; a failed redraw or bills read is only printed and keeps the
-  old report, never touching the saved card. Redraws for one chat and trip run one at a time
-  (`_redraw_lock`), so a slow one can't delete a newer report.
+  error goes into a replacement prompt, never a separate message (#149). After any saved
+  payback on a trip, from a "Mark paid" card or a typed settle card, a new report is sent
+  below the card from the directory snapshot kept on the card (`_send_fresh_balances`, #151).
+  No report is ever deleted. A failed send or bills read is only printed, never touching the
+  saved card. New reports for one chat and trip go out one at a time (`_redraw_lock`), so
+  the last one is current.
   Debts are worked out per person first, even inside the payer's own family, and rolled up
   only at the end ([ADR-0051](docs/decisions/0051-debts-per-person-then-families.md)): a
   family's debts to someone outside it are one line, a debt inside a family stays person to

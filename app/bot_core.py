@@ -1744,10 +1744,12 @@ async def _settle_message(update, context, raw_text, status_msg, directory):
             await status_msg.edit_text(SETTLE_UP_READ_ERROR)
             return
         reading = read_settle(raw_text, people, sender, families)
+        # The directory is kept on the card only for the fresh /trip_bals after Confirm
+        # (#151), so that report shows the names the card was read with, never a reload.
         card = settle_card_state(dict(snapshot, reading=reading, choices=SettleChoices(), view='card',
                                       date=get_sgt_now().date(), entered_by_participant_id=sender.id,
                                       sender_telegram_id=str(update.effective_user.id),
-                                      idempotency_key=str(uuid.uuid4())))
+                                      idempotency_key=str(uuid.uuid4()), directory=directory))
         if card['result'].needs_rate:
             pair = card['result'].needs_rate
             cached = rate_cached(*pair, card['date'])
@@ -1848,6 +1850,11 @@ async def handle_settle_up_button(update: Update, context: ContextTypes.DEFAULT_
                 await _clear_settle_prompt(context, query.message.chat_id, card_id)
                 text, _ = build_settle_card({**card, 'outcome': 'saved'})
                 await query.edit_message_text(text, reply_markup=None)
+                # An everyday payback (no trip) has no /trip_bals to show.
+                if result.trip_id is not None:
+                    await _send_fresh_balances(context, query.message.chat_id,
+                                               card['entered_by_participant_id'], result.trip_id,
+                                               card['directory'])
                 return
             if action == 'cancel':
                 text, _ = build_settle_card({**card, 'outcome': 'cancelled'})
@@ -2048,7 +2055,7 @@ async def _new_settlement(update, context):
                  sender.id if sender.id in member_ids else None)
         card = dict(trip_id=trip.id, trip_name=trip.name, from_id=payer,
                     # Keep the names the user saw; saving must never reload the directory.
-                    report_message_id=query.message.message_id, directory=directory,
+                    directory=directory,
                     line_parts=line_parts(entries, families, settlements, currency,
                                           payment.from_unit, payment.to_unit[1]),
                     to_id=payment.to_unit[1], clears_cents=cents, clears_currency=currency,
@@ -2141,7 +2148,8 @@ async def _settle_tap(query, context):
         _mark_card_resolved(context, message_id, 'saved')
         await _clear_settlement_prompt(context, query.message.chat_id, message_id)
         await query.edit_message_text(settlement_card_text(card) + "\n✅ Payback saved.", reply_markup=None)
-        await _redraw_settlement_balances(context, query.message.chat_id, card)
+        await _send_fresh_balances(context, query.message.chat_id, card['entered_by_participant_id'],
+                                   card['trip_id'], card['directory'])
         return
     if action == 'cancel':
         await query.answer()
@@ -2238,13 +2246,13 @@ async def _settlement_prompt(message, context, card_id, side, error=None, replie
 
 
 def _redraw_lock(context, chat_id, trip_id) -> asyncio.Lock:
-    """The lock for one chat's and one trip's /trip_bals redraw after a saved payback.
+    """The lock for one chat's and one trip's fresh /trip_bals after a saved payback.
 
     Why it is needed: two payback cards have two card locks, so their Confirms can run at the
-    same time. Without this lock the first redraw could read the balances before the second
-    payback was saved, finish sending after the second redraw, and then delete the newer
-    report, leaving only the stale one on screen. One at a time, the redraw that runs last
-    reads after both saves, so the report left showing is always current.
+    same time. Without this lock the first report could read the balances before the second
+    payback was saved and still be sent after the second report, so the report at the bottom
+    of the chat would miss a payback. One at a time, the report sent last reads after both
+    saves, so the newest report is always current.
 
     Kept in user_data and bounded like the card locks. It is taken inside a card lock and never
     takes one itself, so the two can't wait on each other.
@@ -2256,45 +2264,37 @@ def _redraw_lock(context, chat_id, trip_id) -> asyncio.Lock:
     return locks[key]
 
 
-async def _redraw_settlement_balances(context, chat_id, card):
-    """Send fresh balances from the card's snapshot before removing superseded reports.
+async def _send_fresh_balances(context, chat_id, sender_id, trip_id, directory):
+    """Send a new /trip_bals below a payback card that was just saved on a trip (#151).
 
-    Runs one at a time per chat and trip (_redraw_lock), from the read to the last delete.
+    Used by both payback cards: "Mark paid" and the typed settle card. Older reports stay where
+    they are, as a record: nothing is deleted. Their buttons still work, and a stale "Mark paid"
+    tap is rechecked against the current numbers when it opens a card.
+
+    Built from the directory snapshot kept on the card, never a reload, so the names match the
+    card. Runs one at a time per chat and trip (_redraw_lock), from the read to the send.
     """
-    async with _redraw_lock(context, chat_id, card['trip_id']):
-        await _send_settlement_balances(context, chat_id, card)
-
-
-async def _send_settlement_balances(context, chat_id, card):
-    """The redraw itself; call it only through _redraw_settlement_balances, under its lock."""
-    try:
-        trip = _load_bals_trip(card['entered_by_participant_id'], card['trip_id'])
-        if trip is None:
+    async with _redraw_lock(context, chat_id, trip_id):
+        try:
+            # The membership-checked read: someone who has left the trip gets no report.
+            trip = _load_bals_trip(sender_id, trip_id)
+            if trip is None:
+                return
+            text, keyboard = _bals_screen(trip, directory, get_sgt_now().date())
+            if BALS_ERROR in text.splitlines():
+                # The bills or paybacks couldn't be read just now. Send nothing rather than an
+                # error right under "Payback saved", which would read as if the save failed;
+                # /trip_bals can be asked for again.
+                print('Could not read balances after a payback; no new report sent.')
+                return
+            sent = await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard)
+        except Exception as exc:
+            # The payback is already saved; a report failure must not disguise that success.
+            print(f'Could not send fresh balances: {exc}')
             return
-        directory = card['directory']
-        text, keyboard = _bals_screen(trip, directory, get_sgt_now().date())
-        if BALS_ERROR in text.splitlines():
-            # The bills or paybacks couldn't be read just now. Keep the old report rather than
-            # swap it for an error: the card already says the payback is saved, and
-            # /trip_bals can be asked for again.
-            print('Could not read balances for the redraw; old report kept.')
-            return
-        sent = await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard)
-    except Exception as exc:
-        # The payback is already saved; a report failure must not disguise that success.
-        print(f'Could not redraw payback balances: {exc}')
-        return
-    _bounded_put(context.user_data.setdefault('bals_reports', {}), sent.message_id, directory)
-    redraws = context.user_data.setdefault('bals_last_redraw', {})
-    # user_data spans chats; include the chat so cleanup never targets another chat's report.
-    key = (chat_id, card['trip_id'])
-    previous = redraws.get(key)
-    _bounded_put(redraws, key, sent.message_id)
-    # Two cards may originate from one report. Retire the last redraw as well as that source.
-    for old_id in dict.fromkeys((card['report_message_id'], previous)):
-        if old_id is not None and old_id != sent.message_id:
-            await _delete_quietly(context.bot, chat_id, old_id)
-            context.user_data.get('bals_reports', {}).pop(old_id, None)
+        # Registered like a /trip_bals reply, so its "Mark paid" buttons open cards from the
+        # same snapshot.
+        _bounded_put(context.user_data.setdefault('bals_reports', {}), sent.message_id, directory)
 
 
 @contextlib.asynccontextmanager
