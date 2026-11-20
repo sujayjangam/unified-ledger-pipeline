@@ -598,3 +598,39 @@ async def test_mark_paid_keeps_parts_and_confirm_uses_snapshot(flow, monkeypatch
         assert len(writer.call_args.kwargs['bills']) == 3
     else:
         assert 'bills' not in writer.call_args.kwargs
+
+
+async def test_outside_part_payment_clears_named_member_first(flow, monkeypatch):
+    """Dan, outside the Ng family, pays 30 of its shortened 130 line to Alice.
+
+    The card names Bob, the lowest id, for the family. Bob's 30 goes first, as it would on
+    a line with no shortcut, even though Carol owes more.
+    """
+    from app.services.participants import Directory, Participant
+    from app.services import trips
+    people = (Participant(1, "Alice", str(ALICE), 10, True), Participant(2, "Bob", None, None),
+              Participant(3, "Carol", None, None), Participant(4, "Erin", None, None),
+              Participant(5, "Dan", None, None))
+    flow.user_data['bals_reports'][10] = Directory(people, ())
+    trip = trips.Trip(7, "Beach", date(2026, 12, 1), date(2026, 12, 7), member_ids=(1, 2, 3, 4, 5),
+                      families=((1, "Tan"), (2, "Ng"), (3, "Ng"), (4, "Lee"), (5, "Ong")))
+    monkeypatch.setattr(bot, '_load_bals_trip', MagicMock(return_value=trip))
+    # Alice paid dinner for Bob 30, Carol 60 and Erin 40; Erin paid a taxi for Carol 40.
+    # The shortcut moves Carol's taxi debt onto her line to Alice: Ngs owe Alice 130.
+    entries = [dict(transaction_id='dinner', currency='AUD', paid_by=1, splits={2: 3000, 3: 6000, 4: 4000}),
+               dict(transaction_id='taxi', currency='AUD', paid_by=4, splits={3: 4000})]
+    monkeypatch.setattr(bot, 'get_trip_split_entries', MagicMock(return_value=entries))
+    update, _ = tap('settle:new:7:1:13000', 10)
+    await bot.handle_settle_button(update, flow)
+    update, _ = tap('settle:person:5')
+    await bot.handle_settle_button(update, flow)
+    card = flow.user_data['pending_settlements'][20]
+    assert card['for_id'] == 2 and card['line_parts']
+    # As if Dan had typed 30 as the amount; the reply itself is tested elsewhere.
+    card.update(clears_cents=3000, paid_cents=3000)
+    writer = MagicMock(return_value=True)
+    monkeypatch.setattr(bot, 'add_settlement', writer)
+    update, _ = tap('settle:confirm')
+    await bot.handle_settle_button(update, flow)
+    assert writer.call_args.kwargs['bills'] == [
+        dict(transaction_id='dinner', for_id=2, payer_id=1, cents=3000)]

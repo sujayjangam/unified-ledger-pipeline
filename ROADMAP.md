@@ -53,9 +53,10 @@ is tried on a Neon branch with a fictional trip-sized directory first.
    [#145](https://github.com/sujayjangam/unified-ledger-pipeline/issues/145)) that mark the
    bills on a shortened line as paid when it is paid, so the settle card's bill list matches
    `/trip_bals`, and a shortcut paid by any family member clears in full. Worked out again
-   from the bills when the payback card opens, kept on the card, never stored. Built on `feat/offset-rows` (2026-11-20, gate green, not
-   yet pushed); before merging, a read-only check that no saved payback already has a row on a
-   bill its receiver didn't pay.
+   from the bills when the payback card opens, kept on the card, never stored. Built on `feat/offset-rows` (2026-11-20, gate green, in
+   review). Tried on a Neon branch and in the test bot, and a read-only production check
+   found no saved payback with a row on a bill its receiver didn't pay, so no old payback
+   changes meaning.
 
 Later: load a finished trip's hand-kept spreadsheet as real bills, and work out the trip from the
 message itself for costs logged before it starts.

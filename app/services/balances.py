@@ -273,8 +273,11 @@ def line_parts(entries, families, settlements, currency, owing_unit, creditor):
     return tuple(parts)
 
 
-def payment_rows(parts, giver, clears_cents):
-    """Take the giver's pieces first, then larger member totals; offset every used hop.
+def payment_rows(parts, first, clears_cents):
+    """Take `first`'s pieces first, then larger member totals; offset every used hop.
+
+    `first` is the giver, or the member named on a payment from outside the owing family
+    (for_id), so a part payment clears the same person a line with no shortcut would.
 
     Within one member, longer chains go first. Erin owes Alice 60 directly and 40 through
     Bob; if a partial 80 paid her direct 60 first, the 20 left through Bob would have no
@@ -286,7 +289,7 @@ def payment_rows(parts, giver, clears_cents):
     for part in parts:
         totals[part.member] = totals.get(part.member, 0) + part.cents
     ordered = sorted(parts, key=lambda part: (
-        part.member != giver, -totals[part.member], part.member, -len(part.hops)))
+        part.member != first, -totals[part.member], part.member, -len(part.hops)))
     rows = {}
     for part in ordered:
         used = min(clears_cents, part.cents)

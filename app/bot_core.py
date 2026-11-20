@@ -2113,6 +2113,10 @@ async def _settle_tap(query, context):
         await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton("⏳ Saving...", callback_data="settle:saving")]]))
         pending.pop(message_id)
+        # Whose debt a shortened line clears first: the giver's own, or, when someone outside
+        # the owing family pays, the member the card names (for_id: the lowest id). A line
+        # with no shortcut clears that same member first (_pay_back), so both kinds agree.
+        first = card['from_id'] if card['for_id'] is None else card['for_id']
         try:
             add_settlement(from_id=card['from_id'], to_id=card['to_id'], for_id=card['for_id'],
                            clears_amount=format_cents(card['clears_cents']), clears_currency=card['clears_currency'],
@@ -2120,7 +2124,7 @@ async def _settle_tap(query, context):
                            trip_id=card['trip_id'], date=card['date'], source="telegram_bot",
                            entered_by_participant_id=card['entered_by_participant_id'],
                            idempotency_key=card['idempotency_key'],
-                           **({'bills': payment_rows(card['line_parts'], card['from_id'],
+                           **({'bills': payment_rows(card['line_parts'], first,
                                                      card['clears_cents'])}
                               if card.get('line_parts') else {}))
         except Exception as e:

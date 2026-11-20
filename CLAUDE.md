@@ -210,6 +210,8 @@ Env vars (`.env.example` shows the format):
   one made `/trip_bals` take seconds). Each visible shortcut gets a 💡 line. Never net two
   families' debts to different people any other way. Each person's total never changes. A payback pays down one
   line, the beneficiary's own debt first; excess is owed back to whoever handed over the money.
+  When someone outside the owing family pays, the beneficiary is its lowest-id member, on a
+  shortened line too (Confirm gives `payment_rows` the `for_id`, never the giver).
   Anyone on the trip but the receiver can pay any line on someone's behalf, recorded only at
   payback time; nobody owes the giver in `/trip_bals`. The paid side records money handed
   over, never spending totals, and may be any ISO 4217 currency (`app/services/currencies.py`).
