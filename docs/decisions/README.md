@@ -57,7 +57,7 @@ supersedes the old one rather than editing history.
 | [0047](0047-pay-back-only-who-you-owe.md) | Pay back only who you owe, and paying on someone's behalf | Partly superseded by [0051](0051-debts-per-person-then-families.md) | 2026-11-17 |
 | [0048](0048-exact-split-amounts-by-reply.md) | Exact split amounts, typed as a reply | Accepted | 2026-11-18 |
 | [0049](0049-prompt-holds-only-what-python-cant-read.md) | The extraction prompt holds only what Python can't read from the words | Accepted | 2026-11-18 |
-| [0050](0050-soft-delete-behind-a-view.md) | Deleted entries are marked, and a view hides them | Accepted | 2026-11-18 |
+| [0050](0050-soft-delete-behind-a-view.md) | Deleted entries are marked, and a view hides them | Partly superseded by [0052](0052-settle-up-by-typed-message.md) | 2026-11-18 |
 | [0051](0051-debts-per-person-then-families.md) | Debts are worked out per person, then rolled up to families | Accepted | 2026-11-19 |
 | [0052](0052-settle-up-by-typed-message.md) | Settling up any bill by a typed "settle" message, linked to the bills it clears | Accepted | 2026-11-19 |
 | [0053](0053-other-currency-paybacks-at-a-reference-rate.md) | A payback in another currency is converted at a reference rate, then checked against the statement | Accepted | 2026-11-19 |

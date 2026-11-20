@@ -56,7 +56,9 @@ is tried on a Neon branch with a fictional trip-sized directory first.
    from the bills when the payback card opens, kept on the card, never stored. Built on `feat/offset-rows` (2026-11-20, gate green, in
    review). Tried on a Neon branch and in the test bot, and a read-only production check
    found no saved payback with a row on a bill its receiver didn't pay, so no old payback
-   changes meaning.
+   changes meaning. The review found that deleting a bill behind an offset row hid money owed
+   back; fixed in the same PR
+   ([ADR-0052](docs/decisions/0052-settle-up-by-typed-message.md)).
 
 Later: load a finished trip's hand-kept spreadsheet as real bills, and work out the trip from the
 message itself for costs logged before it starts.

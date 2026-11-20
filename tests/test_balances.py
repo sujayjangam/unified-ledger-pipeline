@@ -824,3 +824,40 @@ def test_payment_piece_order_uses_member_total_then_id():
         'bob', 'erin-old', 'erin-new', 'carol']
     assert [row['transaction_id'] for row in balances.payment_rows(parts, 3, 100)] == [
         'carol', 'bob']
+
+
+# --- ADR-0052 (2026-11-20): a deleted bill behind an offset row breaks its chain. ---
+
+def saved_dinner_taxi_payback():
+    """Erin paid Alice 100 on the shortened line; rows as the reader returns them."""
+    entries = dinner_taxi()
+    parts = balances.line_parts(entries, {}, [], 'SGD', ('person', 5), 1)
+    payer = {'dinner': 1, 'taxi': 2}
+    rows = [dict(transaction_id=r['transaction_id'], for_id=r['for_id'], cents=r['cents'],
+                 payer_id=payer[r['transaction_id']])
+            for r in balances.payment_rows(parts, 5, 10000)]
+    return entries, [dict(from_id=5, to_id=1, cents=10000, currency='SGD', bills=rows)]
+
+
+def test_deleted_offset_bill_leaves_middle_owing_and_money_owed_back():
+    # Bob's taxi is deleted after the payback. Erin only owed 60, so Bob's 40 must stay
+    # open and Alice owes Erin the 40 back; before, everyone read as settled.
+    entries, paid = saved_dinner_taxi_payback()
+    dinner_only = [e for e in entries if e['transaction_id'] != 'taxi']
+    assert unit_balances(dinner_only, {}, paid).lines == {
+        'SGD': {(('person', 2), 1): 4000, (('person', 1), 5): 4000}}
+    assert open_bill_shares(dinner_only, {}, paid) == {('dinner', 2): 4000}
+    # Undoing the delete brings the taxi back, and the chain counts again.
+    assert unit_balances(entries, {}, paid).lines == {'SGD': {}}
+
+
+def test_deleted_receiver_bill_still_clears_nothing_only():
+    # A plain row on a deleted bill the receiver paid is not an offset: it clears nothing,
+    # and the payback's other rows still count, as before this rule.
+    entries = [bill('dinner', 1, {5: 6000}), bill('lunch', 1, {6: 3000})]
+    rows = [dict(transaction_id='dinner', for_id=5, cents=6000, payer_id=1),
+            dict(transaction_id='lunch', for_id=6, cents=3000, payer_id=1)]
+    paid = [dict(from_id=5, to_id=1, cents=9000, currency='SGD', bills=rows)]
+    lunch_deleted = entries[:1]
+    assert unit_balances(lunch_deleted, {}, paid).lines == {'SGD': {(('person', 1), 5): 3000}}
+    assert open_bill_shares(lunch_deleted, {}, paid) == {}

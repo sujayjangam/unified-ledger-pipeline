@@ -13,7 +13,9 @@
 Since [ADR-0050](decisions/0050-soft-delete-behind-a-view.md) the table is `raw_transactions`,
 and `transactions` is a view of its live rows (`WHERE deleted_at IS NULL`) with the columns
 below. Every read, insert and join uses `transactions`; only the delete and undo queries in
-`app/services/ledger_queries.py` (`soft_delete_entry`, `restore_entry`) name `raw_transactions`.
+`app/services/ledger_queries.py` (`soft_delete_entry`, `restore_entry`) name `raw_transactions`,
+plus `get_trip_settlements`, which reads only who paid a payback row's bill, deleted or not
+([ADR-0052](decisions/0052-settle-up-by-typed-message.md)).
 Foreign keys and the `idempotency_key` unique constraint are on the real table, so a deleted row
 still blocks a retry of its Confirm.
 
@@ -214,7 +216,8 @@ line's oldest bills first.
 - Primary key: (`settlement_id`, `transaction_id`, `for_participant_id`)
 
 No `ON DELETE` on any key: bills are only soft-deleted, so the keys never fire in normal use. A
-row on a deleted bill clears nothing; its cents are owed back to the giver. A row clears only a
+row on a deleted bill clears nothing; its cents are owed back to the giver. If someone other
+than the receiver paid that bill, the payback's offset chain fails as a whole (ADR-0052). A row clears only a
 share owed to the payback's receiver, on a bill in `clears_currency`, and never more than is
 still open on that share. The rows add up to at most `clears_cents`; the rest is
 an overpayment. They are written in the same database transaction as the payback, only when

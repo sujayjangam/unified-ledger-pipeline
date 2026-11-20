@@ -418,7 +418,14 @@ def _offset_bills(settlement, payer_of, currency_of, shares, owed):
     for row in _eligible_bills(settlement, payer_of, currency_of):
         target = direct if payer_of[row['transaction_id']] == settlement['to_id'] else offsets
         target.append(row)
-    middles = {payer_of[row['transaction_id']] for row in offsets}
+    # A row whose bill is gone from the bills read (deleted) but was paid by someone other
+    # than the receiver was an offset row, and its payer a middle person (ADR-0052). Without
+    # this, the middle's own rows would read as a plain payment on their behalf and still
+    # clear, and the giver would lose that money unseen. A broken chain fails as a whole.
+    broken = {row['payer_id'] for row in settlement['bills']
+              if row['transaction_id'] not in payer_of and row.get('payer_id') is not None
+              and row['payer_id'] != settlement['to_id']}
+    middles = {payer_of[row['transaction_id']] for row in offsets} | broken
     checked = offsets + [row for row in direct if row['for_id'] in middles]
     by_share, by_pair, incoming, outgoing = {}, {}, {}, {}
     for row in checked:
@@ -429,7 +436,8 @@ def _offset_bills(settlement, payer_of, currency_of, shares, owed):
         by_pair[pair] = by_pair.get(pair, 0) + row['cents']
         incoming[payer] = incoming.get(payer, 0) + row['cents']
         outgoing[row['for_id']] = outgoing.get(row['for_id'], 0) + row['cents']
-    valid = (all(cents <= shares.get(key, 0) for key, cents in by_share.items())
+    valid = (not broken
+             and all(cents <= shares.get(key, 0) for key, cents in by_share.items())
              and all(cents <= owed.get(pair, 0) for pair, cents in by_pair.items())
              and all(incoming.get(m, 0) <= outgoing.get(m, 0) for m in middles))
     if not valid:

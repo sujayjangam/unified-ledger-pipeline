@@ -289,7 +289,8 @@ Env vars (`.env.example` shows the format):
   [ADR-0028](docs/decisions/0028-exact-cent-conversion-half-up.md)).
 - `transactions` is a view of the live rows of `raw_transactions`
   ([ADR-0050](docs/decisions/0050-soft-delete-behind-a-view.md)). Every read, insert and join
-  uses `transactions`; only `soft_delete_entry` and `restore_entry` name `raw_transactions`. Never
+  uses `transactions`; only `soft_delete_entry`, `restore_entry` and `get_trip_settlements` (for
+  the payer of a payback row's bill, never an amount; ADR-0052) name `raw_transactions`. Never
   filter on `deleted_at` in a query: the view does it. A new column goes on `raw_transactions`,
   then into the view (`LIVE_COLUMNS` in migration 0010 lists the current set). A delete never
   removes a row; removing test rows for good is the hand-run query in `docs/LOCAL_TESTING.md`.
@@ -324,7 +325,8 @@ Env vars (`.env.example` shows the format):
   never more than is still open on that share; otherwise its cents are owed back to the giver,
   like an overpayment. A row on a bill the receiver didn't pay is an offset row: it counts only
   if the payback's offsets to each middle person are no more than that person's own rows, and
-  every one fits, all or nothing (ADR-0052). Old paybacks have no rows
+  every one fits, all or nothing (ADR-0052). A deleted bill someone other than the receiver
+  paid breaks its chain the same way: it is read with its payer (ADR-0052). Old paybacks have no rows
   and clear a line's oldest bills first (`open_bill_shares`). No `ON DELETE` on its keys.
 - `ON CONFLICT (idempotency_key) DO NOTHING` stops a double-tapped Confirm inserting twice
   ([ADR-0011](docs/decisions/0011-idempotency-key-over-update-id.md)). Duplicate webhook

@@ -458,17 +458,20 @@ def test_trip_paybacks_include_ordered_bill_rows_and_fail_closed(monkeypatch):
     rows, bills = MagicMock(), MagicMock()
     rows.mappings.return_value.all.return_value = [dict(id=2), dict(id=1)]
     bills.mappings.return_value.all.return_value = [
-        dict(settlement_id=1, transaction_id='a', for_id=3, cents=100),
-        dict(settlement_id=1, transaction_id='b', for_id=4, cents=200),
+        dict(settlement_id=1, transaction_id='a', for_id=3, cents=100, payer_id=1),
+        dict(settlement_id=1, transaction_id='b', for_id=4, cents=200, payer_id=2),
     ]
     conn.execute.side_effect = [rows, bills]
     connect = MagicMock(return_value=manager)
     monkeypatch.setattr(ledger_queries, 'get_connection', connect)
     assert ledger_queries.get_trip_settlements(7) == [dict(id=2, bills=[]), dict(id=1, bills=[
-        dict(transaction_id='a', for_id=3, cents=100), dict(transaction_id='b', for_id=4, cents=200)])]
+        dict(transaction_id='a', for_id=3, cents=100, payer_id=1),
+        dict(transaction_id='b', for_id=4, cents=200, payer_id=2)])]
     connect.assert_called_once_with()
     sql, params = conn.execute.call_args.args
     assert 'ORDER BY b.settlement_id, b.transaction_id, b.for_participant_id' in str(sql)
+    # The bill's payer comes from the real table, so a deleted bill still names it (ADR-0052).
+    assert 'JOIN raw_transactions t ON t.transaction_id = b.transaction_id' in str(sql)
     assert 's.trip_id IS NOT DISTINCT FROM :trip_id' in str(sql) and params == {'trip_id': 7}
     conn.execute.side_effect = [rows, RuntimeError('offline')]
     assert ledger_queries.get_trip_settlements(7) is None

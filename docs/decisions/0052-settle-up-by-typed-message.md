@@ -9,7 +9,10 @@
 `app/bot_core.py::handle_settle_up_button`, `app/services/balances.py::open_bill_shares`
 **Changes:** in [ADR-0046](0046-settlements-as-their-own-records.md), "Taps first" (a typed
 message comes first; the "Mark paid" buttons stay until a "Settle up" button replaces them). The
-rest of ADR-0046, ADR-0047 and ADR-0051 stays.
+rest of ADR-0046, ADR-0047 and ADR-0051 stays. From 2026-11-20, one exception to
+[ADR-0050](0050-soft-delete-behind-a-view.md): the payback read (`get_trip_settlements`) names
+`raw_transactions` too, for one column, who paid a row's bill (see "A deleted bill breaks its
+chain").
 
 ## Problem
 
@@ -138,6 +141,20 @@ An amount with no word in common is no match: common amounts (20, 50) would pick
     fits its open share and its debt; otherwise they are all dropped with the middle people's
     rows, and the money is owed back to the giver. Paybacks saved before this have no offset
     rows and read as before.
+  - **A deleted bill breaks its chain (added 2026-11-20).** Erin pays Alice 100: her 60 dinner
+    share, Bob's 40 dinner share, and her 40 share of Bob's taxi by offset. If the taxi is later
+    deleted, it drops out of the bills read and nothing shows Bob was a middle person, so his
+    dinner row would still clear and Erin would lose 40 unseen. The payback read therefore
+    takes each row's bill payer from `raw_transactions`, deleted or not: only the payer, never
+    an amount, so a deleted bill still clears nothing. A row on a deleted bill paid by someone
+    other than the receiver marks that payer as a middle person, and the chain fails as a
+    whole: Bob owes Alice 40 again, and Alice owes Erin 40 back. A row on a deleted bill the
+    receiver paid is unchanged. Undo brings the chain back. Found by the Codex review of PR
+    [#146](https://github.com/sujayjangam/unified-ledger-pipeline/pull/146). Rejected: storing
+    the payer on each row (a migration days before the deploy freeze, and a second copy of a
+    fact the bill holds); refusing to delete a bill a payback points at (paybacks can't be
+    deleted from the bot, so a wrong bill would be stuck); letting any deleted row break the
+    payback (a plain payback would stop clearing its live bills).
 - **On someone's behalf, never "gift".** A share paid for someone else says "paid on Erin's
   behalf". As in ADR-0051, it clears their debt and nobody owes the giver.
 
