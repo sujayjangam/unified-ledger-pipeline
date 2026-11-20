@@ -61,6 +61,12 @@ message itself for costs logged before it starts.
 
 **Recently shipped**, newest first. Each PR and ADR has the full story.
 
+- **2026-11-20: a fresh `/trip_bals` after any trip payback, old reports kept**
+  ([#151](https://github.com/sujayjangam/unified-ledger-pipeline/issues/151), PR
+  [#152](https://github.com/sujayjangam/unified-ledger-pipeline/pull/152)). A payback saved
+  from a typed settle message now sends a new `/trip_bals` too, and no payback deletes an
+  older report any more. No migration.
+
 - **2026-11-20: typed amounts cleared from the chat, and `/trip_bals` redrawn after a payback**
   ([#149](https://github.com/sujayjangam/unified-ledger-pipeline/issues/149), PR [#150](https://github.com/sujayjangam/unified-ledger-pipeline/pull/150)). On a "Mark paid" card, the typed amount
   and its prompt are deleted once read, and an error goes into the next prompt. After

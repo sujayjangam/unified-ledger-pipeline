@@ -17,7 +17,7 @@ def card(**changes):
     result = dict(trip_id=7, trip_name="Beach", from_id=3, to_id=1,
                   clears_cents=3000, clears_currency="AUD", paid_cents=3000, paid_currency="AUD",
                   suggested_cents=3000, debtor_member_ids=(3,), for_id=None, idempotency_key="fictional-key",
-                  date=date(2026, 11, 17), entered_by_participant_id=1, family="Lee",
+                  date=date(2026, 11, 17), entered_by_participant_id=1, family="Lee", directory=None,
                   names={1: "Alice", 2: "Bob", 3: "Carol"}, people=tuple(SimpleNamespace(id=i) for i in (1, 2, 3)), currencies={'AUD', 'SGD', 'IDR'})
     result.update(changes)
     return result
@@ -62,7 +62,6 @@ async def test_new_card_requires_family_choice_and_checks_membership(flow):
     bot._load_bals_trip.assert_called_once_with(1, 7)
     pending = flow.user_data['pending_settlements'][20]
     assert pending['directory'] is flow.user_data['bals_reports'][10]
-    assert pending['report_message_id'] == 10
     assert pending['from_id'] is None and pending['debtor_member_ids'] == (3,)
     buttons = _buttons(query.message.reply_text.await_args.kwargs['reply_markup'])
     assert buttons['Carol'] == 'settle:person:3' and 'Confirm' not in buttons
@@ -387,30 +386,29 @@ async def test_resolving_card_clears_prompt_despite_delete_failure(flow, monkeyp
     query.answer.assert_awaited_once()
 
 
-async def test_saved_payback_redraw_uses_snapshot_and_retires_both_reports(flow, monkeypatch):
-    """Two cards from one source leave only the latest report, using captured names."""
+async def test_each_saved_payback_sends_a_new_report_and_keeps_the_old(flow, monkeypatch):
+    """Every saved payback sends a fresh report from the card's names; no report is deleted."""
     directory = flow.user_data['bals_reports'][10]
-    flow.user_data['pending_settlements'] = {
-        i: card(directory=directory, report_message_id=10) for i in (20, 21)}
+    flow.user_data['pending_settlements'] = {i: card(directory=directory) for i in (20, 21)}
     monkeypatch.setattr(bot, 'add_settlement', MagicMock(return_value=True))
     screen = MagicMock(return_value=('fresh balances', None))
     monkeypatch.setattr(bot, '_bals_screen', screen)
     for card_id, report_id in ((20, 40), (21, 41)):
         update, query = tap('settle:confirm', card_id)
         async def send(**kwargs):
+            # Sent below the card, only once it says the payback is saved.
             assert query.edit_message_text.await_args.args[0].endswith('✅ Payback saved.')
-            assert flow.bot.delete_message.await_count == (0 if card_id == 20 else 1)
-            assert report_id not in flow.user_data['bals_reports']
             assert 'parse_mode' not in kwargs
             return SimpleNamespace(message_id=report_id)
         flow.bot.send_message.side_effect = send
         await bot.handle_settle_button(update, flow)
         screen.assert_called_with(BEACH, directory, date(2026, 11, 17))
         assert flow.user_data['bals_reports'][report_id] is directory
-    assert [c.kwargs['message_id'] for c in flow.bot.delete_message.await_args_list] == [10, 10, 40]
+    flow.bot.delete_message.assert_not_awaited()
+    # The old report and the first new one stay usable for more "Mark paid" taps.
+    assert set(flow.user_data['bals_reports']) == {10, 40, 41}
     bot._load_bals_trip.assert_called_with(1, 7)
     bot._load_directory.assert_not_called()
-    assert flow.user_data['bals_last_redraw'] == {(query.message.chat_id, 7): 41}
 
 
 @pytest.mark.parametrize('failure', ['send', 'read', 'bills', 'not_member'])
@@ -421,7 +419,7 @@ async def test_report_failure_leaves_saved_card_and_old_report(flow, monkeypatch
     than being swapped for an error message.
     """
     directory = flow.user_data['bals_reports'][10]
-    flow.user_data['pending_settlements'] = {20: card(directory=directory, report_message_id=10)}
+    flow.user_data['pending_settlements'] = {20: card(directory=directory)}
     monkeypatch.setattr(bot, 'add_settlement', MagicMock(return_value=True))
     if failure == 'send':
         flow.bot.send_message.side_effect = RuntimeError('offline')
@@ -820,15 +818,16 @@ async def test_answer_is_sent_before_the_reply_is_deleted(flow, authorized, monk
     extract.assert_not_awaited()
 
 
-async def test_concurrent_confirms_leave_the_newest_report(flow, monkeypatch):
-    """Two cards confirmed at once: redraws run one at a time, so the newest report is kept.
+async def test_concurrent_confirms_send_the_newest_report_last(flow, monkeypatch):
+    """Two cards confirmed at once: reports go out one at a time, so the last one is current.
 
-    Without the redraw lock, the first card's slow send would finish last and delete the
-    second card's newer report, leaving balances that miss the second payback.
+    Without the lock, the first card's report could read the balances before the second
+    payback was saved and still arrive after the second report, so the report at the bottom
+    of the chat would miss a payback.
     """
     directory = flow.user_data['bals_reports'][10]
     flow.user_data['pending_settlements'] = {
-        i: card(directory=directory, report_message_id=10, idempotency_key=f'key-{i}') for i in (20, 21)}
+        i: card(directory=directory, idempotency_key=f'key-{i}') for i in (20, 21)}
     writer = MagicMock(return_value=True)
     monkeypatch.setattr(bot, 'add_settlement', writer)
     # Each screen records how many paybacks were saved when its balances were read.
@@ -853,6 +852,5 @@ async def test_concurrent_confirms_leave_the_newest_report(flow, monkeypatch):
     release.set()
     await asyncio.gather(first, second)
     assert sent == ['after 1 saved', 'after 2 saved']
-    assert flow.user_data['bals_last_redraw'] == {(100, 7): 41}
-    assert [c.kwargs['message_id'] for c in flow.bot.delete_message.await_args_list] == [10, 10, 40]
-    assert 41 in flow.user_data['bals_reports'] and 40 not in flow.user_data['bals_reports']
+    flow.bot.delete_message.assert_not_awaited()
+    assert {40, 41} <= set(flow.user_data['bals_reports'])

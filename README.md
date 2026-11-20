@@ -174,15 +174,16 @@ the options turned down, and what it cost. The ones that shaped the system most:
   and a "Confirm overpayment" button, not a refusal. Paying a line with a 💡 shortcut also marks
   the bills behind the shortcut as paid, so the bills match `/trip_bals` and anyone in the
   family can pay the line in full. A typed amount and its prompt disappear once the card has
-  updated, with any error shown in the next prompt, and after Confirm a fresh `/trip_bals` is
-  sent below the card and the old one removed.
+  updated, with any error shown in the next prompt. After Confirm a fresh `/trip_bals` is sent
+  below the card; older reports stay where they are.
 - Settling up by message: a message starting "settle" ("Settle Carol paid 381 for saree
   pleating") is read in Python, never by the model, and shows a card of the bills it pays off,
   each share cleared or still owed, before anything is saved. With no bill named it pays the
   oldest bills first; "Did you mean", Change bills, Change who paid and Change receiver fix a
   wrong guess. Each payback records which bill shares it cleared. A payback in another
   currency is converted at a reference rate (Frankfurter; only the two currency codes and a
-  date are sent) and flagged to check against the statement
+  date are sent) and flagged to check against the statement. Confirming a payback on a trip
+  also sends a fresh `/trip_bals` below the card
   ([ADR-0052](docs/decisions/0052-settle-up-by-typed-message.md),
   [ADR-0053](docs/decisions/0053-other-currency-paybacks-at-a-reference-rate.md)).
 
