@@ -28,8 +28,7 @@ is tried on a Neon branch with a fictional trip-sized directory first.
 1. Settling up redesigned: a typed "settle" message read by Python, each payback linked to the
    bills it clears, no "gift" wording
    ([#134](https://github.com/sujayjangam/unified-ledger-pipeline/issues/134), which takes in
-   [#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113) and
-   [#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114); design in
+   [#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113); design in
    [ADR-0052](docs/decisions/0052-settle-up-by-typed-message.md), agreed 2026-11-19). The same
    method serves everyday bills, for a later `/bals`. Typed path first, with a new
    `settlement_bills` table (migration 0011, on production). PR 1, PR 2 (the reader) and PR 3
@@ -186,8 +185,9 @@ message itself for costs logged before it starts.
 
 **Open top-level issues:**
 [#134](https://github.com/sujayjangam/unified-ledger-pipeline/issues/134) settle-up redesign, with
-[#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113) and
-[#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114) (next up, design first) ·
+[#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113) (PRs 1–3 merged) ·
+[#143](https://github.com/sujayjangam/unified-ledger-pipeline/issues/143) bot screens hard to scan, with [#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114), [#148](https://github.com/sujayjangam/unified-ledger-pipeline/issues/148) and
+[#149](https://github.com/sujayjangam/unified-ledger-pipeline/issues/149) (after the trip; #149's timing to decide) ·
 [#127](https://github.com/sujayjangam/unified-ledger-pipeline/issues/127) trip balances (both sub-issues and the offset rows shipped) ·
 [#132](https://github.com/sujayjangam/unified-ledger-pipeline/issues/132) early ADRs too long ·
 [#122](https://github.com/sujayjangam/unified-ledger-pipeline/issues/122) Python-only split reader (after the trip) ·
