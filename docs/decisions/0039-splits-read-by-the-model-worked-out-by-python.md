@@ -1,6 +1,6 @@
 # ADR-0039: The model reads who shares an entry; Python matches the names and hands out the cents
 
-**Status:** Accepted; "otherwise the entry is personal" superseded by [ADR-0054](0054-paid-for-someone-means-they-owe.md) for a cost paid "for" a known person
+**Status:** Accepted; "otherwise the entry is personal" superseded by [ADR-0054](0054-paid-for-someone-means-they-owe.md) for a cost paid "for" a known person; who shares is read by Python first for a "between" list ([ADR-0055](0055-between-list-read-by-python-first.md))
 **Date:** 2026-11-16
 **Plan:** `docs/superpowers/plans/2026-11-16-splits.md` (PR 1)
 **Code:** `app/services/splits.py::share_out`, `::resolve_split`, `::asks_for_split`, `::sender_shares`, `app/services/extraction.py::SplitReference`, `app/services/participants.py::match_person`, `app/bot_core.py::process_expense_text`, `app/add_expense.py::add_expense`, `alembic/versions/0008_add_transaction_splits.py`

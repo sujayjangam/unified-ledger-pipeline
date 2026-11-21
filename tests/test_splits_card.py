@@ -113,7 +113,10 @@ async def test_warning_only_on_live_cards(monkeypatch, directory):
 ])
 async def test_split_refusals(monkeypatch, directory, reference, warning):
     """Refused splits warn while leaving the ordinary entry confirmable."""
-    _, pending, text = await _card(monkeypatch, directory, reference, trip=False)
+    # The message says "everyone": a message that names someone while the model says
+    # "everyone" gets a different warning (#158).
+    _, pending, text = await _card(monkeypatch, directory, reference, trip=False,
+                                   message="dinner 30 split with everyone")
     assert pending['split'] == () and warning in text
 
 
