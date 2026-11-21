@@ -196,7 +196,8 @@ the options turned down, and what it cost. The ones that shaped the system most:
   whole family on the trip, and a button on the card switches between family and single; the
   button menu has "Settle" and "Family settle", each asking for the payment
   ([ADR-0058](docs/decisions/0058-settle-wording-closest-bill-family-settle.md)). Each payback records which bill shares it cleared, and a typed one keeps its message as
-  its note, so the words saying who paid for whom stay with it. A payback in another
+  its note, so the words saying who paid for whom stay with it; a "Mark paid" one notes the
+  giver and whose debt it paid. A payback in another
   currency is converted at a reference rate (Frankfurter; only the two currency codes and a
   date are sent) and flagged to check against the statement. Confirming a payback on a trip
   also sends a fresh `/trip_bals` below the card

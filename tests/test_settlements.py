@@ -128,6 +128,8 @@ async def test_gift_menu_snapshot_switch_and_confirm(flow, monkeypatch):
     await bot.handle_settle_button(update, flow)
     assert writer.call_args.kwargs['for_id'] == 3
     assert writer.call_args.kwargs['from_id'] == 2
+    # Nobody typed anything, so the note names the giver and whose debt it paid.
+    assert writer.call_args.kwargs['note'] == 'Bob (for Lee family)'
 
 
 async def test_failed_gift_redraw_keeps_original_card(flow, monkeypatch):
@@ -165,6 +167,14 @@ def test_overpaid_gift_names_giver_and_handles_lone_debtor():
                                                     clears_cents=4000, paid_cents=4000))
         assert f'From: Bob, on behalf of {label}' in text
         assert 'owed back to Bob.' in text
+
+
+def test_mark_paid_default_note_names_the_giver_and_whose_debt():
+    """A Mark paid payback's note: the giver alone for their own debt, else "(for ...)",
+    with the same labels as the card's From line."""
+    assert settlements.payback_default_note(card()) == 'Carol'
+    for family, label in [('Lee', 'Lee family'), ('Cedar Grove', 'Cedar Grove'), (None, 'Carol')]:
+        assert settlements.payback_default_note(card(from_id=2, for_id=3, family=family)) == f'Bob (for {label})'
 
 
 @pytest.mark.parametrize('data', ['settle:new:7:1:2999', 'settle:new:7:3:3000', 'settle:new:7:0:3000'])

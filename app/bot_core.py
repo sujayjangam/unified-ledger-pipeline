@@ -46,6 +46,7 @@ from app.services.balances import (
 )
 from app.services.settlements import (
     add_settlement, is_overpayment, settlement_card_text, change_settlement_amount, parse_settlement_amount,
+    payback_default_note,
 )
 from app.services.settle import Bill, SettleChoices, SettleRefused, is_settle, read_settle
 from app.services.settle_card import build_settle_card, settle_card_state
@@ -2342,7 +2343,7 @@ async def _settle_tap(query, context):
                            paid_amount=format_cents(card['paid_cents']), paid_currency=card['paid_currency'],
                            trip_id=card['trip_id'], date=card['date'], source="telegram_bot",
                            entered_by_participant_id=card['entered_by_participant_id'],
-                           idempotency_key=card['idempotency_key'],
+                           idempotency_key=card['idempotency_key'], note=payback_default_note(card),
                            **({'bills': payment_rows(card['line_parts'], first,
                                                      card['clears_cents'])}
                               if card.get('line_parts') else {}))

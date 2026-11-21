@@ -64,8 +64,9 @@ message itself for costs logged before it starts.
   ([#168](https://github.com/sujayjangam/unified-ledger-pipeline/issues/168)). A bill's date
   is stored as text, and the paybacks screen expected a date, so any payback naming its bills
   (every typed settle) broke the screen; the tests had built bills with real dates. And a
-  typed settle's message was never saved: it is now the payback's `note`. Paybacks saved
-  before this have no note. No migration.
+  typed settle's message was never saved: it is now the payback's `note`, and a "Mark paid"
+  payback notes the giver and whose debt it paid. Paybacks saved before this have no note.
+  No migration.
 - **2026-11-21: settle wording, the closest bill, and family settle**
   ([#160](https://github.com/sujayjangam/unified-ledger-pipeline/issues/160),
   [ADR-0058](docs/decisions/0058-settle-wording-closest-bill-family-settle.md)). "in cash"

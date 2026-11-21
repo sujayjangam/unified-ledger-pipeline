@@ -187,8 +187,9 @@ trip debt; the paid side records what changed hands, with no exchange-rate looku
 - **entered_by_participant_id**: BIGINT, nullable, FK → `participants.id`
 - **source**: TEXT, NOT NULL; the bot writes `telegram_bot`
 - **note**: TEXT, nullable. A typed settle's message as read, the same raw-words rule as an
-  expense's description ([ADR-0008](decisions/0008-raw-transcript-as-description.md)). NULL for
-  a "Mark paid" payback and for paybacks saved before it was recorded (2026-11-22).
+  expense's description ([ADR-0008](decisions/0008-raw-transcript-as-description.md)). A "Mark
+  paid" payback, with nothing typed, gets the giver, plus "(for <family>)" when it paid someone
+  else's debt. NULL only on paybacks saved before notes were recorded (2026-11-22).
 - **idempotency_key**: TEXT, NOT NULL, UNIQUE (`uq_settlements_idempotency_key`)
 - **fx_rate**: NUMERIC, nullable; bills' currency per 1 of the paid currency, positive
   (`ck_settlements_positive_fx_rate`). Added by `0011_settlement_bills` for ADR-0053.
