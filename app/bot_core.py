@@ -29,7 +29,7 @@ from app.services.participants import (
     CLOSED_CARD_WARNING, NO_WALLET_MESSAGE, Directory, WalletNotSetUp, load_directory, resolve_payment,
     NO_OUTSIDE_ACCOUNT_MESSAGE, PAYER_UNCLEAR_WARNING, OutsideAccountNotSetUp, read_payer,
     NO_OUTSIDE_ACCOUNT_TOAST, NO_PAYER_ACCOUNT_TOAST, PayerHasNoAccount, change_payer,
-    PAYER_READ_AS_WARNING, second_reader_payer,
+    PAYER_READ_AS_WARNING, second_reader_payer, change_account, OUTSIDE_PAYER_ACCOUNT_NAME,
 )
 from app.services.splits import (
     resolve_split, menu_people, split_groups, split_people, split_rows,
@@ -1448,7 +1448,8 @@ def _keyboard_for(transaction: dict) -> InlineKeyboardMarkup:
     if transaction.get('payer_menu'):
         # Opens the list of people (handle_payer_button). Absent on a YouTrip top-up, and on a
         # card stashed before this button shipped.
-        rows.append([InlineKeyboardButton("👤 Change who paid", callback_data="payer:menu")])
+        rows.append([InlineKeyboardButton("👤 Change who paid", callback_data="payer:menu"),
+                     InlineKeyboardButton("💳 Change card", callback_data="card:menu")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -1467,6 +1468,26 @@ def _people_keyboard(people, pick_prefix: str, back_data: str, marked_ids=(), pe
     ]
     rows = [buttons[i:i + per_row] for i in range(0, len(buttons), per_row)]
     rows.append([InlineKeyboardButton("◂ Back", callback_data=back_data)])
+    return InlineKeyboardMarkup(rows)
+
+
+def _card_accounts(transaction: dict) -> tuple:
+    """The open ordinary accounts offered by this entry's directory snapshot, in name order."""
+    # Share this filter with the tap validator so stale or outside-account ids cannot sneak in.
+    return tuple(sorted(
+        (a for a in transaction['payer_menu']['directory'].accounts
+         if a.is_open and a.name.strip().casefold() != OUTSIDE_PAYER_ACCOUNT_NAME.casefold()),
+        key=lambda a: (a.name.casefold(), a.id)))
+
+
+def _card_keyboard(transaction: dict) -> InlineKeyboardMarkup:
+    """Offer accounts two per row, marking the current one and replacing Confirm/Cancel."""
+    # Ids keep callbacks short regardless of account name length.
+    buttons = [InlineKeyboardButton(("✓ " if a.id == transaction.get('account_id') else "") + a.name,
+                                    callback_data=f"card:set:{a.id}")
+               for a in _card_accounts(transaction)]
+    rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
+    rows.append([InlineKeyboardButton("⬅ Back", callback_data="card:back")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -2699,6 +2720,65 @@ async def _payer_tap(query, context: ContextTypes.DEFAULT_TYPE, message_id: int)
     await query.answer(f"👤 Paid by {person.display_name}.")
 
 
+async def handle_card_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Open, close or pick from the account menu under the same lock as Confirm/Cancel.
+
+    Every tap uses the pending snapshot only and answers exactly once, after its work.
+    """
+    query = update.callback_query
+    message_id = query.message.message_id
+    async with _card_lock(context, message_id):
+        await _account_tap(query, context, message_id)
+
+
+async def _account_tap(query, context: ContextTypes.DEFAULT_TYPE, message_id: int):
+    """Apply one card-menu tap while holding the card lock; publish state after redraw."""
+    # Resolved cards must retain their receipt even when an old menu callback arrives.
+    outcome = _card_outcome(context, message_id)
+    if outcome == "saved":
+        await query.answer("✅ Already saved to the ledger.")
+        return
+    if outcome == "cancelled":
+        await query.answer("❌ This entry was cancelled.")
+        return
+    pending = context.user_data.get('pending_cards', {}).get(message_id)
+    if pending is None or not pending.get('payer_menu'):
+        await query.answer("⚠️ This entry can't be changed now.")
+        return
+
+    if query.data in ("card:menu", "card:back"):
+        keyboard = _card_keyboard(pending) if query.data == "card:menu" else _keyboard_for(pending)
+        try:
+            await query.edit_message_reply_markup(reply_markup=keyboard)
+        except Exception as e:
+            print(f"❌ Card menu redraw failed: {e}")
+            await query.answer("⚠️ Couldn't update the buttons, try again.")
+            return
+        await query.answer()
+        return
+
+    account = next((a for a in _card_accounts(pending) if query.data == f"card:set:{a.id}"), None)
+    if account is None:
+        await query.answer("⚠️ This button is no longer supported. Please send the entry again.")
+        return
+    # The marked account just closes the menu: keep even the original base and warnings.
+    changed = (dict(pending) if account.id == pending.get('account_id') else
+               change_account(pending, pending['payer_menu']['directory'], account))
+    try:
+        await query.edit_message_text(_pending_card_text(changed), reply_markup=_keyboard_for(changed),
+                                      parse_mode="Markdown")
+    except Exception as e:
+        print(f"❌ Change-card redraw failed: {e}")
+        await query.answer("⚠️ Couldn't change card, try again.")
+        return
+    # A failed redraw or a replaced pending entry must never publish an unseen payment choice.
+    if context.user_data.get('pending_cards', {}).get(message_id) is not pending:
+        await query.answer("⏳ This entry is already being saved or was cancelled.")
+        return
+    pending.update(changed)
+    await query.answer(f"💳 {account.name}")
+
+
 async def handle_split_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """The split menu on a pending card: open it, tick people or a family, remove, or close.
 
@@ -3053,6 +3133,7 @@ def get_application():
     app.add_handler(CallbackQueryHandler(handle_settle_button, pattern=r"^settle:"))
     app.add_handler(CallbackQueryHandler(handle_settle_up_button, pattern=r"^su:"))
     app.add_handler(CallbackQueryHandler(handle_payer_button, pattern=r"^payer:"))
+    app.add_handler(CallbackQueryHandler(handle_card_button, pattern=r"^card:"))
     app.add_handler(CallbackQueryHandler(handle_split_button, pattern=r"^split:"))
     app.add_handler(CallbackQueryHandler(handle_help_button, pattern=r"^help:"))
     app.add_handler(CallbackQueryHandler(handle_recent_button, pattern=r"^recent:"))

@@ -128,6 +128,11 @@ Env vars (`.env.example` shows the format):
   when it is drawn (`_payer_people`), and a tap is checked against that same list. Only the menu
   widens: `read_payer` and the second reader keep the trip or the household
   ([ADR-0041](docs/decisions/0041-split-menu-and-wider-people-menus.md)).
+- The "Change card" button (`handle_card_button`, ADR-0057) follows the payer button's rules
+  and applies `change_account`: an owned card decides the payer, an unowned one keeps a
+  household payer (else the sender), and the tapped card becomes `base_account_id`, so a later
+  payer tap starts from it. The menu (`_card_accounts`) is the open accounts in the snapshot,
+  never "Paid by someone else", and a tap is checked against that same list.
 - A split is read by the model and worked out by Python
   ([ADR-0039](docs/decisions/0039-splits-read-by-the-model-worked-out-by-python.md)). The model
   returns only a `split_reference` (who and how many), never a share. `resolve_split` matches
