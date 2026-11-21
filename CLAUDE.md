@@ -200,6 +200,12 @@ Env vars (`.env.example` shows the format):
   typed reply (split, payback or settle) is deleted last, after any answer to it is sent
   (`_reply_deleted_last`): in a group chat the answer quotes it. The
   expense message is never deleted.
+- The button menu under the text box (#163) is a persistent reply keyboard handed out by
+  `/start`. A tap sends its label as text: `handle_text` matches the exact label
+  (`_menu_command`) first, before `authorize()` and the prompt replies, and runs that command,
+  which authorizes itself. Anything but an exact label is an expense message as before. A new
+  label needs a handler in `_menu_command` (a test checks every label has one). `BOT_COMMANDS`
+  is in the agreed order, most used on a trip first; change it only with the user.
 - `/recent` (`handle_recent_button`, ADR-0050) is stateless: each button carries an entry id
   and a page offset, every tap reads the database fresh, and there is no pending entry or card
   lock. The delete and undo queries change only a live or only a deleted row, so a second

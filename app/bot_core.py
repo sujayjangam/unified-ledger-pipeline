@@ -5,7 +5,9 @@ import datetime
 from dataclasses import replace
 from decimal import Decimal
 from dotenv import load_dotenv
-from telegram import BotCommand, Update, InlineKeyboardButton, InlineKeyboardMarkup, ForceReply
+from telegram import (
+    BotCommand, Update, InlineKeyboardButton, InlineKeyboardMarkup, ForceReply, ReplyKeyboardMarkup,
+)
 from telegram.helpers import escape_markdown
 from telegram.error import BadRequest
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
@@ -128,8 +130,14 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     username = update.effective_user.username
     print(f"DEBUG: Connection from {username} (ID: {user_id})")
-    
-    await update.message.reply_text(f"Hello {username}! Your ID is authorized by admin. Send me a voice note to get started.")
+
+    # /start is where the button menu under the text box is handed out (#163). Telegram keeps a
+    # persistent reply keyboard until the bot removes it, so one /start is enough; sending
+    # /start again brings it back if it was hidden.
+    await update.message.reply_text(
+        f"Hello {username}! Your ID is authorized by admin. Send me a voice note to get started.\n"
+        "The buttons under the text box open the bot's screens.",
+        reply_markup=_menu_keyboard())
 
 
 HELP_UNKNOWN_TOAST = "That help page is gone. Send /help again."
@@ -531,45 +539,88 @@ async def month_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = format_period_summary(f"🗓️ **This Month** ({start_str} to {end_str})", expenses, transfers)
     await update.message.reply_text(text, parse_mode="Markdown")
 
+# The category periods, in button order: callback key -> button label. The key is what a
+# "cat:<key>" button carries and what _category_text takes.
+CATEGORY_PERIODS = {"today": "Today", "week": "This week", "month": "This month"}
+CATEGORY_PICKER_TEXT = "📊 Categories for which period?"
+CATEGORY_GONE_TOAST = "That button is gone. Tap 📊 By category again."
+
+
+def _category_text(period: str) -> str:
+    """The category summary for one period ("today", "week" or "month").
+
+    One builder for the /cat_* commands and the "📊 By category" buttons, so a tap and a typed
+    command can never show different totals for the same period. Markdown, as before.
+    """
+    today = get_sgt_now()
+    end_str = today.strftime('%Y-%m-%d')
+    if period == "today":
+        cat_data = get_category_summary(end_str, end_str)
+        return format_category_summary(f"📊 **Today's Categories** ({end_str})", cat_data)
+    if period == "week":
+        start, title = get_week_start(today), "This Week's Categories"
+    else:
+        start, title = get_month_start(today), "This Month's Categories"
+    start_str = start.strftime('%Y-%m-%d')
+    cat_data = get_category_summary(start_str, end_str)
+    return format_category_summary(f"📊 **{title}** ({start_str} to {end_str})", cat_data)
+
+
 async def cat_today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await authorize(update) is None:
-        return 
-    
-    today_str = get_sgt_now().strftime('%Y-%m-%d')
-    cat_data = get_category_summary(today_str, today_str)
-    
-    text = format_category_summary(f"📊 **Today's Categories** ({today_str})", cat_data)
-    await update.message.reply_text(text, parse_mode="Markdown")
+        return
+    await update.message.reply_text(_category_text("today"), parse_mode="Markdown")
+
 
 async def cat_week_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await authorize(update) is None:
-        return 
-    
-    today = get_sgt_now()
-    start_of_week = get_week_start(today)
+        return
+    await update.message.reply_text(_category_text("week"), parse_mode="Markdown")
 
-    start_str = start_of_week.strftime('%Y-%m-%d')
-    end_str = today.strftime('%Y-%m-%d')
-    
-    cat_data = get_category_summary(start_str, end_str)
-    
-    text = format_category_summary(f"📊 **This Week's Categories** ({start_str} to {end_str})", cat_data)
-    await update.message.reply_text(text, parse_mode="Markdown")
 
 async def cat_month_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await authorize(update) is None:
-        return 
-    
-    today = get_sgt_now()
-    start_of_month = get_month_start(today)
+        return
+    await update.message.reply_text(_category_text("month"), parse_mode="Markdown")
 
-    start_str = start_of_month.strftime('%Y-%m-%d')
-    end_str = today.strftime('%Y-%m-%d')
-    
-    cat_data = get_category_summary(start_str, end_str)
-    
-    text = format_category_summary(f"📊 **This Month's Categories** ({start_str} to {end_str})", cat_data)
-    await update.message.reply_text(text, parse_mode="Markdown")
+
+async def category_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """The "📊 By category" menu button: one inline button per period, so no command is typed.
+
+    Nothing is read yet; the tap (handle_category_button) reads the totals fresh.
+    """
+    if await authorize(update) is None:
+        return
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(label, callback_data=f"cat:{key}")
+                                      for key, label in CATEGORY_PERIODS.items()]])
+    await update.message.reply_text(CATEGORY_PICKER_TEXT, reply_markup=keyboard)
+
+
+async def handle_category_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """A tap on a "cat:<period>" button: the picker message becomes that period's summary.
+
+    Reads only (no pending entry, no lock). Answered exactly once: an unknown period (a button
+    from an older version) gets a toast and no redraw. The summary replaces the picker so the
+    chat isn't left with a dead menu above the answer.
+    """
+    query = update.callback_query
+    if await authorize(update) is None:
+        await query.answer()
+        return
+    period = query.data.removeprefix("cat:")
+    if period not in CATEGORY_PERIODS:
+        await query.answer(CATEGORY_GONE_TOAST)
+        return
+    text = _category_text(period)
+    try:
+        await query.answer()
+    except Exception as e:
+        print(f"Could not answer category tap: {e}")
+    try:
+        await query.edit_message_text(text, parse_mode="Markdown")
+    except Exception as e:
+        # Nothing was changed, so a failed redraw (e.g. a double tap) loses nothing.
+        print(f"Could not show category summary: {e}")
 
 # --- Confirmation-card state -------------------------------------------------------------
 #
@@ -581,19 +632,68 @@ def _md(name: str) -> str:
     return escape_markdown(name, version=1)
 
 
+# The "/" menu, most used on a trip first (agreed 2026-11-21, #163). Telegram shows them in
+# this order, so the order is the design: /start is last because it is needed once.
 BOT_COMMANDS = [
-    BotCommand("start", "Start using the ledger"),
-    BotCommand("help", "How to word an entry"),
+    BotCommand("trip_bals", "Who owes whom on a trip"),
     BotCommand("recent", "Recent entries"),
+    BotCommand("trip", "Change your trip mode"),
     BotCommand("today", "Today's summary"),
     BotCommand("week", "This week's summary"),
     BotCommand("month", "This month's summary"),
     BotCommand("cat_today", "Today's categories"),
     BotCommand("cat_week", "This week's categories"),
     BotCommand("cat_month", "This month's categories"),
-    BotCommand("trip", "Change your trip mode"),
-    BotCommand("trip_bals", "Who owes whom on a trip"),
+    BotCommand("help", "How to word an entry"),
+    BotCommand("start", "Start using the ledger"),
 ]
+
+
+# The button menu under the text box (a persistent reply keyboard, agreed 2026-11-21, #163).
+# A tap sends the label as an ordinary text message, so each label must be text nobody would
+# send as an expense: none has an amount, so none could have been a valid entry anyway.
+MENU_WHO_OWES = "💰 Who owes"
+MENU_TRIP = "🧳 Trip"
+MENU_RECENT = "🕘 Recent"
+MENU_HELP = "❓ Help"
+MENU_TODAY = "Today"
+MENU_WEEK = "This week"
+MENU_MONTH = "This month"
+MENU_CATEGORIES = "📊 By category"
+MENU_ROWS = (
+    (MENU_WHO_OWES, MENU_TRIP),
+    (MENU_RECENT, MENU_HELP),
+    (MENU_TODAY, MENU_WEEK, MENU_MONTH),
+    (MENU_CATEGORIES,),
+)
+MENU_PLACEHOLDER = "Say or type an expense…"
+
+
+def _menu_keyboard() -> ReplyKeyboardMarkup:
+    """The button menu. Persistent, so Telegram keeps it open instead of folding it away after a
+    tap, and resized so its four rows don't take half the screen."""
+    return ReplyKeyboardMarkup([list(row) for row in MENU_ROWS], resize_keyboard=True,
+                               is_persistent=True, input_field_placeholder=MENU_PLACEHOLDER)
+
+
+def _menu_command(text: str | None):
+    """The handler a menu label opens, or None when the text is not exactly a label.
+
+    Only an exact label counts: "Today 12 coffee" or "today" is still an expense message. The
+    lookup is built here, not at import time, because the handlers are defined further down.
+    Each handler authorizes for itself, exactly as when the command is typed.
+    """
+    actions = {
+        MENU_WHO_OWES: trip_bals_command,
+        MENU_TRIP: trip_command,
+        MENU_RECENT: recent_command,
+        MENU_HELP: help_command,
+        MENU_TODAY: today_command,
+        MENU_WEEK: week_command,
+        MENU_MONTH: month_command,
+        MENU_CATEGORIES: category_menu,
+    }
+    return actions.get(text)
 
 
 async def register_commands(bot):
@@ -2454,6 +2554,15 @@ async def _split_amounts_reply(update, context, directory) -> bool:
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Passes a plain text message through the same pipeline a voice note uses."""
+    # A tap on the button menu arrives as its label (#163). It runs the command and stops: no
+    # model call, and never read as an expense. Checked before authorize() because the command
+    # authorizes itself (one directory load, fail closed, the same as typing the command), and
+    # before the prompt replies, so a tap while an amount prompt is open still opens the screen;
+    # the prompt stays open for its reply.
+    command = _menu_command(update.message.text)
+    if command is not None:
+        await command(update, context)
+        return
     directory = await authorize(update)
     if directory is None:
         return
@@ -2947,6 +3056,7 @@ def get_application():
     app.add_handler(CallbackQueryHandler(handle_split_button, pattern=r"^split:"))
     app.add_handler(CallbackQueryHandler(handle_help_button, pattern=r"^help:"))
     app.add_handler(CallbackQueryHandler(handle_recent_button, pattern=r"^recent:"))
+    app.add_handler(CallbackQueryHandler(handle_category_button, pattern=r"^cat:"))
     app.add_handler(CallbackQueryHandler(handle_button_click))
 
     return app

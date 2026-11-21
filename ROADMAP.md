@@ -41,6 +41,11 @@ message itself for costs logged before it starts.
 - The rest of the formatted bot screens
   ([#143](https://github.com/sujayjangam/unified-ledger-pipeline/issues/143)), and a shared
   sheet of the paybacks for people without the bot.
+- The button menu ([#163](https://github.com/sujayjangam/unified-ledger-pipeline/issues/163))
+  hides while a reply prompt is open (Set amounts, payback amounts, Settle), and `/start`
+  brings it back. Telegram keeps one keyboard per chat and opens any menu the bot sends, so
+  sending it back after each prompt popped it open (tried 2026-11-21, dropped). The likely fix:
+  prompts that don't open the reply box, with the next message read as the answer.
 - A "Settle up" button on `/trip_bals` that opens the same card as a typed settle message
   ([#134](https://github.com/sujayjangam/unified-ledger-pipeline/issues/134)).
 - A split reader written only in Python
@@ -55,6 +60,12 @@ message itself for costs logged before it starts.
 - Aliases per sender ("dad", "mummy"; see Phase 1 below).
 
 **Recently shipped**, newest first. Each PR and ADR has the full story.
+
+- **2026-11-21: a button menu, and `/trip_bals` first in the "/" menu**
+  ([#163](https://github.com/sujayjangam/unified-ledger-pipeline/issues/163)). `/trip_bals` was
+  last of 11 commands. The "/" menu now lists the commands most used on a trip first, and
+  `/start` hands out a button menu under the text box, so no command has to be typed. A tap is
+  matched exactly in Python and never reaches the model. No migration.
 
 - **2026-11-21: `/trip_bals` one currency per screen, with paybacks shown**
   ([#148](https://github.com/sujayjangam/unified-ledger-pipeline/issues/148),

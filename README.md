@@ -199,6 +199,10 @@ the options turned down, and what it cost. The ones that shaped the system most:
 
 - `/recent` (the latest entries, 5 per page), `/today`, `/week`, `/month` and a per-category
   version of each, totalled per currency.
+- A button menu under the text box, handed out by `/start`: Who owes (`/trip_bals`), Trip,
+  Recent, Help, Today, This week, This month, and By category (which asks for the period with
+  buttons). A tap runs the command and never reaches the model. The "/" menu lists the
+  commands most used on a trip first.
 - Deleting a saved entry: a 🗑 button per entry in `/recent`, a second tap to confirm, and Undo
   straight after. A deleted entry stays in the database, hidden from every total, `/trip_bals`
   and the duplicate check ([ADR-0050](docs/decisions/0050-soft-delete-behind-a-view.md)).
