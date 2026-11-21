@@ -27,6 +27,11 @@ is tried on a Neon branch with a fictional trip-sized directory first.
 
 1. Time the bot's screens on a phone, on the deployed bot and the test bot, the day before the
    freeze ([#137](https://github.com/sujayjangam/unified-ledger-pipeline/issues/137)).
+2. A Google Sheet per trip, one row per bill, rewritten by the bot when the trip's bills or
+   paybacks change ([#167](https://github.com/sujayjangam/unified-ledger-pipeline/issues/167)).
+   Each trip gets its own workbook, so one trip's people never see another's bills. A spike on
+   2026-11-21 showed the bot's own Cloud Run identity can write to a workbook shared with it,
+   with no new secret or library.
 
 Later: load a finished trip's hand-kept spreadsheet as real bills, and work out the trip from the
 message itself for costs logged before it starts.
@@ -34,8 +39,7 @@ message itself for costs logged before it starts.
 **After the trip:**
 
 - The rest of the formatted bot screens
-  ([#143](https://github.com/sujayjangam/unified-ledger-pipeline/issues/143)), and a shared
-  sheet of the paybacks for people without the bot.
+  ([#143](https://github.com/sujayjangam/unified-ledger-pipeline/issues/143)).
 - The button menu ([#163](https://github.com/sujayjangam/unified-ledger-pipeline/issues/163))
   hides while a reply prompt is open (Set amounts, payback amounts, Settle), and `/start`
   brings it back. Telegram keeps one keyboard per chat and opens any menu the bot sends, so
@@ -56,6 +60,12 @@ message itself for costs logged before it starts.
 
 **Recently shipped**, newest first. Each PR and ADR has the full story.
 
+- **2026-11-22: "View paybacks" works again, and a typed payback keeps its words**
+  ([#168](https://github.com/sujayjangam/unified-ledger-pipeline/issues/168)). A bill's date
+  is stored as text, and the paybacks screen expected a date, so any payback naming its bills
+  (every typed settle) broke the screen; the tests had built bills with real dates. And a
+  typed settle's message was never saved: it is now the payback's `note`. Paybacks saved
+  before this have no note. No migration.
 - **2026-11-21: settle wording, the closest bill, and family settle**
   ([#160](https://github.com/sujayjangam/unified-ledger-pipeline/issues/160),
   [ADR-0058](docs/decisions/0058-settle-wording-closest-bill-family-settle.md)). "in cash"

@@ -1161,7 +1161,12 @@ async def handle_bals_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
             text, keyboard = _bals_picker(choices, offset, more, today)
     except Exception as e:
         print(f"Could not load trip balances: {e}")
-        await query.answer(BALS_ERROR)
+        try:
+            await query.answer(BALS_ERROR)
+        except Exception as answer_error:
+            # A slow read (a cold start) can outlast Telegram's answer window; the tap
+            # changed nothing, so only print it rather than leave an unhandled traceback.
+            print(f"Could not answer balances tap: {answer_error}")
         return
     try:
         await query.answer(toast)
@@ -1943,7 +1948,11 @@ async def _settle_message(update, context, raw_text, status_msg, directory):
         reading = read_settle(raw_text, people, sender, families)
         # The directory is kept on the card only for the fresh /trip_bals after Confirm
         # (#151), so that report shows the names the card was read with, never a reload.
+        # raw_text is the message as read, saved as the payback's note on Confirm: like an
+        # expense's description (ADR-0008), the words say who paid for whom, which the
+        # stored ids and bill rows alone can't show later.
         card = settle_card_state(dict(snapshot, reading=reading, choices=SettleChoices(), view='card',
+                                      raw_text=raw_text,
                                       date=get_sgt_now().date(), entered_by_participant_id=sender.id,
                                       sender_telegram_id=str(update.effective_user.id),
                                       idempotency_key=str(uuid.uuid4()), directory=directory))
@@ -2029,7 +2038,7 @@ async def handle_settle_up_button(update: Update, context: ContextTypes.DEFAULT_
                                    clears_currency=result.currency, paid_amount=format_cents(card['reading'].cents),
                                    paid_currency=result.paid_currency, trip_id=result.trip_id, date=card['date'],
                                    source='telegram_bot', entered_by_participant_id=card['entered_by_participant_id'],
-                                   idempotency_key=card['idempotency_key'],
+                                   idempotency_key=card['idempotency_key'], note=card.get('raw_text'),
                                    bills=[dict(transaction_id=r.transaction_id, for_id=r.for_id, cents=r.cents) for r in result.rows],
                                    fx_rate=card.get('fx_rate'), fx_rate_date=card.get('fx_rate_date'),
                                    fx_source=card.get('fx_source'), needs_statement_check=result.paid_currency != result.currency)
