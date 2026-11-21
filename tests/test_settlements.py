@@ -402,7 +402,7 @@ async def test_each_saved_payback_sends_a_new_report_and_keeps_the_old(flow, mon
             return SimpleNamespace(message_id=report_id)
         flow.bot.send_message.side_effect = send
         await bot.handle_settle_button(update, flow)
-        screen.assert_called_with(BEACH, directory, date(2026, 11, 17))
+        screen.assert_called_with(BEACH, directory, date(2026, 11, 17), 'AUD')
         assert flow.user_data['bals_reports'][report_id] is directory
     flow.bot.delete_message.assert_not_awaited()
     # The old report and the first new one stay usable for more "Mark paid" taps.
@@ -832,7 +832,7 @@ async def test_concurrent_confirms_send_the_newest_report_last(flow, monkeypatch
     monkeypatch.setattr(bot, 'add_settlement', writer)
     # Each screen records how many paybacks were saved when its balances were read.
     monkeypatch.setattr(bot, '_bals_screen',
-                        lambda trip, snapshot, today: (f'after {writer.call_count} saved', None))
+                        lambda trip, snapshot, today, currency: (f'after {writer.call_count} saved', None))
     release, sent = asyncio.Event(), []
 
     async def send(**kwargs):

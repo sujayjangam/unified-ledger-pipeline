@@ -12,7 +12,7 @@ rolled debt lines, choosing the fewest payments within a bounded deterministic s
 
 from dataclasses import dataclass, field
 
-from app.add_expense import format_cents
+from app.add_expense import format_money
 
 
 @dataclass(frozen=True)
@@ -333,8 +333,18 @@ def open_bill_shares(entries, families: dict, settlements=()) -> dict:
     return {key: cents for key, cents in shares.items() if cents > 0}
 
 
-def _fold_debts(entries, families: dict, settlements):
-    """Replay debts and gross shares; accept balanced offsets together or drop them all."""
+def _fold_debts(entries, families: dict, settlements, history=None):
+    """Replay debts and gross shares; accept balanced offsets together or drop them all.
+
+    When supplied, history receives (bill-row amounts, person amounts) for each
+    settlement, in input order. Bill-row amounts are for showing which shares are marked
+    paid: direct rows report the gross share reduction after its cap, offsets report only
+    accepted reductions. Person amounts are what _pay_back really cleared off each person's
+    debt to the receiver, after netting, so money owed back to the giver is never in them
+    (offset rows are not in them either; they change debts to a middle person). Rowless
+    paybacks report the
+    net amounts returned by _pay_back. The ordinary three-value return is unchanged.
+    """
     # {currency: {(debtor id, creditor id): cents}}. Between any two people at most one
     # direction is ever stored, because _owe nets each new debt against the opposite one.
     debts: dict = {}
@@ -360,6 +370,8 @@ def _fold_debts(entries, families: dict, settlements):
                 if transaction_id is not None:
                     shares[(transaction_id, sharer)] = cents
     for settlement in settlements:
+        # Observe the existing reductions without feeding display data into the maths.
+        row_cleared, old_cleared = {}, {}
         owed = debts.setdefault(settlement["currency"], {})
         if settlement.get('bills'):
             # Each row is capped by what is still open on its own share, before it touches a
@@ -371,6 +383,7 @@ def _fold_debts(entries, families: dict, settlements):
             for row in offsets:
                 payer = payer_of[row['transaction_id']]
                 shares[(row['transaction_id'], row['for_id'])] -= row['cents']
+                row_cleared[id(row)] = row['cents']
                 edge = (row['for_id'], payer)
                 owed[edge] -= row['cents']
                 if not owed[edge]:
@@ -378,12 +391,17 @@ def _fold_debts(entries, families: dict, settlements):
             for row in direct:
                 key = (row['transaction_id'], row['for_id'])
                 capped = min(row['cents'], shares.get(key, 0))
+                row_cleared[id(row)] = capped
                 if capped:
                     shares[key] -= capped
                     allocations.append((row['for_id'], capped))
-            _pay_back(owed, settlement, families, allocations)
+            # Kept for the paybacks screen: a share can be marked paid in full while the
+            # debt behind it was already smaller (an opposite bill netted it), and then the
+            # rest is owed back to the giver, not given to the sharer.
+            old_cleared = _pay_back(owed, settlement, families, allocations)
         else:
             cleared = _pay_back(owed, settlement, families)
+            old_cleared = cleared
             for debtor, cents in cleared.items():
                 for key in shares:
                     transaction_id, sharer = key
@@ -394,6 +412,11 @@ def _fold_debts(entries, families: dict, settlements):
                         cents -= used
                         if not cents:
                             break
+        if history is not None:
+            # Validation partitions rows but retains their objects. Map back to original
+            # row order, including zero for every ineligible or rejected offset row.
+            history.append((tuple(row_cleared.get(id(row), 0)
+                                  for row in settlement.get('bills', ())), old_cleared))
     return debts, no_payer, shares
 
 
@@ -541,109 +564,192 @@ NO_SPLITS_LINE = "No split entries on this trip yet."
 NO_PAYER_LINE = "⚠️ {count} split {entries} no payer recorded, so {they} not counted."
 
 
-def _says(name: str, cents: int) -> str:
-    """One balance in words rather than a plus or minus sign, so a forwarded message can't be
-    read the wrong way round: "Tan family owes 240.00", "Erin is owed 25.00".
-    Family credit summaries are for display; repayment still goes to the payer."""
+def unit_name(unit, names: dict) -> str:
+    """Name a family or person without markup or losing an unknown person's id."""
+    kind, value = unit
+    if kind == 'person':
+        # A sharer missing from the directory should never happen (a foreign key requires the
+        # row), but a balance must not vanish because a name couldn't be looked up.
+        return names.get(value, f"Person #{value}")
+    # A one-word label is a surname, so it reads better as "Tan family". A longer label
+    # ("Alice and Bob", "Tan family") is already a phrase and is shown as stored.
+    return f"{value} family" if len(value.split()) == 1 else value
+
+
+def _says(name: str, cents: int, currency: str) -> str:
+    """Use words for the sign; family credit is a summary, not a new payment line."""
     if cents > 0:
-        return f"{name} is owed {format_cents(cents)}"
+        return f"{name} is owed {format_money(cents, currency)}"
     if cents < 0:
-        return f"{name} owes {format_cents(-cents)}"
+        return f"{name} owes {format_money(-cents, currency)}"
     return f"{name} is settled"
 
 
-def trip_balance_lines(entries, names: dict, families: dict, show_members: bool = True,
-                       settlements=()) -> list[str]:
-    """The balances of one trip as plain lines of text.
+def balance_currencies(entries, settlements, payments) -> list[str]:
+    """Keep settled and payerless split currencies visible, ordered alphabetically."""
+    return sorted({e['currency'] for e in entries if e.get('splits')}
+                  | {s['currency'] for s in settlements} | {c for c, _ in payments})
 
-    entries:  what get_trip_split_entries returns (or any rows unit_balances can read)
-    names:    {participant id: display name}
-    families: {participant id: family label} for this trip
 
-    For each currency: each family's total, with every member whose own total isn't zero
-    underneath when requested, even for a family of one; then people with no family. A
-    family can be settled while two of its members still owe each other. Payments name the
-    payer: e.g. "T family pays Bob 100.00". Plain text with
-    no Markdown, so a name with _ or * in it can't break the message, and it reads the same
-    when forwarded to people who don't use the bot.
+def default_balance_currency(currencies, payments):
+    """Open the busiest currency, with alphabetical ties including settled trips."""
+    return min(currencies, key=lambda c: (-sum(cur == c for cur, _ in payments), c), default=None)
 
-    show_members=False leaves out the people under each family: the shorter form, for when
-    the full one is too long for one Telegram message.
-    """
-    def person(participant_id) -> str:
-        """Name a payer or lone debtor, e.g. Bob, preserving unknown ids in the report."""
-        # A sharer missing from the directory should never happen (a foreign key requires the
-        # row), but a balance must not vanish because a name couldn't be looked up.
-        return names.get(participant_id, f"Person #{participant_id}")
 
-    def unit_name(unit) -> str:
-        """Name a debt or credit unit: e.g. T family or the actual payer Bob."""
-        kind, value = unit
-        if kind == "person":
-            return person(value)
-        # A one-word label is a surname, so it reads better as "Tan family". A longer label
-        # ("Alice and Bob", "Tan family") is already a phrase and is shown as stored.
-        return f"{value} family" if len(value.split()) == 1 else value
-
+def trip_balance_lines(entries, names: dict, families: dict, settlements=(), currency=None) -> list[str]:
+    """Build one currency's family totals and counts; detail lives behind buttons."""
     entries, settlements = tuple(entries), tuple(settlements)
     result = unit_balances(entries, families, settlements)
-    numbered = list(enumerate(trip_payments(entries, families, settlements), 1))
+    payments = trip_payments(entries, families, settlements)
+    currencies = balance_currencies(entries, settlements, payments)
+    currency = currency if currency in currencies else default_balance_currency(currencies, payments)
     lines = []
-    for currency in sorted(result.net):
-        units = result.net[currency]
-        display: dict = {}
-        members: dict = {}
-        # Totals are per person; a family's is the sum of its members', for display only.
-        for unit, cents in units.items():
-            shown = unit_of(unit[1], families)
-            display[shown] = display.get(shown, 0) + cents
-            # A family whose members only owe each other adds up to zero ("is settled") but
-            # is still listed, with both members underneath.
-            if shown[0] == "family":
-                members.setdefault(shown, []).append(unit[1])
-        if lines:
-            lines.append("")
-        lines.append(currency)
-        # Families first, then people on their own; each group in name order.
-        for unit in sorted(display, key=lambda unit: (unit[0], unit_name(unit).lower())):
-            lines.append(_says(unit_name(unit), display[unit]))
-            if show_members:
-                for pid in sorted(members.get(unit, []), key=lambda pid: (person(pid).lower(), pid)):
-                    lines.append("    " + _says(person(pid), units[("person", pid)]))
-        payments = [(n, p) for n, (c, p) in numbered if c == currency]
-        if payments:
-            lines.append("To settle:")
-            lines.extend(f"{n}. {unit_name(p.from_unit)} pays {unit_name(p.to_unit)} {format_cents(p.cents)}"
-                         for n, p in payments)
-        else:
-            lines.append("Everyone is settled.")
-        for shown, creditor, middle, incoming, p, cents in result.shortcuts.get(currency, ()):
-            amount = format_cents(cents)
-            payer = "" if incoming == shown else unit_name(incoming) + " "
-            lines.append(f"💡 {unit_name(shown)} pays {person(creditor)} the {amount} "
-                         f"{unit_name(middle)} owes, and {payer}pays {person(p)} {amount} less.")
-        paid_back = [s for s in settlements if s["currency"] == currency]
-        if paid_back:
-            lines.append("Already paid back:")
-            for s in paid_back:
-                handed = (f" (as {format_cents(s['paid_cents'])} {s['paid_currency']})"
-                          if s.get("paid_currency", currency) != currency else "")
-                # Name whose line was paid: "on behalf of Bob" when Bob is the receiver's
-                # relative (a person line), "on behalf of Lee family" otherwise. No
-                # note when the giver pays a line they are part of.
-                beneficiary = s.get('for_id')
-                cleared = (debtor_unit(beneficiary, s['to_id'], families)
-                           if beneficiary is not None else None)
-                on_behalf = (f" on behalf of {unit_name(cleared)}"
-                        if cleared is not None and
-                        debtor_unit(s['from_id'], s['to_id'], families) != cleared else "")
-                when = f", {s['date'].day} {s['date']:%b}" if s.get("date") else ""
-                lines.append(f" • {person(s['from_id'])} paid {person(s['to_id'])} "
-                             f"{format_cents(s['cents'])} {currency}{on_behalf}{handed}{when}")
-    if not lines:
+    if currency:
+        position = f" · {currencies.index(currency) + 1} of {len(currencies)}" if len(currencies) > 1 else ''
+        lines = [currency + position, '']
+        display = {}
+        # Roll up only for display. A family can total zero while members still owe
+        # each other; its payment count must still come from the per-person maths.
+        for (_, pid), cents in result.net.get(currency, {}).items():
+            unit = unit_of(pid, families)
+            display[unit] = display.get(unit, 0) + cents
+        for unit in sorted(display, key=lambda u: (u[0], unit_name(u, names).lower())):
+            lines.append(_says(unit_name(unit, names), display[unit], currency))
+        k = sum(c == currency for c, _ in payments)
+        m = sum(s['currency'] == currency for s in settlements)
+        summary = f"{k} payment{'s' if k != 1 else ''} to settle" if k else 'Everyone is settled.'
+        if m:
+            summary += f" · {m} payback{'s' if m != 1 else ''}"
+        lines += ['', summary]
+    if not any(e.get('splits') for e in entries):
         lines.append(NO_SPLITS_LINE)
     if result.no_payer:
         count = len(result.no_payer)
-        lines += ["", NO_PAYER_LINE.format(count=count, entries="entry has" if count == 1 else "entries have",
-                                           they="it is" if count == 1 else "they are")]
+        lines += ['', NO_PAYER_LINE.format(count=count, entries='entry has' if count == 1 else 'entries have',
+                                           they='it is' if count == 1 else 'they are')]
+    return lines
+
+
+def trip_payment_lines(entries, names: dict, families: dict, currency: str, settlements=()) -> list[str]:
+    """List this currency's payments in global order, followed by its shortcut notes."""
+    entries, settlements = tuple(entries), tuple(settlements)
+    lines = [f"{unit_name(p.from_unit, names)} pays {unit_name(p.to_unit, names)} {format_money(p.cents, c)}"
+             for c, p in trip_payments(entries, families, settlements) if c == currency]
+    result = unit_balances(entries, families, settlements)
+    for shown, creditor, middle, incoming, person, cents in result.shortcuts.get(currency, ()):
+        amount = format_money(cents, currency)
+        payer = '' if incoming == shown else unit_name(incoming, names) + ' '
+        lines.append(f"💡 {unit_name(shown, names)} pays {unit_name(('person', creditor), names)} the {amount} "
+                     f"{unit_name(middle, names)} owes, and {payer}pays "
+                     f"{unit_name(('person', person), names)} {amount} less.")
+    return lines
+
+
+def payment_button_label(payment, currency, names) -> str:
+    """Fit Telegram's label budget by shortening names before touching money."""
+    left, right = unit_name(payment.from_unit, names), unit_name(payment.to_unit, names)
+    amount = format_money(payment.cents, currency)
+    budget = 64 - len(f"✅  →  · {amount}")
+    a, b = len(left), len(right)
+    while a + b > budget:
+        if a >= b:
+            a -= 1
+        else:
+            b -= 1
+
+    def shortened(name, size):
+        """Reserve the final character for an ellipsis only when needed."""
+        return name if len(name) <= size else name[:max(0, size - 1)] + '…'
+
+    return f"✅ {shortened(left, a)} → {shortened(right, b)} · {amount}"
+
+
+def _bill_label(entry) -> str:
+    """Keep a short bill description, cutting at a word boundary where possible."""
+    if entry is None:
+        # A deleted bill drops out of the bills read, but its payback row is kept.
+        return 'a deleted bill'
+    # The description is the raw message (ADR-0008), so it can be long or span lines.
+    label = ' '.join((entry.get('description') or '').split())
+    if len(label) > 24:
+        head = label[:24]
+        if not label[24].isspace() and ' ' in head:
+            head = head.rsplit(' ', 1)[0]
+        label = head.rstrip() + '…'
+    return label
+
+
+def trip_payback_lines(entries, names: dict, families: dict, currency: str, settlements=()) -> list[str]:
+    """Explain actual cleared shares and outside-family help, without creating debts.
+
+    The reader supplies oldest-first paybacks, including its tie order. Replay in that
+    order so a later payment cannot claim shares an earlier payment already cleared.
+    """
+    entries, settlements = tuple(entries), tuple(settlements)
+    history = []
+    _fold_debts(entries, families, settlements, history)
+    bills = {e.get('transaction_id'): e for e in entries}
+    lines, behalf = [], {}
+    for s, (row_amounts, old_amounts) in zip(settlements, history):
+        if s['currency'] != currency:
+            continue
+        giver = unit_name(('person', s['from_id']), names)
+        receiver = unit_name(('person', s['to_id']), names)
+        beneficiary = s.get('for_id')
+        unit = debtor_unit(beneficiary, s['to_id'], families) if beneficiary is not None else None
+        note = (f" on behalf of {unit_name(unit, names)}" if unit is not None
+                and debtor_unit(s['from_id'], s['to_id'], families) != unit else '')
+        handed = (f" (as {format_money(s['paid_cents'], s['paid_currency'])})"
+                  if s.get('paid_currency', currency) != currency else '')
+        when = f", {s['date'].day} {s['date']:%b}" if s.get('date') else ''
+        lines.append(f"• {giver} paid {receiver} {format_money(s['cents'], currency)}{note}{handed}{when}")
+        # helped: {person id: cents} of this payback that really went to that person's
+        # benefit. It starts from what the maths really took off each person's debt to the
+        # receiver (old_amounts), never the gross share: if an opposite bill had already made
+        # the debt smaller, the rest is owed back to the giver and helped nobody. Offset rows
+        # then move the rest (below).
+        helped = dict(old_amounts)
+        if s.get('bills'):
+            for row, cents in zip(s['bills'], row_amounts):
+                entry = bills.get(row['transaction_id'])
+                date = entry.get('date') if entry else None
+                when = f" ({date.day} {date:%b})" if date else ''
+                # The bill line shows the share marked paid, which is what the bill list
+                # and the settle card count.
+                amount = format_money(cents, currency) if cents else 'nothing cleared'
+                person = unit_name(('person', row['for_id']), names)
+                lines.append(f'    {person}\'s share of "{_bill_label(entry)}"{when}: {amount}')
+                # An offset row (a bill the receiver didn't pay) belongs to a shortened line,
+                # a 💡 shortcut: the giver pays the receiver what a middle person owes, and
+                # the middle is owed that much less by the row's sharer (ADR-0052). The sharer
+                # gains it, and the middle gave it up, having gained the same on the
+                # receiver's side: nobody outside the chain was paid for.
+                bill_payer = row.get('payer_id') or (entry or {}).get('paid_by')
+                if cents and bill_payer is not None and bill_payer != s['to_id']:
+                    helped[row['for_id']] = helped.get(row['for_id'], 0) + cents
+                    helped[bill_payer] = helped.get(bill_payer, 0) - cents
+        else:
+            for pid, cents in old_amounts.items():
+                lines.append(f"    {unit_name(('person', pid), names)}: "
+                             f"{format_money(cents, currency)} (no bill record)")
+            if not old_amounts:
+                lines.append('    (no bill record)')
+        # Rolled up per family, the way the help is talked about ("Carol paid for the Lees").
+        # This explains help already given, and is never another ledger debt. Comparing
+        # family units also leaves out a parent paying their own child's share.
+        giver_unit = unit_of(s['from_id'], families)
+        by_unit = {}
+        for pid, cents in helped.items():
+            unit = unit_of(pid, families)
+            by_unit[unit] = by_unit.get(unit, 0) + cents
+        for unit, cents in by_unit.items():
+            if cents > 0 and unit != giver_unit:
+                key = (s['from_id'], unit)
+                behalf[key] = behalf.get(key, 0) + cents
+    if behalf:
+        lines += ['', "Paid on someone else's behalf:"]
+        for (giver, unit), cents in behalf.items():
+            lines.append(f"• {unit_name(('person', giver), names)} paid {format_money(cents, currency)} "
+                         f"for {unit_name(unit, names)}")
+        lines.append('(Not in the balances: settle these between you.)')
     return lines
