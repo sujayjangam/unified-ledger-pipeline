@@ -65,7 +65,9 @@ message itself for costs logged before it starts.
   ([#154](https://github.com/sujayjangam/unified-ledger-pipeline/issues/154),
   [ADR-0054](docs/decisions/0054-paid-for-someone-means-they-owe.md)). "Carol paid 50 for
   Dave's ticket" now shows "Dave owes Carol 50.00" with no taps. Read in Python with no prompt
-  change; a gift word or an unknown name means no split. No migration.
+  change; a gift word or an unknown name means no split. No migration. Fixed the same day:
+  "for Scoot flights for Dave and Erin" (a thing, then the people) gave a warning instead of
+  the split ([#156](https://github.com/sujayjangam/unified-ledger-pipeline/issues/156)).
 
 - **2026-11-20: a fresh `/trip_bals` after any trip payback, old reports kept**
   ([#151](https://github.com/sujayjangam/unified-ledger-pipeline/issues/151), PR
