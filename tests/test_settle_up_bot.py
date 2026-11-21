@@ -55,6 +55,27 @@ def pending(context):
     return context.user_data['pending_settle_ups'][20]
 
 
+@pytest.mark.parametrize('failed', [False, True])
+async def test_typed_settle_sheet_hook(flow, monkeypatch, failed):
+    """Typed confirms refresh after their saved screen and report, without risking the save."""
+    trip_id = pending(flow)['result'].trip_id
+    assert trip_id is not None
+    balances = AsyncMock()
+    monkeypatch.setattr(bot, '_send_fresh_balances', balances)
+    update, query = tap('su:confirm')
+    async def refresh(_):
+        """Verify timing and simulate an unexpected service exception."""
+        assert query.edit_message_text.await_args.args[0].endswith('✅ Payback saved.')
+        balances.assert_awaited_once()
+        if failed:
+            raise RuntimeError('sheet offline')
+    hook = AsyncMock(side_effect=refresh)
+    monkeypatch.setattr(bot, 'refresh_trip_sheet', hook)
+    await bot.handle_settle_up_button(update, flow)
+    hook.assert_awaited_once_with(trip_id)
+    assert bot._card_outcome(flow, 20) == 'saved'
+
+
 def snapshot():
     value = card()
     return {k: value[k] for k in ('bills', 'trip_id', 'scope_labels', 'names', 'people')}, PEOPLE, FAMILIES

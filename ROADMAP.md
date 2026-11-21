@@ -27,11 +27,6 @@ is tried on a Neon branch with a fictional trip-sized directory first.
 
 1. Time the bot's screens on a phone, on the deployed bot and the test bot, the day before the
    freeze ([#137](https://github.com/sujayjangam/unified-ledger-pipeline/issues/137)).
-2. A Google Sheet per trip, one row per bill, rewritten by the bot when the trip's bills or
-   paybacks change ([#167](https://github.com/sujayjangam/unified-ledger-pipeline/issues/167)).
-   Each trip gets its own workbook, so one trip's people never see another's bills. A spike on
-   2026-11-21 showed the bot's own Cloud Run identity can write to a workbook shared with it,
-   with no new secret or library.
 
 Later: load a finished trip's hand-kept spreadsheet as real bills, and work out the trip from the
 message itself for costs logged before it starts.
@@ -59,6 +54,16 @@ message itself for costs logged before it starts.
 - Aliases per sender ("dad", "mummy"; see Phase 1 below).
 
 **Recently shipped**, newest first. Each PR and ADR has the full story.
+
+- **2026-11-22: a Google Sheet per trip, one row per bill**
+  ([#167](https://github.com/sujayjangam/unified-ledger-pipeline/issues/167),
+  [ADR-0059](docs/decisions/0059-live-sheet-per-trip.md)). A trip with a `sheet_id` gets its
+  workbook rewritten after each saved split bill or payback, and each delete or undo of a
+  split bill: who owes the payer what
+  for each bill, paid back, still owed. The bot writes as its Cloud Run identity, with no new
+  secret or library. Migration 0012 adds the column. A new trip's workbook is shared with the
+  bot's service account and its id put in the seed file; the column widths and wrapping are set
+  once by hand (values are rewritten, formatting is kept).
 
 - **2026-11-22: "View paybacks" works again, and a typed payback keeps its words**
   ([#168](https://github.com/sujayjangam/unified-ledger-pipeline/issues/168)). A bill's date
@@ -528,10 +533,10 @@ only shared costs they pay get logged. Travel minimum, in build order:
      Later, for trips with friends rather than families: each friend (or couple) is a family
      of one today, which works but reads as "Bob family". Show a family of one by the person's
      name, in `/trip_bals` and the split menu. Not planned in detail.
-     - Still to build: the per-entry breakdown ("why do I owe 340?") and the running tab
-       between close family (`/bals`), where trip and everyday costs mix. Both are planned
-       for a shared Google Sheet that the bot writes and everyone else can only view (anyone
-       with the link), refreshed when the command is used. Python does the maths; the sheet
+     - The per-bill breakdown for a trip ("why do I owe 340?") shipped 2026-11-22 as the
+       trip's own Google Sheet ([#167](https://github.com/sujayjangam/unified-ledger-pipeline/issues/167)).
+       Still to build: the running tab between close family (`/bals`), where trip and
+       everyday costs mix, likely in the same kind of sheet. Python does the maths; the sheet
        holds finished numbers and is never read back.
   5. Settlement as its own entry type: one person paying another back, in full or in part. It moves
      balances and never counts as spending. Designed 2026-11-17

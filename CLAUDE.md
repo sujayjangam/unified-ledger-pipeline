@@ -288,6 +288,17 @@ Env vars (`.env.example` shows the format):
   and never blocks. The amount prompt and each reply are deleted once read, like split
   prompts; a refused reply gets a replacement prompt with the error under its fixed first
   line, and a failed delete is only printed. Settle-screen money goes through `format_money` (built on `format_cents`).
+- A trip with a `sheet_id` has its own Google Sheets workbook, one row per bill
+  ([ADR-0059](docs/decisions/0059-live-sheet-per-trip.md)). `refresh_trip_sheet`
+  (`app/services/trip_sheet.py`) rewrites its first tab after a confirmed split bill on the
+  trip, a saved payback, and a `/recent` delete or undo that changed a row. It runs after the
+  card says saved, awaited, never `create_task` (Cloud Run gives CPU only during a request);
+  one write at a time per trip; it never raises, and a failure is only printed. Rows come from
+  `open_bill_shares`, at bill level before netting. Values are RAW (a description starting
+  with `=` stays text), written first and the rows below cleared after, so a failed call never
+  blanks the sheet. The bot signs in as its Cloud Run identity (metadata server); locally only
+  when `SHEETS_IMPERSONATE_SA` is set. The sheet is never read back. A new place that changes
+  a trip's bills or paybacks needs the same call. Workbook ids never go in the repo.
 - The duplicate check runs before the card is shown, never inside the insert, and a failed check
   gives a normal card — it must never block a save
   ([ADR-0027](docs/decisions/0027-duplicate-warning-before-the-card.md)).

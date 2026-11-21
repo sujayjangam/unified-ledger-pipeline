@@ -151,6 +151,10 @@ def _parse_trips(raw_trips: list, people: set) -> list[dict]:
             raise ValueError(f"Trip {name}: two trips share this name")
         seen_names.add(_key(name))
 
+        if "sheet_id" in t and (not isinstance(t["sheet_id"], str)
+                                or not re.fullmatch(r"[A-Za-z0-9_-]{20,}", t["sheet_id"])):
+            raise ValueError(f"Trip {name}: sheet_id must be a spreadsheet id (20+ letters, digits, _ or -), not a URL")
+
         # fromisoformat also accepts compact dates; require the seed's explicit YYYY-MM-DD
         # spelling first so malformed or absent dates fail here, before any database access.
         dates = {}
@@ -181,6 +185,8 @@ def _parse_trips(raw_trips: list, people: set) -> list[dict]:
         if not members:
             raise ValueError(f"Trip {name}: no members")
         trips.append({"name": name, "start_date": dates["start"], "end_date": dates["end"], "members": members})
+        if "sheet_id" in t:
+            trips[-1]["sheet_id"] = t["sheet_id"]
     return trips
 
 
@@ -188,7 +194,8 @@ def _parse_trips(raw_trips: list, people: set) -> list[dict]:
 def _seed(conn, seed: SeedData) -> dict:
     """Inserts the participants and accounts that don't exist yet, then wires up defaults and
     funding cards by name. Returns counts for the report."""
-    counts = {"participants": 0, "accounts": 0, "trips": 0, "trip_members": 0, "household_flags": 0}
+    counts = {"participants": 0, "accounts": 0, "trips": 0, "trip_members": 0, "household_flags": 0,
+              "trip_sheets": 0}
 
     for p in seed.participants:
         inserted = conn.execute(text("""
@@ -247,6 +254,12 @@ def _seed(conn, seed: SeedData) -> dict:
             SELECT :name, :start_date, :end_date
             WHERE NOT EXISTS (SELECT 1 FROM trips WHERE lower(name) = lower(:name))
         """), {"name": t["name"], "start_date": t["start_date"], "end_date": t["end_date"]}).rowcount
+        if "sheet_id" in t:
+            # An omitted destination never clears a workbook configured on an earlier run.
+            counts["trip_sheets"] += conn.execute(text("""
+                UPDATE trips SET sheet_id = :sheet_id
+                WHERE lower(name) = lower(:name) AND sheet_id IS DISTINCT FROM :sheet_id
+            """), {"name": t["name"], "sheet_id": t["sheet_id"]}).rowcount
         for person, family in t["members"]:
             counts["trip_members"] += conn.execute(text("""
                 INSERT INTO trip_members (trip_id, participant_id, family)
@@ -297,6 +310,7 @@ def main(argv=None) -> int:
     # .get: a stubbed _seed in the tests returns only the first two counts.
     print(f"Trips inserted:        {counts.get('trips', 0)}")
     print(f"Trip members inserted: {counts.get('trip_members', 0)}")
+    print(f"Trip sheets set:       {counts.get('trip_sheets', 0)}")
     return 0
 
 

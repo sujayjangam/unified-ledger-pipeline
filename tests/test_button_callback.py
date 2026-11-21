@@ -60,6 +60,33 @@ def _txn(idempotency_key="key-1"):
     }
 
 
+@pytest.mark.parametrize("trip_id, split, success, raises, expected", [
+    (7, True, True, False, True), (None, True, True, False, False),
+    (7, False, True, False, False), (7, True, False, False, False),
+    (7, True, True, True, True),
+])
+async def test_saved_expense_sheet_hook(monkeypatch, trip_id, split, success, raises, expected):
+    """Refresh only a saved trip split, after the saved card, tolerating refresh failure."""
+    update, context, query = _make_callback()
+    transaction = {**_txn(), "trip_id": trip_id, "paid_by_participant_id": 1}
+    if split:
+        transaction['split'] = [{'participant_id': 2, 'share_cents': 500, 'name': 'Bob'}]
+    bot_core._remember_pending_card(context, 100, transaction)
+    monkeypatch.setattr(bot_core, "add_expense", MagicMock(return_value=success))
+    async def refresh(_):
+        """Check timing even when the simulated service fails."""
+        assert "Saved to Ledger!" in query.edit_message_text.await_args.args[0]
+        if raises:
+            raise RuntimeError("sheet offline")
+    hook = AsyncMock(side_effect=refresh)
+    monkeypatch.setattr(bot_core, "refresh_trip_sheet", hook)
+    await bot_core.handle_button_click(update, context)
+    assert hook.await_count == int(expected)
+    if expected:
+        hook.assert_awaited_once_with(7)
+        assert bot_core._card_outcome(context, 100) == 'saved'
+
+
 # --- the #29 regression: a second tap must not overwrite the success card ---
 
 async def test_second_confirm_leaves_the_saved_card_intact(monkeypatch):

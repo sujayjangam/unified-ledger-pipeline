@@ -204,6 +204,14 @@ the options turned down, and what it cost. The ones that shaped the system most:
   ([ADR-0052](docs/decisions/0052-settle-up-by-typed-message.md),
   [ADR-0053](docs/decisions/0053-other-currency-paybacks-at-a-reference-rate.md)).
 
+- A Google Sheet per trip: when a trip has its own workbook, the bot rewrites it after every
+  saved split bill or payback on the trip, and every delete or undo of a split bill. One row
+  per split bill: who paid, each person's
+  share (✅ once paid back), paid back, still owed, and who still owes. The numbers are the
+  same maths as `/trip_bals`, before netting. Each trip has its own workbook, so one trip's
+  people never see another's bills, and the bot writes as its own Cloud Run identity, with no
+  key to keep ([ADR-0059](docs/decisions/0059-live-sheet-per-trip.md)).
+
 **Reading the ledger**
 
 - `/recent` (the latest entries, 5 per page), `/today`, `/week`, `/month` and a per-category

@@ -144,6 +144,11 @@ via `scripts/seed_directory.py`.
   They sort `/trip`'s list and label its buttons; they never tag an entry
   ([ADR-0036](decisions/0036-trip-switch-per-person.md)).
 - **created_at**: TIMESTAMPTZ, NOT NULL, `DEFAULT now()`
+- **sheet_id**: TEXT, nullable (revision `0012_trip_sheet_id`). The trip's own Google Sheets
+  workbook, rewritten by the bot after each change to the trip's bills or paybacks
+  ([ADR-0059](decisions/0059-live-sheet-per-trip.md)). NULL means no sheet. A CHECK
+  (`ck_trips_sheet_id`) allows only a spreadsheet id (20+ letters, digits, `_` or `-`), never a
+  URL. Set from the gitignored seed file; never committed.
 
 **trip_members**
 - **trip_id**: BIGINT, FK → `trips.id`; with `participant_id`, the primary key

@@ -55,6 +55,27 @@ def tap(data, message_id=20):
     return update, query
 
 
+@pytest.mark.parametrize('failed', [False, True])
+async def test_mark_paid_sheet_hook(flow, monkeypatch, directory, failed):
+    """Mark paid refreshes after the saved card and balances; failure keeps it saved."""
+    flow.user_data['pending_settlements'] = {20: card(directory=directory)}
+    monkeypatch.setattr(bot, 'add_settlement', MagicMock(return_value=True))
+    balances = AsyncMock()
+    monkeypatch.setattr(bot, '_send_fresh_balances', balances)
+    update, query = tap('settle:confirm')
+    async def refresh(_):
+        """Assert the visible save is complete before sheet work begins."""
+        assert query.edit_message_text.await_args.args[0].endswith('✅ Payback saved.')
+        balances.assert_awaited_once()
+        if failed:
+            raise RuntimeError('sheet offline')
+    hook = AsyncMock(side_effect=refresh)
+    monkeypatch.setattr(bot, 'refresh_trip_sheet', hook)
+    await bot.handle_settle_button(update, flow)
+    hook.assert_awaited_once_with(7)
+    assert bot._card_outcome(flow, 20) == 'saved'
+
+
 async def test_new_card_requires_family_choice_and_checks_membership(flow):
     """A sender outside the owing family must explicitly pick a payer from the trip."""
     update, query = tap('settle:new:7:1:3000', 10)
