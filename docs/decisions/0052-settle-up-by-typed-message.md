@@ -1,6 +1,7 @@
 # ADR-0052: Settling up any bill by a typed "settle" message, linked to the bills it clears
 
-**Status:** Accepted
+**Status:** Accepted; bill matching and the default people refined by
+[ADR-0058](0058-settle-wording-closest-bill-family-settle.md)
 **Date:** 2026-11-19
 **Issue:** [#134](https://github.com/sujayjangam/unified-ledger-pipeline/issues/134) (takes in
 [#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113) and

@@ -40,6 +40,7 @@ def test_the_menu_has_the_agreed_rows():
     markup = bot_core._menu_keyboard()
     assert _labels(markup) == [
         ["💰 Who owes", "🧳 Trip"],
+        ["🤝 Settle", "👪 Family settle"],
         ["🕘 Recent", "❓ Help"],
         ["Today", "This week", "This month"],
         ["📊 By category"],
@@ -56,6 +57,22 @@ async def test_start_hands_out_the_menu():
     assert _labels(reply.kwargs["reply_markup"]) == _labels(bot_core._menu_keyboard())
 
 
+@pytest.mark.parametrize('label,first_line', [
+    (bot_core.MENU_SETTLE, bot_core.SETTLE_PROMPT),
+    (bot_core.MENU_FAMILY_SETTLE, bot_core.FAMILY_SETTLE_PROMPT),
+])
+async def test_settle_menu_prompts_authorize_and_force_reply(label, first_line):
+    """Both menu prompts are selective ForceReplies and refuse unauthorized senders."""
+    update = _update(ALICE, text=label)
+    await bot_core.handle_text(update, _context())
+    reply = update.message.reply_text.await_args
+    assert reply.args[0] == first_line + '\ne.g. Carol paid 381 for dinner'
+    assert reply.kwargs['reply_markup'].force_reply and reply.kwargs['reply_markup'].selective
+    stranger = _update(999999, text=label)
+    await bot_core.handle_text(stranger, _context())
+    assert 'not authorized' in stranger.message.reply_text.await_args.args[0]
+
+
 async def test_a_stranger_gets_no_menu():
     update = _update(999999)
     await bot_core.start_command(update, _context())
@@ -66,6 +83,8 @@ async def test_a_stranger_gets_no_menu():
 # --- A tap is routed to its command, never to the model ------------------------------------
 
 MENU_TO_HANDLER = [
+    ("🤝 Settle", "settle_command"),
+    ("👪 Family settle", "family_settle_command"),
     ("💰 Who owes", "trip_bals_command"),
     ("🧳 Trip", "trip_command"),
     ("🕘 Recent", "recent_command"),

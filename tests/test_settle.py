@@ -130,7 +130,7 @@ def test_read_refusals(text, message):
     ("for car", ["carpark 5"], 100, 100, "none", ()),
     ("for air bnb", ["Airbnb 2300"], 100, 100, "none", ()),
     ("for hotel", ["Airbnb 2300"], 100, 100, "none", ()),
-    ("for dinner yesterday", ["Dinner 480 cash"], 100, 200, "none", ()),
+    ("for dinner yesterday", ["Dinner 480 cash"], 100, 200, "close", ("0",)),
     ("for dinner yesterday", ["Dinner 480 cash"], 48000, 200, "close", ("0",)),
     ("for dinner yesterday", ["Dinner 480 cash"], 200, 200, "close", ("0",)),
     ("for airbnd", ["Airbnb 2300"], 100, 100, "none", ()),
@@ -388,11 +388,11 @@ def test_trip_debt_in_the_paid_currency_never_hides_an_everyday_bill():
 
 
 def test_foreign_payback_reads_the_same_before_and_after_the_rate():
-    """100 SGD never close-matches an INR share of 10,000 cents, so the rate can't move the bill."""
+    """Shared words suggest the same INR bill before and after conversion."""
     bills = [bill("old", "Dinner", currency="INR", shares={3: 10000}),
              bill("airbnb", "Airbnb", currency="INR", shares={3: 10000})]
     first = settle("Settle Carol paid 100 SGD for airbnb booking", bills)
-    assert first.needs_rate == ("SGD", "INR") and first.parts[0].kind == "none"
+    assert first.needs_rate == ("SGD", "INR") and first.parts[0].kind == "close"
     second = settle("Settle Carol paid 100 SGD for airbnb booking", bills, clears_cents=600000)
     assert second.parts[0].kind == first.parts[0].kind
     assert second.parts[0].ticked == first.parts[0].ticked

@@ -17,8 +17,11 @@ from app.services.splits import _label_key
 
 VERBS = ("paid", "pays", "gave", "sent", "transferred")
 _NEEDS = 'Settle needs who paid and how much, e.g. "Settle Carol paid 381".'
-_STOP = frozenset("the a an my our his her their share shares part portion of".split())
-_START = re.compile(r"^\s*settle\b", re.IGNORECASE)
+_STOP = frozenset("the a an my our his her their share shares part portion of bill that which this was is".split())
+_START = re.compile(r"^\s*(?:(family)\s+)?settle\b", re.IGNORECASE)
+PAYMENT_METHODS = ("cash", "card", "credit card", "debit card", "bank transfer",
+                   "transfer", "PayNow", "pay now", "PayLah", "pay lah", "Wise",
+                   "Revolut", "YouTrip")
 _VERB = re.compile(r"\b(?:" + "|".join(VERBS) + r")\b", re.IGNORECASE)
 _NUMBER = re.compile(r"[0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?")
 
@@ -45,6 +48,7 @@ class SettleReading:
     cents: int
     currency: str | None
     parts: tuple[SettlePart, ...]
+    family: bool = False
 
 
 @dataclass(frozen=True)
@@ -80,6 +84,7 @@ class SettleChoices:
     everyday: bool = False
     giver_id: int | None = None
     shares: tuple[tuple[str, int], ...] | None = None
+    family: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -120,12 +125,15 @@ class SettleResult:
     question: str | None = None
     question_said: str | None = None
     question_payer: int | None = None
+    family: bool = False
+    family_members: tuple[int, ...] = ()
 
 
-def card_people(reading: SettleReading, choices: SettleChoices) -> tuple[int, ...]:
+def card_people(reading: SettleReading, choices: SettleChoices, default=()) -> tuple[int, ...]:
     """Names explicitly said survive changing the giver; unnamed parts follow the giver."""
     giver = choices.giver_id if choices.giver_id is not None else reading.giver_id
-    return tuple(dict.fromkeys(p for part in reading.parts for p in (part.people or (giver,)))) or (giver,)
+    people = tuple(dict.fromkeys(p for part in reading.parts for p in (part.people or default or (giver,)))) or default or (giver,)
+    return tuple(dict.fromkeys((*people, *(p for _, p in choices.shares or ()))))
 
 
 def receiver_options(reading: SettleReading, bills: Sequence[Bill], result: SettleResult,
@@ -135,7 +143,8 @@ def receiver_options(reading: SettleReading, bills: Sequence[Bill], result: Sett
     for bill in bills:
         if bill.trip_id != result.trip_id or result.currency and bill.currency != result.currency:
             continue
-        cents = sum(max(0, bill.open.get(p, 0)) for p in card_people(reading, choices))
+        cents = sum(max(0, bill.open.get(p, 0)) for p in card_people(
+            reading, choices, result.family_members if result.family else ()))
         if cents and bill.payer_id != result.giver_id:
             totals[bill.payer_id] = totals.get(bill.payer_id, 0) + cents
     return tuple(sorted(totals.items(), key=lambda item: (-item[1], item[0])))
@@ -153,15 +162,16 @@ def bill_share_options(reading: SettleReading, bills: Sequence[Bill], result: Se
         parts = reading.parts or (SettlePart((), (), ""),)
         selected = tuple((bid, p) for part, found in zip(parts, result.parts)
                          for bid in found.ticked
-                         for p in (part.people or (result.giver_id,)))
+                         for p in (part.people or (result.family_members if result.family else (result.giver_id,))))
     return tuple((b.transaction_id, p, b.open[p], (b.transaction_id, p) in selected)
                  for b in bills if b.trip_id == result.trip_id and b.payer_id == result.receiver_id
                  and (result.currency is None or b.currency == result.currency)
-                 for p in card_people(reading, choices) if b.open.get(p, 0) > 0)
+                 for p in card_people(reading, choices, result.family_members if result.family else ())
+                 if b.open.get(p, 0) > 0)
 
 
 def is_settle(text: str) -> bool:
-    """Route only the first word 'settle', including voice-note punctuation."""
+    """Route initial 'settle' or 'family settle', including voice punctuation."""
     return bool(_START.match(text))
 
 
@@ -174,18 +184,42 @@ def normalise(text: str) -> tuple[str, ...]:
 
 
 def _person(text, candidates, sender):
-    if text.casefold() in {"i", "me"}:
+    """Match known people and sender pronouns."""
+    if text.casefold() in {"i", "me", "myself"}:
         return sender
     return match_person(text, candidates)
 
 
-def _part(said, candidates, sender, families):
+def _drop_methods(text, candidates, sender, *, in_part=False):
+    """Drop listed methods, preserving any span containing a known person's name."""
+    methods = "|".join(re.escape(m) for m in sorted(PAYMENT_METHODS, key=len, reverse=True))
+    lead = r"(?:(?:in|by|via|with|through|using|over)\s+)"
+    pattern = r"\b" + lead + ("" if in_part else "?") + "(?:" + methods + r")\b"
+
+    def drop(match):
+        """Even one word of a payment phrase may name a participant."""
+        words = match[0].split()
+        if any(_person(" ".join(words[i:j]), candidates, sender) is not None
+               for i in range(len(words)) for j in range(i + 1, len(words) + 1)):
+            return match[0]
+        return " "
+
+    return re.sub(pattern, drop, text, flags=re.I)
+
+
+def _part(said, candidates, sender, families, giver):
     """Longest names win before family labels; leftover words describe the bill."""
+    said = _drop_methods(said, candidates, sender, in_part=True)
     said = re.sub(r"(?:\s*\band\b|[\s,&])+$", "", said.strip(), flags=re.I)
     tokens = re.findall(r"[^\W_]+(?:['’]s)?|[,&]", said)
     people, bill_words = [], []
     i = 0
     while i < len(tokens):
+        if tokens[i].casefold() in {"himself", "herself", "themselves"}:
+            if giver.id not in people:
+                people.append(giver.id)
+            i += 1
+            continue
         found = ()
         for length in range(min(3, len(tokens) - i), 0, -1):
             span = " ".join(tokens[i:i + length])
@@ -222,7 +256,7 @@ def read_settle(text: str, candidates: Sequence[Participant], sender: Participan
         raise SettleRefused(_NEEDS)
     body = text[start.end():].lstrip(" \t\r\n,.:;!?—-").rstrip(" \t\r\n.!?;,")
     clauses = re.split(r"\bfor\b", body, flags=re.I)
-    head = clauses[0].strip()
+    head = _drop_methods(clauses[0], candidates, sender).strip()
     verb = _VERB.search(head)
     if not verb or not head[:verb.start()].strip():
         raise SettleRefused(_NEEDS)
@@ -268,7 +302,7 @@ def read_settle(text: str, candidates: Sequence[Participant], sender: Participan
         raise SettleRefused("Who paid and who got it must be two different people.")
     parts = []
     for index, clause in enumerate(clauses[1:]):
-        part = _part(clause, candidates, sender, families)
+        part = _part(clause, candidates, sender, families, giver)
         if not part.people and not part.words:
             raise SettleRefused(_NEEDS)
         # An explicit joiner means another allocation part ('and for Erin'),
@@ -286,20 +320,22 @@ def read_settle(text: str, candidates: Sequence[Participant], sender: Participan
             parts.append(SettlePart(previous.people, part.words, part.said))
         else:
             parts.append(part)
-    return SettleReading(giver.id, receiver.id if receiver else None, cents, currency, tuple(parts))
+    return SettleReading(giver.id, receiver.id if receiver else None, cents, currency, tuple(parts), bool(start[1]))
 
 
 def match_bills(words: tuple[str, ...], bills: Sequence[Bill], money_left: int,
                 people: Sequence[int], *, currency: str | None = None) -> BillMatch:
     """Prefer all full matches; an amount can corroborate words, never replace them."""
-    full, close = [], []
+    full, close, overlaps = [], [], []
     wanted = set(words)
     for bill in bills:
         description = set(normalise(bill.description))
+        if any(bill.open.get(p, 0) > 0 for p in people):
+            overlaps.append((len(wanted & description), bill.transaction_id))
         # The amount backs up the words only in the bill's own currency: 100 SGD is
         # never "equal" to an INR share of 10,000 cents, and a converted amount is
-        # approximate. So a payback said in another currency never close-matches, and
-        # the reading stays the same before and after the rate is applied.
+        # approximate. Foreign money cannot corroborate a close match; shared
+        # words can still suggest one independently of the conversion rate.
         same_money = currency is None or bill.currency == currency
         if wanted and wanted <= description:
             full.append(bill.transaction_id)
@@ -308,14 +344,19 @@ def match_bills(words: tuple[str, ...], bills: Sequence[Bill], money_left: int,
             close.append(bill.transaction_id)
     if full:
         return BillMatch("full", tuple(full), tuple(full))
+    if not close:
+        # Words alone suggest a question only after amount-backed matches fail.
+        most = max((count for count, _ in overlaps), default=0)
+        close = [bid for count, bid in overlaps if most > 0 and count == most]
     return BillMatch("close", tuple(close), tuple(close[:1])) if close else BillMatch("none", (), ())
 
 
 def _owing(bills, people):
+    """Keep bills with an open share for a beneficiary."""
     return tuple(b for b in bills if any(b.open.get(p, 0) > 0 for p in people))
 
 
-def _walk(parts, bills, amount, choices, names, *, everyday=(), paid=None):
+def _walk(parts, bills, amount, choices, names, *, everyday=(), paid=None, scope_defaults=None):
     """Select and fill together: later close matches must see the money left.
 
     The returned explicit ticks decide scope/receiver. Fallback ticks do not:
@@ -343,7 +384,17 @@ def _walk(parts, bills, amount, choices, names, *, everyday=(), paid=None):
     rows, selected, explicit, results = {}, {}, [], []
     left = amount
     for i, part in enumerate(parts):
-        candidates = _owing(bills, part.people)
+        if not part.people and scope_defaults is not None:
+            # With trip mode off, discover a named bill using each trip's own
+            # family, including when only the giver's relatives still owe.
+            # Mask other shares so one trip's family cannot leak into another.
+            candidates = tuple(replace(b, open={p: b.open[p] for p in scope_defaults.get(b.trip_id, ())
+                                               if b.open.get(p, 0) > 0}) for b in bills)
+            people = tuple(dict.fromkeys(p for group in scope_defaults.values() for p in group))
+            part = replace(part, people=people)
+            candidates = _owing(candidates, people)
+        else:
+            candidates = _owing(bills, part.people)
         match = match_bills(part.words, candidates, left, part.people, currency=paid)
         kind, ticks, warning = match.kind, match.ticked, None
         if not part.words:
@@ -388,9 +439,17 @@ def _walk(parts, bills, amount, choices, names, *, everyday=(), paid=None):
             tuple(results), explicit, bool(selected) and rows == selected and left == 0)
 
 
+def family_people(giver, families):
+    """Return the giver first, then other members of their captured trip family by id."""
+    label = families.get(giver)
+    return (giver,) + tuple(sorted(p for p, f in families.items()
+                                  if label is not None and f == label and p != giver))
+
+
 def settle_up(reading: SettleReading, bills: Sequence[Bill], *, trip_id: int | None,
               names: Mapping[int, str], choices: SettleChoices = SettleChoices(),
-              clears_cents: int | None = None) -> SettleResult:
+              clears_cents: int | None = None,
+              scope_families: Mapping[int, Mapping[int, str]] | None = None) -> SettleResult:
     """Resolve scope, receiver and currency, then fill the selected open shares.
 
     Names are a display-only snapshot. Bills are already oldest first, and that
@@ -406,11 +465,22 @@ def settle_up(reading: SettleReading, bills: Sequence[Bill], *, trip_id: int | N
         # Unticking the last share must leave an editable menu, not lose the
         # inferred scope/receiver and turn into a refusal or an everyday payment.
         original = settle_up(reading, bills, trip_id=trip_id, names=names,
-                             choices=replace(choices, shares=None), clears_cents=clears_cents)
+                             choices=replace(choices, shares=None), clears_cents=clears_cents,
+                             scope_families=scope_families)
         return replace(original, rows=(), overpaid_cents=amount, parts=(),
                        can_confirm=False, clears_all=False)
-    parts = tuple(SettlePart(p.people or (reading.giver_id,), p.words, p.said)
-                  for p in reading.parts) or (SettlePart((reading.giver_id,), (), ""),)
+    scope = None if choices.everyday else trip_id
+    families = (scope_families or {}).get(scope, {}) if scope is not None else {}
+    members = family_people(reading.giver_id, families)
+    requested_family = reading.family if choices.family is None else choices.family
+    family = requested_family and scope is not None
+    default = members if family else (reading.giver_id,)
+    parts = tuple(SettlePart(p.people or default, p.words, p.said)
+                  for p in reading.parts) or (SettlePart(default, (), ""),)
+    if choices.shares is not None:
+        # Manual shares remain authoritative even when family is toggled off.
+        people = card_people(reading, choices, default)
+        parts = (SettlePart(people, (), ""),)
     concerned = tuple(dict.fromkeys(p for part in parts for p in part.people))
     receiver = choices.receiver_id if choices.receiver_id is not None else reading.receiver_id
     if receiver == reading.giver_id:
@@ -418,7 +488,13 @@ def settle_up(reading: SettleReading, bills: Sequence[Bill], *, trip_id: int | N
     scope = None if choices.everyday else trip_id
     base = tuple(b for b in bills if choices.everyday and b.trip_id is None
                  or not choices.everyday and (trip_id is None or b.trip_id == trip_id))
-    base = _owing(base, concerned)
+    scope_defaults = None
+    if trip_id is None and not choices.everyday and requested_family and choices.shares is None:
+        scope_defaults = {sid: family_people(reading.giver_id, group)
+                          for sid, group in (scope_families or {}).items() if sid is not None}
+        scope_defaults[None] = (reading.giver_id,)
+    discovery_people = tuple(p for group in (scope_defaults or {}).values() for p in group)
+    base = _owing(base, (*concerned, *discovery_people))
 
     def currency_filter(candidates):
         """Keep the bills in the currency that this payback is about.
@@ -447,6 +523,11 @@ def settle_up(reading: SettleReading, bills: Sequence[Bill], *, trip_id: int | N
         return matching or candidates
 
     def discover(candidates):
+        """Find explicit ticks, using each scope's family before the scope is known."""
+        if scope_defaults is not None:
+            raw_parts = reading.parts or (SettlePart((), (), ""),)
+            return _walk(raw_parts, candidates, amount, choices, names, paid=reading.currency,
+                         scope_defaults=scope_defaults)[3]
         return _walk(parts, candidates, amount, choices, names, paid=reading.currency)[3]
 
     def question(kind, said=None, payer=None, bill_currency=None):
@@ -465,7 +546,8 @@ def settle_up(reading: SettleReading, bills: Sequence[Bill], *, trip_id: int | N
         currency = next(iter(codes)) if len(codes) == 1 else reading.currency
         result = SettleResult(reading.giver_id, receiver, scope, currency,
                               reading.currency or currency, (), amount, (), False, False,
-                              question=kind, question_said=said, question_payer=payer)
+                              question=kind, question_said=said, question_payer=payer,
+                              family=family, family_members=members)
         options = receiver_options(reading, bills, result, choices)
         if payer is not None:
             options = tuple(item for item in options if item[0] == payer)
@@ -488,7 +570,13 @@ def settle_up(reading: SettleReading, bills: Sequence[Bill], *, trip_id: int | N
                 raise SettleRefused("These bills are on a trip and outside it. Send one settle message for each.")
             raise SettleRefused("These bills are on two trips. Send one settle message for each.")
         scope = next(iter(scopes), None)
-        pool = tuple(b for b in pool if b.trip_id == scope)
+        if scope is not None and requested_family:
+            # Words chose a trip for a family settle: replay with that trip in scope, so its
+            # captured family becomes the default people. Only for a family settle: a plain
+            # settle with trip mode off keeps exactly the path it had before (#160 review).
+            return settle_up(reading, bills, trip_id=scope, names=names, choices=choices,
+                             clears_cents=clears_cents, scope_families=scope_families)
+        pool = _owing(tuple(b for b in pool if b.trip_id == scope), concerned)
     candidates = currency_filter(pool)
     ticks = discover(candidates)
     if receiver is not None:
@@ -556,4 +644,4 @@ def settle_up(reading: SettleReading, bills: Sequence[Bill], *, trip_id: int | N
     return SettleResult(reading.giver_id, receiver, scope, currency, paid_currency,
                         rows, left, results, bool(receiver is not None and not options
                         and not needs_rate and not blocked and bool(rows)), cleared and not blocked,
-                        options, needs_rate)
+                        options, needs_rate, family=family, family_members=members)

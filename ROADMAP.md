@@ -27,9 +27,6 @@ is tried on a Neon branch with a fictional trip-sized directory first.
 
 1. Time the bot's screens on a phone, on the deployed bot and the test bot, the day before the
    freeze ([#137](https://github.com/sujayjangam/unified-ledger-pipeline/issues/137)).
-2. Read a settle message that says how the money was paid ("in cash"), ask about the closest
-   bill when the words don't all match, and read "himself" as whoever paid
-   ([#160](https://github.com/sujayjangam/unified-ledger-pipeline/issues/160)).
 
 Later: load a finished trip's hand-kept spreadsheet as real bills, and work out the trip from the
 message itself for costs logged before it starts.
@@ -58,6 +55,14 @@ message itself for costs logged before it starts.
 - Aliases per sender ("dad", "mummy"; see Phase 1 below).
 
 **Recently shipped**, newest first. Each PR and ADR has the full story.
+
+- **2026-11-21: settle wording, the closest bill, and family settle**
+  ([#160](https://github.com/sujayjangam/unified-ledger-pipeline/issues/160),
+  [ADR-0058](docs/decisions/0058-settle-wording-closest-bill-family-settle.md)). "in cash"
+  after the amount was refused, and extra words sent the money to the oldest bills. Now how it
+  was paid is ignored, the closest bill is asked about, "for himself" means the payer, and
+  "Family settle" (typed, or a menu button) pays for the payer's whole family on the trip, with
+  a button on the card to switch. No migration.
 
 - **2026-11-21: a "Change card" button on the expense card**
   ([#161](https://github.com/sujayjangam/unified-ledger-pipeline/issues/161),
@@ -247,7 +252,6 @@ message itself for costs logged before it starts.
 
 **Open top-level issues:**
 [#137](https://github.com/sujayjangam/unified-ledger-pipeline/issues/137) screen speed on a phone (before the freeze) ·
-[#160](https://github.com/sujayjangam/unified-ledger-pipeline/issues/160) settle wording (before the freeze) ·
 [#134](https://github.com/sujayjangam/unified-ledger-pipeline/issues/134) settle-up redesign, with
 [#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113) (PRs 1–3 merged; the `/trip_bals` button after the trip) ·
 [#143](https://github.com/sujayjangam/unified-ledger-pipeline/issues/143) bot screens hard to scan (after the trip) ·

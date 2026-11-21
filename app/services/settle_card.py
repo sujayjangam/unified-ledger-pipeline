@@ -16,7 +16,8 @@ def settle_card_state(card: dict) -> dict:
     reading, bills = card['reading'], card['bills']
     choices = card.get('choices', SettleChoices())
     result = settle_up(reading, bills, trip_id=card['trip_id'], names=card['names'],
-                       choices=choices, clears_cents=card.get('clears_cents'))
+                       choices=choices, clears_cents=card.get('clears_cents'),
+                       scope_families=card.get('scope_families'))
     shares = bill_share_options(reading, bills, result, choices)
     changed.update(result=result, choices=choices,
                    share_options=shares,
@@ -121,7 +122,9 @@ def build_settle_card(card: dict) -> tuple[str, list[list[tuple[str, str]]]]:
                 for i, (p, cents) in enumerate(card['receiver_options'])]
         return f"Who got {giver}'s {paid}?", rows + [back]
 
-    lines = [f'🤝 Settle up · {scope}']
+    lines = [f'{"👪 Family settle" if result.family else "🤝 Settle up"} · {scope}']
+    if result.trip_id is None and (reading.family if choices.family is None else choices.family):
+        lines.append(f"⚠️ Families are only on a trip: only {giver}'s shares.")
     head, bill_lines = None, []  # set on the bill card, where the text can grow long
     if result.receiver_options:
         if result.question == 'owes_nothing':
@@ -154,7 +157,8 @@ def build_settle_card(card: dict) -> tuple[str, list[list[tuple[str, str]]]]:
             cents = allocated.get((bid, person), 0)
             state = ('cleared' if cents == owed else
                      f'{format_money(cents, currency)} paid, {format_money(owed - cents, currency)} still owed')
-            behalf = f" (paid on {names[person]}'s behalf)" if person != result.giver_id else ''
+            behalf = (f" (paid on {names[person]}'s behalf)"
+                      if person != result.giver_id and person not in result.family_members else '')
             lines.append(f" • {title}: {names[person]}'s share {format_money(owed, currency)}, {state}{behalf}")
         bill_lines, lines = lines, []
         if result.clears_all:
@@ -189,6 +193,9 @@ def build_settle_card(card: dict) -> tuple[str, list[list[tuple[str, str]]]]:
                 confirm = ('⚠️ Confirm overpayment' if result.overpaid_cents else '⚠️ Confirm') + f' in {result.paid_currency}'
             rows.append(([(confirm, 'su:confirm')] if result.can_confirm else []) + cancel)
             rows.append([('Change bills', 'su:bills'), ('Change who paid', 'su:giver'), ('Change receiver', 'su:receivers')])
+            if result.trip_id is not None and len(result.family_members) > 1:
+                label = f"👤 Only {giver}'s shares" if result.family else '👪 Whole family'
+                rows.append([(label, 'su:family')])
             if foreign:
                 rows.append([('Change amount cleared', 'su:amount')])
     if head is not None:

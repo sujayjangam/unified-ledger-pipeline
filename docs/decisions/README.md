@@ -65,6 +65,7 @@ supersedes the old one rather than editing history.
 | [0055](0055-between-list-read-by-python-first.md) | A "between" list is read by Python first | Accepted | 2026-11-21 |
 | [0056](0056-trip-bals-one-currency-per-screen.md) | `/trip_bals` shows one currency per screen, with payments and paybacks behind buttons | Accepted | 2026-11-21 |
 | [0057](0057-change-card-button.md) | A "Change card" button picks the account on the card, and becomes the account a payer tap starts from | Accepted | 2026-11-21 |
+| [0058](0058-settle-wording-closest-bill-family-settle.md) | A settle message ignores how it was paid, asks about the closest bill, and "family settle" pays the whole family | Accepted | 2026-11-21 |
 
 ## Writing a new one
 

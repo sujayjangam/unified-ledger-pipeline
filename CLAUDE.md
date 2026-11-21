@@ -263,8 +263,17 @@ Env vars (`.env.example` shows the format):
   never as "nobody owes anything". A split entry still with no payer after the fallback (account owner, else sender) is left out with a ⚠️ line,
   never guessed. A trip id from a button is loaded only through `member_trip`. The reply is
   plain text with no `parse_mode`.
-- A message whose first word is "settle" is a payback, read by `app/services/settle.py` with
-  no model ([ADR-0052](docs/decisions/0052-settle-up-by-typed-message.md)). The check is the
+- A message whose first word is "settle" (or first words "family settle") is a payback, read
+  by `app/services/settle.py` with no model
+  ([ADR-0052](docs/decisions/0052-settle-up-by-typed-message.md),
+  [ADR-0058](docs/decisions/0058-settle-wording-closest-bill-family-settle.md)). How it was
+  paid is dropped only from the fixed `PAYMENT_METHODS` list, never a span naming a known
+  person; anything else is still refused. With no full or amount-backed match, the bills sharing
+  the most words are a "❓ Did you mean" question, never a silent pick. A family settle's
+  default people come from `scope_families` in the card snapshot, never the database; on
+  everyday bills it is the giver alone, with a ⚠️ line. A reply to the "🤝 Settle" or
+  "👪 Family settle" menu prompt is recognised by the prompt's fixed first line (stateless, so
+  a restart can't send it to the model), and the prompt decides the kind. The check is the
   first line of `process_expense_text`, so a settle message never reaches extraction. The
   settle card (`app/services/settle_card.py`, callback prefix `su:`) follows the card rules:
   card lock, answer once, toast only on resolved cards, redraw from a copy. Every tap reruns
