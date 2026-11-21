@@ -102,6 +102,6 @@ def test_settle_examples_use_the_python_reader():
     from app.services.settle import read_settle
 
     examples = [line.removeprefix('• ') for line in TOPICS['settle'][1].splitlines() if line.startswith('• ')]
-    assert len(examples) == 3
+    assert len(examples) == 4  # the three settle wordings and one family settle (ADR-0058)
     for example in examples:
         assert read_settle(example, PEOPLE, PEOPLE[0], FAMILIES).cents > 0

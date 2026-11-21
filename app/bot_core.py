@@ -660,8 +660,13 @@ MENU_TODAY = "Today"
 MENU_WEEK = "This week"
 MENU_MONTH = "This month"
 MENU_CATEGORIES = "📊 By category"
+MENU_SETTLE = '🤝 Settle'
+MENU_FAMILY_SETTLE = '👪 Family settle'
+SETTLE_PROMPT = '🤝 Settle: who paid, how much, what for?'
+FAMILY_SETTLE_PROMPT = '👪 Family settle: who paid, how much, what for?'
 MENU_ROWS = (
     (MENU_WHO_OWES, MENU_TRIP),
+    (MENU_SETTLE, MENU_FAMILY_SETTLE),
     (MENU_RECENT, MENU_HELP),
     (MENU_TODAY, MENU_WEEK, MENU_MONTH),
     (MENU_CATEGORIES,),
@@ -686,6 +691,8 @@ def _menu_command(text: str | None):
     actions = {
         MENU_WHO_OWES: trip_bals_command,
         MENU_TRIP: trip_command,
+        MENU_SETTLE: settle_command,
+        MENU_FAMILY_SETTLE: family_settle_command,
         MENU_RECENT: recent_command,
         MENU_HELP: help_command,
         MENU_TODAY: today_command,
@@ -694,6 +701,24 @@ def _menu_command(text: str | None):
         MENU_CATEGORIES: category_menu,
     }
     return actions.get(text)
+
+
+async def _settle_menu_prompt(update, context, first_line):
+    """Authorize before opening a stateless settle reply prompt."""
+    if await authorize(update) is None:
+        return
+    await update.message.reply_text(first_line + '\ne.g. Carol paid 381 for dinner',
+                                    reply_markup=ForceReply(selective=True))
+
+
+async def settle_command(update, context):
+    """Ask for an ordinary settle message from the button menu."""
+    await _settle_menu_prompt(update, context, SETTLE_PROMPT)
+
+
+async def family_settle_command(update, context):
+    """Ask for a family settle message from the button menu."""
+    await _settle_menu_prompt(update, context, FAMILY_SETTLE_PROMPT)
 
 
 async def register_commands(bot):
@@ -1848,6 +1873,8 @@ def _load_settle_snapshot(sender, directory):
                 scope_labels={None: 'Everyday', **{t.id: t.name for t in trips}},
                 scope_people={None: tuple(p.id for p in directory.participants),
                               **{t.id: t.member_ids for t in trips}},
+                scope_families={t.id: {p: label for p, label in dict(t.families).items()
+                                      if p in t.member_ids} for t in trips},
                 names={p.id: p.display_name for p in directory.participants},
                 people=tuple(p.id for p in people)), people, dict(active.families) if active else {}
 
@@ -2045,6 +2072,8 @@ async def handle_settle_up_button(update: Update, context: ContextTypes.DEFAULT_
                     changed['bills_page'] = 0
             elif action == 'everyday':
                 changed['choices'] = replace(choices, everyday=True, shares=None)
+            elif action == 'family':
+                changed['choices'] = replace(choices, family=not card['result'].family)
             else:
                 index = int(query.data.split(':')[2])
                 if action == 'receiver':
@@ -2586,6 +2615,25 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     directory = await authorize(update)
     if directory is None:
+        return
+    replied = update.message.reply_to_message
+    # Recognize the bot's exact first line, not remembered prompt ids: a restart
+    # must never turn a forgotten settle reply into an extracted expense.
+    first_line = (replied.text or '').split('\n', 1)[0] if replied else None
+    prefixes = {SETTLE_PROMPT: 'Settle ', FAMILY_SETTLE_PROMPT: 'Family settle '}
+    if (replied and replied.from_user and replied.from_user.id == context.bot.id
+            and first_line in prefixes):
+        # The prompt decides the kind: a reply that starts with its own "settle" or "family
+        # settle" has that word dropped first, so "Settle Carol paid 381" sent to the 👪 prompt
+        # is still a family settle (the card's toggle can switch it back).
+        body = re.sub(r"^\s*(?:family\s+)?settle\b[\s,.:;!?—-]*", "", update.message.text, flags=re.I)
+        text = prefixes[first_line] + body
+        status_msg = await update.message.reply_text('Reading settle...')
+        await process_expense_text(update, context, text, status_msg, directory)
+        try:
+            await replied.delete()
+        except Exception as exc:
+            print(f'Could not delete settle menu prompt: {exc}')
         return
     # Authorize first (every message, fail closed), then check whether this text is a reply
     # to a payback amount prompt. Such a reply is never an expense, so it stops here.

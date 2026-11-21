@@ -20,6 +20,8 @@ TOPICS = {
         '• Settle Carol paid 381\n'
         '• Settle Carol paid 381 for saree pleating and for Erin airbnb\n'
         '• Settle Erin paid 100 SGD for diwali deco\n\n'
+        '"Family settle" pays for the payer\'s whole family on the trip:\n\n'
+        '• Family settle Carol paid 381\n\n'
         "No bill named: it pays the oldest bills first. Paid in another currency? "
         "It's converted at a reference rate; check it against the statement later."
     )),

@@ -191,7 +191,11 @@ the options turned down, and what it cost. The ones that shaped the system most:
   pleating") is read in Python, never by the model, and shows a card of the bills it pays off,
   each share cleared or still owed, before anything is saved. With no bill named it pays the
   oldest bills first; "Did you mean", Change bills, Change who paid and Change receiver fix a
-  wrong guess. Each payback records which bill shares it cleared. A payback in another
+  wrong guess. How it was paid ("in cash", "by PayNow") is ignored, and when no bill has every
+  word, the bills sharing the most words are asked about. "Family settle" pays for the payer's
+  whole family on the trip, and a button on the card switches between family and single; the
+  button menu has "Settle" and "Family settle", each asking for the payment
+  ([ADR-0058](docs/decisions/0058-settle-wording-closest-bill-family-settle.md)). Each payback records which bill shares it cleared. A payback in another
   currency is converted at a reference rate (Frankfurter; only the two currency codes and a
   date are sent) and flagged to check against the statement. Confirming a payback on a trip
   also sends a fresh `/trip_bals` below the card

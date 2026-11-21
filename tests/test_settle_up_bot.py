@@ -13,6 +13,7 @@ from app.services.trips import Trip
 from test_bot_core import ALICE, _context, _status_msg, _update
 from test_settle import PEOPLE, FAMILIES, bill
 from test_settle_card import card
+from test_settle_words import family_card
 from test_settlements import tap
 
 TODAY = date(2026, 11, 19)
@@ -57,6 +58,129 @@ def pending(context):
 def snapshot():
     value = card()
     return {k: value[k] for k in ('bills', 'trip_id', 'scope_labels', 'names', 'people')}, PEOPLE, FAMILIES
+
+
+async def test_family_toggle_and_new_giver_use_only_snapshot(flow):
+    """Every family redraw answers once and replays captured membership, without reads."""
+    put(flow, family_card())
+    await click(flow, 'su:family')
+    assert not pending(flow)['result'].family
+    assert tuple(r.for_id for r in pending(flow)['result'].rows) == (3,)
+    await click(flow, 'su:family')
+    assert tuple(r.for_id for r in pending(flow)['result'].rows) == (3, 4)
+    await click(flow, 'su:giver')
+    index = pending(flow)['giver_options'].index(5)
+    await click(flow, f'su:person:{index}')
+    assert tuple(r.for_id for r in pending(flow)['result'].rows) == (5, 6)
+    bot._load_directory.assert_not_called()
+    bot._load_bals_trip.assert_not_called()
+
+
+async def test_family_failed_redraw_does_not_mutate(flow):
+    """A failed Telegram edit leaves both family mode and allocations untouched."""
+    original = put(flow, family_card())
+    update, query = tap('su:family')
+    query.edit_message_text.side_effect = RuntimeError('offline')
+    await bot.handle_settle_up_button(update, flow)
+    assert pending(flow) is original and pending(flow)['result'].family
+    query.answer.assert_awaited_once()
+
+
+@pytest.mark.parametrize('family', [False, True])
+@pytest.mark.parametrize('already_prefixed', [False, True])
+async def test_settle_menu_reply_survives_restart(flow, monkeypatch, family, already_prefixed):
+    """Exact bot prompt lines work with empty state; only the prompt is deleted."""
+    monkeypatch.setattr(bot, 'authorize', AsyncMock(return_value=DIRECTORY))
+    value = family_card()
+    snap = {k: value[k] for k in ('bills', 'trip_id', 'scope_labels', 'names', 'people', 'scope_families')}
+    monkeypatch.setattr(bot, '_load_settle_snapshot', lambda *_: (snap, PEOPLE, FAMILIES))
+    flow.user_data.clear()
+    prefix = 'Family settle ' if family else 'Settle '
+    update = _update(ALICE, (prefix if already_prefixed else '') + 'Carol paid 500 for white rock')
+    prompt = update.message.reply_to_message
+    prompt.text = (bot.FAMILY_SETTLE_PROMPT if family else bot.SETTLE_PROMPT) + '\ne.g. Carol paid 381 for dinner'
+    prompt.from_user.id = flow.bot.id
+    prompt.delete = AsyncMock()
+    update.message.delete = AsyncMock()
+    update.message.reply_text.return_value = _status_msg()
+    await bot.handle_text(update, flow)
+    value = flow.user_data['pending_settle_ups'][500]
+    assert value['reading'].family is family
+    assert tuple(r.for_id for r in value['result'].rows) == ((3, 4) if family else (3,))
+    prompt.delete.assert_awaited_once()
+    update.message.delete.assert_not_awaited()
+    bot.extract_transactions.assert_not_awaited()
+
+
+@pytest.mark.parametrize('family, said', [(True, 'Settle '), (False, 'Family settle ')])
+async def test_the_prompt_decides_the_kind_over_the_replys_own_word(flow, monkeypatch, family, said):
+    """A reply that starts with the other kind's word is read as the prompt's kind."""
+    monkeypatch.setattr(bot, 'authorize', AsyncMock(return_value=DIRECTORY))
+    value = family_card()
+    snap = {k: value[k] for k in ('bills', 'trip_id', 'scope_labels', 'names', 'people', 'scope_families')}
+    monkeypatch.setattr(bot, '_load_settle_snapshot', lambda *_: (snap, PEOPLE, FAMILIES))
+    flow.user_data.clear()
+    update = _update(ALICE, said + 'Carol paid 500 for white rock')
+    prompt = update.message.reply_to_message
+    prompt.text = (bot.FAMILY_SETTLE_PROMPT if family else bot.SETTLE_PROMPT) + '\ne.g. Carol paid 381 for dinner'
+    prompt.from_user.id = flow.bot.id
+    prompt.delete = AsyncMock()
+    update.message.reply_text.return_value = _status_msg()
+    await bot.handle_text(update, flow)
+    assert flow.user_data['pending_settle_ups'][500]['reading'].family is family
+
+
+@pytest.mark.parametrize('first_line,own_bot', [('Other prompt', True), (bot.SETTLE_PROMPT, False)])
+async def test_other_prompt_is_not_a_settle(flow, monkeypatch, first_line, own_bot):
+    """Neither another bot's prompt nor unrelated first lines imply a settle."""
+    monkeypatch.setattr(bot, 'authorize', AsyncMock(return_value=DIRECTORY))
+    process = AsyncMock()
+    monkeypatch.setattr(bot, 'process_expense_text', process)
+    update = _update(ALICE, 'Carol paid 381 for dinner')
+    update.message.reply_to_message.text = first_line
+    update.message.reply_to_message.from_user.id = flow.bot.id if own_bot else 999
+    await bot.handle_text(update, flow)
+    assert process.await_args.args[2] == update.message.text
+
+
+async def test_family_typed_message_never_extracts(flow, monkeypatch):
+    """The first process-expense check catches family settles, including refusals."""
+    monkeypatch.setattr(bot, '_load_settle_snapshot', lambda *_: snapshot())
+    status = _status_msg()
+    await bot.process_expense_text(_update(ALICE), flow, 'Family settle Carol paid 381', status, DIRECTORY)
+    assert flow.user_data['pending_settle_ups'][500]['reading'].family
+    await bot.process_expense_text(_update(ALICE), flow, 'Family settle nonsense', status, DIRECTORY)
+    assert status.edit_text.await_args.args[0].startswith('Settle needs')
+    bot.extract_transactions.assert_not_awaited()
+
+
+async def test_menu_reply_refusal_and_failed_prompt_delete(flow, monkeypatch, capsys):
+    """A refusal stays a settle, and a failed prompt deletion only logs the failure."""
+    monkeypatch.setattr(bot, 'authorize', AsyncMock(return_value=DIRECTORY))
+    monkeypatch.setattr(bot, '_load_settle_snapshot', lambda *_: snapshot())
+    update = _update(ALICE, 'nonsense')
+    prompt = update.message.reply_to_message
+    prompt.text = bot.FAMILY_SETTLE_PROMPT
+    prompt.from_user.id = flow.bot.id
+    prompt.delete = AsyncMock(side_effect=RuntimeError('cannot delete'))
+    update.message.delete = AsyncMock()
+    status = _status_msg()
+    update.message.reply_text.return_value = status
+    await bot.handle_text(update, flow)
+    assert status.edit_text.await_args.args[0].startswith('Settle needs')
+    assert 'Could not delete settle menu prompt' in capsys.readouterr().out
+    update.message.delete.assert_not_awaited()
+    bot.extract_transactions.assert_not_awaited()
+
+
+def test_snapshot_captures_each_trips_families(monkeypatch):
+    """Inactive trip families are copied by scope and restricted to actual members."""
+    other = replace(BEACH, id=11, member_ids=(1, 3, 5), families=((3, 'Ng'), (5, 'Ng'), (6, 'Ng')))
+    monkeypatch.setattr(bot, '_load_bals_trip', lambda _, tid: {10: BEACH, 11: other}.get(tid))
+    monkeypatch.setattr(bot, '_load_bals_choices', lambda *_: ([BEACH, other], False))
+    monkeypatch.setattr(bot, '_load_settle_bills', lambda *_: ())
+    snap, _, _ = bot._load_settle_snapshot(PEOPLE[0], DIRECTORY)
+    assert snap['scope_families'] == {10: FAMILIES, 11: {3: 'Ng', 5: 'Ng'}}
 
 
 @pytest.mark.parametrize('voice', [False, True])
