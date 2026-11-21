@@ -59,25 +59,12 @@ async def test_command_shows_the_active_trip_straight_away(bals):
     bals["_load_bals_choices"].assert_not_called()
     reply = update.effective_message.reply_text.await_args
     assert reply.args[0] == "\n".join([
-        "🧳 Beach_Trip · 1–7 Dec",
-        "",
-        "AUD",
-        "Lee family owes 30.00",
-        "    Carol owes 30.00",
-        # The family is owed only Carol's 30.00, but Bob still owes Alice his share: debts
-        # go to the person who paid, not to their family.
-        "Tan family is owed 30.00",
-        "    Alice is owed 60.00",
-        "    Bob owes 30.00",
-        "To settle:",
-        "1. Lee family pays Alice 30.00",
-        "2. Bob pays Alice 30.00",
-    ])
-    # Plain text: the _ in the trip's name needs no escaping and can't break the message.
+        "🧳 Beach_Trip · 1–7 Dec", "AUD", "", "Lee family owes AUD 30.00",
+        "Tan family is owed AUD 30.00", "", "2 payments to settle"])
     assert "parse_mode" not in reply.kwargs
-    assert _buttons(reply.kwargs["reply_markup"]) == {"Mark paid 1": "settle:new:7:1:3000",
-                                                       "Mark paid 2": "settle:new:7:2:3000",
-                                                       "Other trip": "bals:page:0"}
+    assert _buttons(reply.kwargs["reply_markup"]) == {
+        "All payments (2)": "bals:pay:7:AUD", "Other trip": "bals:page:0"}
+
 
 
 async def test_command_with_trip_mode_off_shows_a_picker(bals):
@@ -145,8 +132,8 @@ async def test_tapping_a_trip_shows_its_balances_and_answers_once(bals):
     query.answer.assert_awaited_once_with(None)
     text = query.edit_message_text.await_args.args[0]
     # With no families, every person is their own line.
-    assert "Alice is owed 60.00" in text and "Bob owes 30.00" in text and "Carol owes 30.00" in text
-    assert "1. Bob pays Alice 30.00" in text and "2. Carol pays Alice 30.00" in text
+    assert "Alice is owed AUD 60.00" in text and "Bob owes AUD 30.00" in text and "Carol owes AUD 30.00" in text
+    assert "2 payments to settle" in text and " pays " not in text
 
 
 async def test_tapping_a_trip_you_are_not_on_toasts_and_shows_the_picker(bals):
@@ -224,26 +211,14 @@ def test_bals_loader_reads_trip_and_families_in_one_connection(monkeypatch):
     assert bot_core._load_bals_trip(1, 99) is None
 
 
-async def test_a_report_too_long_for_one_message_is_shortened_not_lost(bals):
-    # Many currencies make the full report longer than Telegram allows in one message.
-    currencies = [a + b + "D" for a in "ABCDEFGHIJ" for b in "ABCDEFGHIJKLMNOPQRST"]
+async def test_a_report_too_long_for_one_message_is_shortened_not_lost(bals, monkeypatch):
     bals["_load_bals_trip"].return_value = BEACH
-    bals["get_trip_split_entries"].return_value = [dict(ENTRIES[0], currency=c) for c in currencies[:30]]
+    monkeypatch.setattr(bot_core, 'TELEGRAM_MESSAGE_LIMIT', 90)
     update = _update(ALICE)
     await bot_core.trip_bals_command(update, _context())
     text = update.effective_message.reply_text.await_args.args[0]
-    # Families only: every currency and payment is still there, the people under a family aren't.
-    assert len(text) <= bot_core.TELEGRAM_MESSAGE_LIMIT and bot_core.BALS_FAMILIES_ONLY in text
-    # Alice is still named in each payment; only the indented line under her family is gone.
-    assert text.count("Lee family pays Alice 30.00") == 30 and "    Alice" not in text
-
-    # Even the short form is too long: whole lines from the top, and a plain note that it was cut.
-    bals["get_trip_split_entries"].return_value = [dict(ENTRIES[0], currency=c) for c in currencies]
-    update = _update(ALICE)
-    await bot_core.trip_bals_command(update, _context())
-    text = update.effective_message.reply_text.await_args.args[0]
-    assert len(text) <= bot_core.TELEGRAM_MESSAGE_LIMIT and text.endswith(bot_core.BALS_CUT_SHORT)
-    assert text.startswith("\U0001f9f3 Beach_Trip")
+    assert len(text) <= 90 and text.endswith(bot_core.BALS_CUT_SHORT)
+    assert text.startswith("🧳 Beach_Trip")
 
 
 async def test_simplified_report_notes_and_mark_paid_buttons(bals, monkeypatch, directory):
@@ -258,13 +233,15 @@ async def test_simplified_report_notes_and_mark_paid_buttons(bals, monkeypatch, 
     bals['get_trip_split_entries'].return_value = [
         dict(currency='AUD', paid_by=1, splits={2: 6000, 3: 22500, 4: 22500}),
         dict(currency='AUD', paid_by=2, splits={3: 16500, 4: 16500})]
-    update = _update(ALICE)
-    await bot_core.trip_bals_command(update, _context())
-    reply = update.effective_message.reply_text.await_args
-    assert reply.args[0].split('To settle:')[1] == (
-        '\n1. Tan family pays Alice 510.00\n2. Tan family pays Bob 270.00\n'
-        '💡 Tan family pays Alice the 60.00 Bob owes, and pays Bob 60.00 less.')
+    update, query = _tap('bals:pay:7:AUD')
+    await bot_core.handle_bals_button(update, _context())
+    reply = query.edit_message_text.await_args
+    assert reply.args[0] == (
+        '🧳 Beach_Trip · AUD · to settle\n'
+        'Tan family pays Alice AUD 510.00\nTan family pays Bob AUD 270.00\n'
+        '💡 Tan family pays Alice the AUD 60.00 Bob owes, and pays Bob AUD 60.00 less.')
     assert 'parse_mode' not in reply.kwargs
     assert _buttons(reply.kwargs['reply_markup']) == {
-        'Mark paid 1': 'settle:new:7:1:51000', 'Mark paid 2': 'settle:new:7:2:27000',
-        'Other trip': 'bals:page:0'}
+        '✅ Tan family → Alice · AUD 510.00': 'settle:new:7:1:51000',
+        '✅ Tan family → Bob · AUD 270.00': 'settle:new:7:2:27000',
+        '⬅ Back': 'bals:cur:7:AUD'}

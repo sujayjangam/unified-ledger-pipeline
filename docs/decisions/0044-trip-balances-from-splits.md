@@ -1,6 +1,6 @@
 # ADR-0044: Trip balances worked out from the splits, and totals stay "what was paid"
 
-**Status:** Accepted; the in-family cancel superseded by [ADR-0051](0051-debts-per-person-then-families.md)
+**Status:** Accepted; the in-family cancel superseded by [ADR-0051](0051-debts-per-person-then-families.md), the report's layout and its shortening by [ADR-0056](0056-trip-bals-one-currency-per-screen.md)
 **Date:** 2026-11-17
 **Plan:** `docs/superpowers/plans/2026-11-16-splits.md` (step 4 of group-trip splitting in `ROADMAP.md`)
 **Code:** `app/services/balances.py`, `app/services/ledger_queries.py::get_trip_split_entries`, `app/services/trips.py::member_trip`, `app/bot_core.py::trip_bals_command`, `app/bot_core.py::handle_bals_button`

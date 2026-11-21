@@ -207,7 +207,15 @@ Env vars (`.env.example` shows the format):
   "Deleted" message until it is redrawn. Any household member may delete any entry. Plain
   text, no `parse_mode`. A failed read is an error, never "no entries".
 - `/trip_bals` ([ADR-0044](docs/decisions/0044-trip-balances-from-splits.md)) reads bills and
-  settlements. Its numbered "Mark paid" buttons open separate payback cards (ADR-0046), saved
+  settlements. It shows one currency per screen
+  ([ADR-0056](docs/decisions/0056-trip-bals-one-currency-per-screen.md)): a main screen of one
+  line per family, with currency buttons, then "All payments" and "View paybacks" screens, all
+  read fresh on every tap. A "Mark paid" button names its payment, and its callback keeps the
+  payment's number in the whole `trip_payments` list, so payback cards and older reports work
+  unchanged. "Paid on someone else's behalf" uses only what `_pay_back` really took off each debt
+  (never the gross share, never money owed back to the giver), takes an offset row off the
+  middle person, and never lists a giver's own family; it is read-only and
+  never a debt. The "Mark paid" buttons open separate payback cards (ADR-0046), saved
   only on Confirm. Payback taps use the directory snapshot kept with the report or card,
   never reload it; new cards recheck trip membership and the suggested amount. Amount replies
   are parsed in Python before expense extraction, and use a separate pending-card map.
@@ -226,7 +234,8 @@ Env vars (`.env.example` shows the format):
   owes C, U owes P and already owes C: U pays C, and P that much less). Never a new pair, and
   never a loop through a family, which would move money between relatives' own totals. Fewest
   payments are found by a bounded search (`SIMPLIFY_BUDGET`, sized by measurement; a bigger
-  one made `/trip_bals` take seconds). Each visible shortcut gets a 💡 line. Never net two
+  one made `/trip_bals` take seconds). Each visible shortcut gets a 💡 line, on the same screen
+  as its payment. Never net two
   families' debts to different people any other way. Each person's total never changes. A payback pays down one
   line, the beneficiary's own debt first; excess is owed back to whoever handed over the money.
   When someone outside the owing family pays, the beneficiary is its lowest-id member, on a

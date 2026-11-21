@@ -51,7 +51,7 @@ supersedes the old one rather than editing history.
 | [0041](0041-split-menu-and-wider-people-menus.md) | The split menu, and people menus that offer every participant when no trip is on | Accepted | 2026-11-16 |
 | [0042](0042-uneven-shares-by-count.md) | Uneven shares by a count per person, read by the model and checked in Python | Accepted (edited 2026-11-18) | 2026-11-16 |
 | [0043](0043-everyday-groups-for-the-split-menu.md) | Everyday groups for the split menu, and no relationships between people | Accepted | 2026-11-17 |
-| [0044](0044-trip-balances-from-splits.md) | Trip balances worked out from the splits, and totals stay "what was paid" | Partly superseded by [0051](0051-debts-per-person-then-families.md) | 2026-11-17 |
+| [0044](0044-trip-balances-from-splits.md) | Trip balances worked out from the splits, and totals stay "what was paid" | Partly superseded by [0051](0051-debts-per-person-then-families.md), [0056](0056-trip-bals-one-currency-per-screen.md) | 2026-11-17 |
 | [0045](0045-family-labels-the-rest-and-stricter-wording.md) | Family labels, "the rest", and stricter wording over a model double-check | Accepted | 2026-11-17 |
 | [0046](0046-settlements-as-their-own-records.md) | Paybacks are their own records, and can be in a different currency | Partly superseded by [0052](0052-settle-up-by-typed-message.md), [0053](0053-other-currency-paybacks-at-a-reference-rate.md) | 2026-11-17 |
 | [0047](0047-pay-back-only-who-you-owe.md) | Pay back only who you owe, and paying on someone's behalf | Partly superseded by [0051](0051-debts-per-person-then-families.md) | 2026-11-17 |
@@ -63,6 +63,7 @@ supersedes the old one rather than editing history.
 | [0053](0053-other-currency-paybacks-at-a-reference-rate.md) | A payback in another currency is converted at a reference rate, then checked against the statement | Accepted | 2026-11-19 |
 | [0054](0054-paid-for-someone-means-they-owe.md) | A cost paid "for" someone means they owe it | Accepted | 2026-11-21 |
 | [0055](0055-between-list-read-by-python-first.md) | A "between" list is read by Python first | Accepted | 2026-11-21 |
+| [0056](0056-trip-bals-one-currency-per-screen.md) | `/trip_bals` shows one currency per screen, with payments and paybacks behind buttons | Accepted | 2026-11-21 |
 
 ## Writing a new one
 

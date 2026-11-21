@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import tempfile
 import time
+import re
 from app.add_expense import add_expense, dollars_to_cents, format_cents
 from app.services.utils import get_sgt_now, get_week_start, get_month_start
 from app.services.ledger_queries import (
@@ -39,6 +40,7 @@ from app.services.trips import (
 )
 from app.services.balances import (
     trip_balance_lines, trip_payments, unit_of, open_bill_shares, line_parts, payment_rows,
+    balance_currencies, default_balance_currency, trip_payment_lines, trip_payback_lines, payment_button_label,
 )
 from app.services.settlements import (
     add_settlement, is_overpayment, settlement_card_text, change_settlement_amount, parse_settlement_amount,
@@ -852,7 +854,6 @@ BALS_NOT_MEMBER = "You're not on that trip."
 # Telegram refuses a message longer than this, and a refused reply would look like a dead
 # command. So a long report is shortened here rather than sent and lost.
 TELEGRAM_MESSAGE_LIMIT = 4096
-BALS_FAMILIES_ONLY = "(Too long to list who is owed under each family, so totals and payments only.)"
 BALS_CUT_SHORT = "… (Too long to show in full.)"
 
 
@@ -897,40 +898,80 @@ def _bals_picker(choices, offset: int, more: bool, today):
     return "Which trip's balances?", InlineKeyboardMarkup(rows)
 
 
-def _bals_screen(trip: Trip, directory: Directory, today):
-    """The balances message for one trip, and the button under it.
+def _cut_bals_lines(lines):
+    """Keep a prefix of whole lines, reserving space for the truncation notice."""
+    if len('\n'.join(lines)) <= TELEGRAM_MESSAGE_LIMIT:
+        return lines, len(lines)
+    kept = []
+    size = len(BALS_CUT_SHORT)
+    for line in lines:
+        if size + len(line) + 1 > TELEGRAM_MESSAGE_LIMIT:
+            break
+        kept.append(line)
+        size += len(line) + 1
+    return kept + [BALS_CUT_SHORT], len(kept)
+
+
+def _bals_screen(trip: Trip, directory: Directory, today, currency=None, screen='cur'):
+    """One screen of a trip's balances, for one currency: 'cur' (the main screen), 'pay'
+    (all payments, with their "Mark paid" buttons) or 'pbk' (paybacks). ADR-0056.
 
     Sent as plain text (no parse_mode), so a name with _ or * can't break it and it can be
-    forwarded as it is. get_trip_split_entries catches its own errors and returns None for a
-    failed read, which is shown as an error and never as "nobody owes anything".
+    forwarded as it is. Bills and paybacks are read fresh on every draw.
+    get_trip_split_entries catches its own errors and returns None for a failed read, which
+    is shown as an error and never as "nobody owes anything".
+
+    The "Mark paid" callback keeps the payment's number in the whole trip_payments list (all
+    currencies), so _new_settlement and buttons on older reports work unchanged.
     """
     header = f"🧳 {trip.name} · {format_trip_dates(trip, today)}"
     entries = get_trip_split_entries(trip.id)
     settlements = get_trip_settlements(trip.id)
-    payments = []
+    other = [InlineKeyboardButton("Other trip", callback_data="bals:page:0")]
     if entries is None or settlements is None:
-        body = [BALS_ERROR]
+        lines, _ = _cut_bals_lines([header, '', BALS_ERROR])
+        return '\n'.join(lines), InlineKeyboardMarkup([other])
+    names = {person.id: person.display_name for person in directory.participants}
+    families = dict(trip.families)
+    payments = trip_payments(entries, families, settlements)
+    currencies = balance_currencies(entries, settlements, payments)
+    if currency not in currencies:
+        # A stale currency button returns to a useful main screen, even from a detail view.
+        currency, screen = default_balance_currency(currencies, payments), 'cur'
+    selected = [(n, p) for n, (c, p) in enumerate(payments, 1) if c == currency]
+    rows = []
+    if screen == 'pay':
+        lines = [f"🧳 {trip.name} · {currency} · to settle",
+                 *trip_payment_lines(entries, names, families, currency, settlements)]
+        lines, kept = _cut_bals_lines(lines)
+        # The first body lines correspond one-to-one to selected payments. Position,
+        # rather than matching text, keeps cut or duplicate names from enabling a button.
+        rows = [[InlineKeyboardButton(payment_button_label(p, currency, names),
+                                      callback_data=f"settle:new:{trip.id}:{n}:{p.cents}")]
+                for n, p in selected[:max(0, kept - 1)]][:99]
+    elif screen == 'pbk':
+        lines, _ = _cut_bals_lines([f"🧳 {trip.name} · {currency} · paybacks",
+                                   *trip_payback_lines(entries, names, families, currency, settlements)])
     else:
-        names = {person.id: person.display_name for person in directory.participants}
-        body = trip_balance_lines(entries, names, dict(trip.families), settlements=settlements)
-        payments = trip_payments(entries, dict(trip.families), settlements)
-    text = "\n".join([header, "", *body])
-    if len(text) > TELEGRAM_MESSAGE_LIMIT:
-        # First try the shorter form: every family and every payment, without the people
-        # under each family. Nothing that decides who pays whom is lost.
-        body = trip_balance_lines(entries, names, dict(trip.families), show_members=False, settlements=settlements)
-        text = "\n".join([header, BALS_FAMILIES_ONLY, "", *body])
-    if len(text) > TELEGRAM_MESSAGE_LIMIT:
-        # Still too long: keep whole lines from the top and say plainly that it was cut.
-        kept = text[:TELEGRAM_MESSAGE_LIMIT - len(BALS_CUT_SHORT) - 1].rsplit("\n", 1)[0]
-        text = kept + "\n" + BALS_CUT_SHORT
-    # A shortened report must not offer invisible payments. Leave room under Telegram's
-    # keyboard limit for Other trip; omitted suggestions remain available after a refresh.
-    rows = [[InlineKeyboardButton(f"Mark paid {n}", callback_data=f"settle:new:{trip.id}:{n}:{p.cents}")]
-            for n, (_, p) in enumerate(payments, 1)
-            if any(line.startswith(f"{n}. ") for line in text.splitlines())][:99]
-    rows.append([InlineKeyboardButton("Other trip", callback_data="bals:page:0")])
-    return text, InlineKeyboardMarkup(rows)
+        lines, _ = _cut_bals_lines([header, *trip_balance_lines(
+            entries, names, families, settlements, currency)])
+        if len(currencies) > 1:
+            buttons = [InlineKeyboardButton(
+                ('✓ ' if c == currency else '') + f"{c} ({sum(cur == c for cur, _ in payments)})",
+                callback_data=f"bals:cur:{trip.id}:{c}") for c in currencies]
+            rows.extend(buttons[i:i + 4] for i in range(0, len(buttons), 4))
+        if selected:
+            rows.append([InlineKeyboardButton(f"All payments ({len(selected)})",
+                                              callback_data=f"bals:pay:{trip.id}:{currency}")])
+        count = sum(s['currency'] == currency for s in settlements)
+        if count:
+            rows.append([InlineKeyboardButton(f"View paybacks ({count})",
+                                              callback_data=f"bals:pbk:{trip.id}:{currency}")])
+    if screen in ('pay', 'pbk'):
+        rows.append([InlineKeyboardButton("⬅ Back", callback_data=f"bals:cur:{trip.id}:{currency}")])
+    else:
+        rows.append(other)
+    return '\n'.join(lines), InlineKeyboardMarkup(rows)
 
 
 async def trip_bals_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -957,7 +998,7 @@ async def trip_bals_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_bals_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """A tap under /trip_bals: "bals:show:<trip id>" or "bals:page:<offset>".
+    """Open a trip, picker page, or one currency's main/payments/paybacks screen.
 
     A callback query can be answered exactly once, so everything is read and the reply is
     built first; then one answer(), then the redraw.
@@ -972,16 +1013,24 @@ async def handle_bals_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
     toast = None
     try:
         parts = query.data.split(":")
-        action, value = parts[1], int(parts[2])
-        if len(parts) != 3 or action not in ("show", "page") or not 0 <= value <= 2**63 - 1:
+        action = parts[1] if len(parts) > 1 else ''
+        detail = action in ('cur', 'pay', 'pbk')
+        if (parts[0] != 'bals' or action not in ('show', 'page', 'cur', 'pay', 'pbk')
+                or len(parts) != (4 if detail else 3)
+                or not re.fullmatch(r'[0-9]+', parts[2])
+                or (detail and not re.fullmatch(r'[A-Z]{3}', parts[3]))):
             raise ValueError("Invalid balances callback")
-        trip = _load_bals_trip(sender.id, value) if action == "show" else None
+        value = int(parts[2])
+        if not 0 <= value <= 2**63 - 1:
+            raise ValueError("Invalid balances callback")
+        trip = _load_bals_trip(sender.id, value) if action != "page" else None
         if trip is not None:
-            text, keyboard = _bals_screen(trip, directory, today)
+            text, keyboard = _bals_screen(trip, directory, today,
+                                          parts[3] if detail else None, action if detail else 'cur')
         else:
             # A page of the picker; also where a tap on a trip this person isn't on lands.
             offset = value if action == "page" else 0
-            if action == "show":
+            if action != "page":
                 toast = BALS_NOT_MEMBER
             choices, more = _load_bals_choices(sender.id, offset)
             text, keyboard = _bals_picker(choices, offset, more, today)
@@ -1854,7 +1903,7 @@ async def handle_settle_up_button(update: Update, context: ContextTypes.DEFAULT_
                 if result.trip_id is not None:
                     await _send_fresh_balances(context, query.message.chat_id,
                                                card['entered_by_participant_id'], result.trip_id,
-                                               card['directory'])
+                                               card['directory'], result.currency)
                 return
             if action == 'cancel':
                 text, _ = build_settle_card({**card, 'outcome': 'cancelled'})
@@ -2149,7 +2198,7 @@ async def _settle_tap(query, context):
         await _clear_settlement_prompt(context, query.message.chat_id, message_id)
         await query.edit_message_text(settlement_card_text(card) + "\n✅ Payback saved.", reply_markup=None)
         await _send_fresh_balances(context, query.message.chat_id, card['entered_by_participant_id'],
-                                   card['trip_id'], card['directory'])
+                                   card['trip_id'], card['directory'], card['clears_currency'])
         return
     if action == 'cancel':
         await query.answer()
@@ -2264,7 +2313,7 @@ def _redraw_lock(context, chat_id, trip_id) -> asyncio.Lock:
     return locks[key]
 
 
-async def _send_fresh_balances(context, chat_id, sender_id, trip_id, directory):
+async def _send_fresh_balances(context, chat_id, sender_id, trip_id, directory, currency):
     """Send a new /trip_bals below a payback card that was just saved on a trip (#151).
 
     Used by both payback cards: "Mark paid" and the typed settle card. Older reports stay where
@@ -2272,7 +2321,8 @@ async def _send_fresh_balances(context, chat_id, sender_id, trip_id, directory):
     tap is rechecked against the current numbers when it opens a card.
 
     Built from the directory snapshot kept on the card, never a reload, so the names match the
-    card. Runs one at a time per chat and trip (_redraw_lock), from the read to the send.
+    card. Opens the currency just cleared, so the updated line is easy to find. Runs one
+    at a time per chat and trip (_redraw_lock), from the read to the send.
     """
     async with _redraw_lock(context, chat_id, trip_id):
         try:
@@ -2280,7 +2330,7 @@ async def _send_fresh_balances(context, chat_id, sender_id, trip_id, directory):
             trip = _load_bals_trip(sender_id, trip_id)
             if trip is None:
                 return
-            text, keyboard = _bals_screen(trip, directory, get_sgt_now().date())
+            text, keyboard = _bals_screen(trip, directory, get_sgt_now().date(), currency)
             if BALS_ERROR in text.splitlines():
                 # The bills or paybacks couldn't be read just now. Send nothing rather than an
                 # error right under "Payback saved", which would read as if the save failed;

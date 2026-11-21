@@ -564,7 +564,7 @@ async def test_saved_trip_payback_sends_a_new_report_from_the_card(flow, monkeyp
     flow.bot.send_message = AsyncMock(side_effect=send)
     await bot.handle_settle_up_button(update, flow)
     load.assert_called_once_with(1, 10)  # the sender's membership-checked trip read
-    screen.assert_called_once_with(BEACH, DIRECTORY, TODAY)
+    screen.assert_called_once_with(BEACH, DIRECTORY, TODAY, 'SGD')
     kwargs = flow.bot.send_message.await_args.kwargs
     assert kwargs['chat_id'] == query.message.chat_id and kwargs['text'] == 'fresh balances'
     assert 'parse_mode' not in kwargs

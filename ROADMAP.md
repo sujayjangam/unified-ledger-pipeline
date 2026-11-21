@@ -23,31 +23,26 @@ forward from Phase 3. The scope is under "Group-trip splitting" in Phase 1 below
 means nothing gets logged. So nothing merges in the last two days before the trip. Anything new
 is tried on a Neon branch with a fictional trip-sized directory first.
 
-**Next up:**
+**Next up, before the freeze:**
 
-1. Settling up redesigned: a typed "settle" message read by Python, each payback linked to the
-   bills it clears, no "gift" wording
-   ([#134](https://github.com/sujayjangam/unified-ledger-pipeline/issues/134), which takes in
-   [#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113); design in
-   [ADR-0052](docs/decisions/0052-settle-up-by-typed-message.md), agreed 2026-11-19). The same
-   method serves everyday bills, for a later `/bals`. Typed path first, with a new
-   `settlement_bills` table (migration 0011, on production). PR 1, PR 2 (the reader) and PR 3
-   (the settle card with its change buttons and rates,
-   [#142](https://github.com/sujayjangam/unified-ledger-pipeline/pull/142)) are merged.
-   A payback in another currency is converted at a reference rate and flagged for a statement
-   check ([#138](https://github.com/sujayjangam/unified-ledger-pipeline/issues/138),
-   [ADR-0053](docs/decisions/0053-other-currency-paybacks-at-a-reference-rate.md)). Build plan,
-   three PRs (the change buttons moved into PR 3):
-   `docs/superpowers/plans/2026-11-19-settle-up.md`. The bot's screen speed is timed on a
-   phone before the freeze
-   ([#137](https://github.com/sujayjangam/unified-ledger-pipeline/issues/137)). A "Settle up"
-   button on `/trip_bals` waits until after the trip.
+1. Time the bot's screens on a phone, on the deployed bot and the test bot, the day before the
+   freeze ([#137](https://github.com/sujayjangam/unified-ledger-pipeline/issues/137)).
+2. Read a settle message that says how the money was paid ("in cash"), ask about the closest
+   bill when the words don't all match, and read "himself" as whoever paid
+   ([#160](https://github.com/sujayjangam/unified-ledger-pipeline/issues/160)).
+3. A "Change card" button on the expense card, so a wrong card no longer means sending the
+   message again ([#161](https://github.com/sujayjangam/unified-ledger-pipeline/issues/161)).
 
 Later: load a finished trip's hand-kept spreadsheet as real bills, and work out the trip from the
 message itself for costs logged before it starts.
 
 **After the trip:**
 
+- The rest of the formatted bot screens
+  ([#143](https://github.com/sujayjangam/unified-ledger-pipeline/issues/143)), and a shared
+  sheet of the paybacks for people without the bot.
+- A "Settle up" button on `/trip_bals` that opens the same card as a typed settle message
+  ([#134](https://github.com/sujayjangam/unified-ledger-pipeline/issues/134)).
 - A split reader written only in Python
   ([#122](https://github.com/sujayjangam/unified-ledger-pipeline/issues/122)). It gets scored
   offline against the check cases and the trip's real messages before it replaces the model's
@@ -60,6 +55,18 @@ message itself for costs logged before it starts.
 - Aliases per sender ("dad", "mummy"; see Phase 1 below).
 
 **Recently shipped**, newest first. Each PR and ADR has the full story.
+
+- **2026-11-21: `/trip_bals` one currency per screen, with paybacks shown**
+  ([#148](https://github.com/sujayjangam/unified-ledger-pipeline/issues/148),
+  [#153](https://github.com/sujayjangam/unified-ledger-pipeline/issues/153),
+  [#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114),
+  [ADR-0056](docs/decisions/0056-trip-bals-one-currency-per-screen.md)). A trip with bills in
+  three currencies filled one message nobody could read. Now the main screen is one line
+  per family for one currency, with currency buttons; "All payments" holds the payments and
+  their "Mark paid" buttons, each naming its payment; "View paybacks" shows the bill shares
+  each payback cleared and what was paid on someone else's behalf, as text that can be
+  forwarded. On a fictional 10-person trip: 45 lines and 13 buttons became 9 and 3. No
+  migration.
 
 - **2026-11-21: a "between" list read by Python first**
   ([#158](https://github.com/sujayjangam/unified-ledger-pipeline/issues/158),
@@ -103,6 +110,19 @@ message itself for costs logged before it starts.
   [ADR-0051](docs/decisions/0051-debts-per-person-then-families.md)). A debt moves only onto a
   line that already exists, loops of debts cancel, and each shortcut gets a 💡 line under "To
   settle". No migration.
+- **2026-11-19: settling up by a typed message**
+  ([#134](https://github.com/sujayjangam/unified-ledger-pipeline/issues/134), PRs
+  [#140](https://github.com/sujayjangam/unified-ledger-pipeline/pull/140),
+  [#141](https://github.com/sujayjangam/unified-ledger-pipeline/pull/141),
+  [#142](https://github.com/sujayjangam/unified-ledger-pipeline/pull/142);
+  [ADR-0052](docs/decisions/0052-settle-up-by-typed-message.md),
+  [ADR-0053](docs/decisions/0053-other-currency-paybacks-at-a-reference-rate.md)). A message
+  starting with "settle" is read by Python, never the model, and opens a settle card with
+  change buttons. Each payback records the bill shares it clears in `settlement_bills`
+  (migration 0011, applied to production), and a payback on someone's behalf is no longer
+  called a gift. A payback in another currency is converted at a reference rate and flagged
+  for a statement check
+  ([#138](https://github.com/sujayjangam/unified-ledger-pipeline/issues/138)).
 - **2026-11-19: trip debts worked out per person, then rolled up to families**
   ([#128](https://github.com/sujayjangam/unified-ledger-pipeline/issues/128), PR
   [#133](https://github.com/sujayjangam/unified-ledger-pipeline/pull/133),
@@ -211,10 +231,12 @@ message itself for costs logged before it starts.
   has a first pass on the local branch `chore/pin-dependencies-27`.
 
 **Open top-level issues:**
+[#137](https://github.com/sujayjangam/unified-ledger-pipeline/issues/137) screen speed on a phone (before the freeze) ·
+[#160](https://github.com/sujayjangam/unified-ledger-pipeline/issues/160) settle wording (before the freeze) ·
+[#161](https://github.com/sujayjangam/unified-ledger-pipeline/issues/161) Change card button (before the freeze) ·
 [#134](https://github.com/sujayjangam/unified-ledger-pipeline/issues/134) settle-up redesign, with
-[#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113) (PRs 1–3 merged) ·
-[#143](https://github.com/sujayjangam/unified-ledger-pipeline/issues/143) bot screens hard to scan, with [#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114) and
-[#148](https://github.com/sujayjangam/unified-ledger-pipeline/issues/148) (after the trip) ·
+[#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113) (PRs 1–3 merged; the `/trip_bals` button after the trip) ·
+[#143](https://github.com/sujayjangam/unified-ledger-pipeline/issues/143) bot screens hard to scan (after the trip) ·
 [#127](https://github.com/sujayjangam/unified-ledger-pipeline/issues/127) trip balances (both sub-issues and the offset rows shipped) ·
 [#132](https://github.com/sujayjangam/unified-ledger-pipeline/issues/132) early ADRs too long ·
 [#122](https://github.com/sujayjangam/unified-ledger-pipeline/issues/122) Python-only split reader (after the trip) ·
@@ -468,7 +490,8 @@ only shared costs they pay get logged. Travel minimum, in build order:
        (ADR-0048).
   4. `/trip_bals`: one trip's balances per family and per person, in separate currencies (no FX
      conversion), as plain text that can be forwarded to the group
-     ([ADR-0044](docs/decisions/0044-trip-balances-from-splits.md)). It shows the active trip,
+     ([ADR-0044](docs/decisions/0044-trip-balances-from-splits.md); one currency per screen
+     since 2026-11-21, [ADR-0056](docs/decisions/0056-trip-bals-one-currency-per-screen.md)). It shows the active trip,
      or a list of trips to tap. The suggested payments match the largest debtor to the largest
      creditor. Families settle by default and pay back the person who paid, and a person who
      settles alone has a family label of their own. Done 2026-11-17,
@@ -488,9 +511,11 @@ only shared costs they pay get logged. Travel minimum, in build order:
      currency (both amounts stated, no exchange-rate lookup), and an overpayment saves behind a
      "⚠️ Confirm overpayment" button. If time allows: an Edit step on the payback card.
      Done 2026-11-18, [#111](https://github.com/sujayjangam/unified-ledger-pipeline/pull/111).
-     Found on the test bot, to fix: no record of which bill a payback was for
-     ([#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113)), and numbered
-     "Mark paid" buttons ([#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114)).
+     Found on the test bot: no record of which bill a payback was for
+     ([#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113), recorded since
+     settle-up shipped on 2026-11-19), and numbered "Mark paid" buttons
+     ([#114](https://github.com/sujayjangam/unified-ledger-pipeline/issues/114), each button
+     names its payment since 2026-11-21, ADR-0056).
   6. `/recent` gets paging and a delete button per entry, with Undo. A soft delete: the row stays
      but drops out of balances, totals and the duplicate check, through a view
      ([#115](https://github.com/sujayjangam/unified-ledger-pipeline/issues/115),
