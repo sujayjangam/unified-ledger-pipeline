@@ -132,9 +132,13 @@ Env vars (`.env.example` shows the format):
   ([ADR-0039](docs/decisions/0039-splits-read-by-the-model-worked-out-by-python.md)). The model
   returns only a `split_reference` (who and how many), never a share. `resolve_split` matches
   the names and `share_out` hands out whole cents (both in `app/services/splits.py`). The message
-  decides whether an entry is split, never trip mode: a split is kept only if the text has a
+  decides whether an entry is split, never trip mode: a split the model read is kept only if the text has a
   split word (`asks_for_split`), and "with"/"between" decide whether the sender shares
-  (`sender_shares`), both read by Python. Nobody is guessed: an unmatched name, or
+  (`sender_shares`), both read by Python. With no split word, a cost paid "for" known people
+  ("for Dave's ticket", "on my behalf") is theirs to owe: `read_for_people` reads it in Python,
+  only after the split rules find nobody, so no split read today changes. A gift word, a
+  relative ("Dave's mum") or a list with an unknown name records no split
+  ([ADR-0054](docs/decisions/0054-paid-for-someone-means-they-owe.md)). Nobody is guessed: an unmatched name, or
   "everyone" with no trip on, is a ⚠️ card line. Split warnings are never stored and never block a
   save. Uneven shares read from the message are counts (nights, or any count per person;
   [ADR-0042](docs/decisions/0042-uneven-shares-by-count.md)): the model reads each count, a

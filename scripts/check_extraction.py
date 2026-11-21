@@ -191,6 +191,10 @@ SPLIT_CASES += [
     # would not work: a count is read only beside the name, and "Carol paid" is a paying clause.
     {"message": "Carol paid 600 for all. Carol stayed 4 nights, rest all 6 nights", "amount": 600,
      "outcome": {('Alice', 6), ('Bob', 6), ('Frank', 6), ('Carol', 4), ('Dave', 6), ('Erin', 6)}},
+    # A /help example (#154, ADR-0054). With no split word, resolve_split reads "for Dave" in
+    # Python (read_for_people), so the model's part is the amount and one expense. Dave is in
+    # the Blues but owes alone.
+    {"message": "Carol paid 50 for Dave's ticket", "amount": 50, "outcome": {('Dave', None)}},
 ]
 
 # Messages with more than one real expense, and how many the model must return. The bot

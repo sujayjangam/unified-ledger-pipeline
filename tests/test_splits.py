@@ -842,3 +842,106 @@ def test_payer_count_that_ends_up_the_same_needs_no_check():
                     "people": [{"name": "Carol", "count": 5}, {"name": "Reds", "count": 5},
                                {"name": "Blues", "count": 5}]}, _STAY)
     assert result.counts == _STAY_COUNTS and not result.warnings
+
+
+# --- "for <person>": paid for someone, who owes it back (#154) -------------------------------
+
+FOR_PEOPLE = tuple(Participant(i, name, None, None) for i, name in enumerate(
+    ('Alice', 'Bob', 'Carol', 'Dave', 'Erin', 'Frank', 'Ann Lee', 'Ann Kim'), start=1))
+FOR_FAMILIES = {1: 'Alice', 2: 'Reds', 6: 'Reds', 3: 'Blues', 4: 'Blues'}
+
+
+def _for(message, reference=None):
+    """Alice sends, on a trip with every FOR_PEOPLE member; the model read no split."""
+    return resolve_split(reference or {'kind': 'none'}, FOR_PEOPLE, FOR_PEOPLE[0], FOR_FAMILIES, True, message)
+
+
+@pytest.mark.parametrize('message,names', [
+    ("Carol paid 50 for Dave's ticket", ['Dave']),
+    ('Carol paid $365.68 for Dave’s Bali flight', ['Dave']),           # a curly apostrophe
+    ('Spent 153.46usd for Dave on bed from Alibaba', ['Dave']),
+    ('Carol paid 90 for me', ['Alice']),
+    ('Dave paid 35myr for my haircut', ['Alice']),                     # "my" is the sender
+    ('Carol paid $58.26 on my behalf for travel insurance', ['Alice']),
+    ('flights 400 on behalf of Dave', ['Dave']),
+    ("Carol paid 120 for Dave and Erin's tickets", ['Dave', 'Erin']),
+    ('taxi 30 for Dave, Erin & Frank', ['Dave', 'Erin', 'Frank']),
+    ('Carol paid 90 for Dave, Erin, and Frank', ['Dave', 'Erin', 'Frank']),   # an Oxford comma
+    ('Taxi for Dave, 30', ['Dave']),                                   # the comma ends the list
+    ("Carol paid 50 for Ann Lee's ticket", ['Ann Lee']),               # a two-word name
+    ('Carol paid 300 for the Reds', ['Bob', 'Frank']),                 # a trip family label
+    ("Carol paid 300 for Bob's family", ['Bob', 'Frank']),
+    ("Carol paid 120 for Dave's ticket and Erin's ticket", ['Dave', 'Erin']),
+    ('Carol paid 120 for Dave and for Erin', ['Dave', 'Erin']),
+    ("Carol paid 900 for Dave's flight and hotel", ['Dave']),         # the hotel is Dave's too
+    ("Carol paid 120 for Dave's ticket and my ticket", ['Alice', 'Dave']),
+    ("Carol paid 50 for Dave's ticket and Erin booked it", ['Dave']),  # Erin starts a new clause
+    ('Carol paid 30 for Dave and Erin on the bus', ['Dave', 'Erin']),
+    ('Taxi for Dave and Erin 30', ['Dave', 'Erin']),                   # an amount, not a new clause
+    ('Taxi for Dave and Erin sgd 30', ['Dave', 'Erin']),
+])
+def test_for_a_person_means_they_owe(message, names):
+    result = _for(message)
+    assert [p.display_name for p in result.people] == names
+    assert result.warnings == ()
+
+
+@pytest.mark.parametrize('message', [
+    'gift for Dave 40',
+    "Carol paid 50 for Dave's birthday cake",
+    'lunch 45 for Dave, my treat',
+    "Carol bought cake for Dave's mum on 3 Sep for $34.80",            # a relative, not Dave
+    "I paid 85myr for my mum's earrings",
+    'dinner for 4 people 120',
+    'Carol paid for dinner 80',
+    'dinner 80 paid for by Carol',                                     # the payer, not a sharer
+    'ticket 50 for Zed',                                               # nobody called Zed
+    "Taxi 30 for Ann's bag",                                           # two people called Ann
+    'Carol paid 82.60 for all 4 pax on 31 Aug',
+    'Carol paid 816.04 for SIN-SYD tickets for 2 (SJ & L)',
+    'Carol paid 2717.84 for airbnb for 6 nights',
+])
+def test_for_without_a_known_person_or_with_a_gift_word_is_personal(message):
+    result = _for(message)
+    assert result.people == () and result.warnings == ()
+
+
+@pytest.mark.parametrize('message,unknown', [
+    ('Carol paid 120 for her and Dave', 'her'),
+    ('Carol paid 120 for Dave and the team', 'the team'),
+    ("Carol paid 120 for Dave's ticket and Zed's ticket", "Zed's ticket"),
+    ("Carol paid 120 for Dave's ticket and her ticket", 'her ticket'),
+    ("Carol paid 120 for Dave's ticket and my mum's ticket", "my mum's ticket"),
+    ("Carol paid 120 for Dave's ticket and for Zed", 'Zed'),          # a second "for" names a person
+])
+def test_for_with_a_person_and_an_unknown_name_records_nothing(message, unknown):
+    """Half a list is never charged: nobody owes, and the card says which name failed."""
+    from app.services.splits import FOR_NO_MATCH_WARNING
+    result = _for(message)
+    assert result.people == ()
+    assert result.warnings == (FOR_NO_MATCH_WARNING.format(name=unknown),)
+
+
+def test_a_split_word_overrides_for():
+    """With a split word the split rules decide, even when they find nobody."""
+    assert _for('dinner 80 for Dave, split').people == ()
+    with_carol = {'kind': 'named', 'include_sender': True, 'people': [{'name': 'Carol', 'is_family': False}]}
+    assert [p.display_name for p in _for('dinner 80 for Dave, split with Carol', with_carol).people] == ['Alice', 'Carol']
+
+
+def test_for_ignores_a_split_the_model_read_without_a_split_word():
+    """No split word: the model's names are dropped as before, and "for" decides."""
+    erin = {'kind': 'named', 'include_sender': True, 'people': [{'name': 'Erin', 'is_family': False}]}
+    assert [p.display_name for p in _for("Carol paid 50 for Dave's ticket", erin).people] == ['Dave']
+
+
+def test_for_is_read_only_with_the_message():
+    """No message, no text checks: the model's reference alone, as for every other reading."""
+    result = resolve_split({'kind': 'none'}, FOR_PEOPLE, FOR_PEOPLE[0], FOR_FAMILIES, True, None)
+    assert result.people == ()
+
+
+def test_for_matches_only_the_candidates():
+    """Off a trip's member list, a name is nobody, as in any split."""
+    result = resolve_split({'kind': 'none'}, FOR_PEOPLE[:3], FOR_PEOPLE[0], {}, True, "Carol paid 50 for Dave's ticket")
+    assert result.people == () and result.warnings == ()
