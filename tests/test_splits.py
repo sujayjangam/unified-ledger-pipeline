@@ -879,6 +879,9 @@ def _for(message, reference=None):
     ('Carol paid 30 for Dave and Erin on the bus', ['Dave', 'Erin']),
     ('Taxi for Dave and Erin 30', ['Dave', 'Erin']),                   # an amount, not a new clause
     ('Taxi for Dave and Erin sgd 30', ['Dave', 'Erin']),
+    ('Carol paid 252 for Scoot flights for Dave and Erin.', ['Dave', 'Erin']),  # #156
+    ('Carol paid 90 for hotel for Dave, Erin & Frank', ['Dave', 'Erin', 'Frank']),
+    ("Carol paid 60 for Dave's ticket for the show", ['Dave']),
 ])
 def test_for_a_person_means_they_owe(message, names):
     result = _for(message)
@@ -913,6 +916,8 @@ def test_for_without_a_known_person_or_with_a_gift_word_is_personal(message):
     ("Carol paid 120 for Dave's ticket and her ticket", 'her ticket'),
     ("Carol paid 120 for Dave's ticket and my mum's ticket", "my mum's ticket"),
     ("Carol paid 120 for Dave's ticket and for Zed", 'Zed'),          # a second "for" names a person
+    ('Carol paid 120 for flights for Dave and Zed', 'Zed'),           # the second list still checks
+    ("Carol paid 120 for Dave's ticket for the show and Zed's ticket", "Zed's ticket"),
 ])
 def test_for_with_a_person_and_an_unknown_name_records_nothing(message, unknown):
     """Half a list is never charged: nobody owes, and the card says which name failed."""

@@ -576,7 +576,8 @@ def _for_list(text: str, candidates, sender: Participant, families: dict[int, st
     nobody. `text` is the message after "for".
 
     Items are separated by ",", "&" or "and", and a repeated "for" ("for Dave and for Erin")
-    is skipped. Each item is matched by its longest opening run of words that is a person, a
+    is skipped. A "for" after a thing ends the list: "for Scoot flights for Dave and Erin" is
+    two lists, a thing and then the people (#156). Each item is matched by its longest opening run of words that is a person, a
     family or a trip label ("Ann Lee", "Carol's family", "the Reds"); words after that are the
     thing bought ("Dave's ticket"). An item that matches nobody goes on the unmatched list, and
     the list carries on only if a joiner follows it. Two kinds of unknown item just end the
@@ -590,16 +591,22 @@ def _for_list(text: str, candidates, sender: Participant, families: dict[int, st
     matched, unmatched = [], []
     i, joiner, after_thing = 0, None, False
     while i < len(tokens):
-        # One item: the words up to the next joiner or mark ("$", ".", "(" ...).
-        end = i
-        while end < len(tokens) and _WORD_TOKEN.fullmatch(tokens[end]) and tokens[end].casefold() != "and":
-            end += 1
-        words = tokens[i:end]
         # "for Dave and for Erin": a second "for" says a person comes next, so an unknown
         # one there is unmatched, never taken for a thing bought.
-        repeated_for = joiner is not None and bool(words) and words[0].casefold() == "for"
-        if repeated_for:
-            words = words[1:]
+        repeated_for = joiner is not None and tokens[i].casefold() == "for"
+        start = i + 1 if repeated_for else i
+        # One item: the words up to the next joiner or mark ("$", ".", "(" ...).
+        end = start
+        while end < len(tokens) and _WORD_TOKEN.fullmatch(tokens[end]) and tokens[end].casefold() != "and":
+            end += 1
+        # A thing then a "for" ("for Scoot flights for Dave and Erin", #156): the item stops
+        # at that "for", and the people after it are a list of their own, which
+        # read_for_people reads from that "for". After a person ("Dave's ticket for the show
+        # and Zed's ticket") the item runs on as before, so the list keeps every name.
+        cut = start
+        while cut < end and tokens[cut].casefold() != "for":
+            cut += 1
+        words = tokens[start:cut]
         if not words:
             break
         found = None
@@ -608,6 +615,10 @@ def _for_list(text: str, candidates, sender: Participant, families: dict[int, st
             if people:
                 found = (n, people)
                 break
+        if found:
+            words = tokens[start:end]
+        else:
+            end = cut
         after = words[found[0]].casefold() if found and found[0] < len(words) else None
         if (found and joiner is not None and after is not None
                 and not _owner_word(words[found[0] - 1]) and not _phrase_start(after)):
