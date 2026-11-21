@@ -275,6 +275,10 @@ Env vars (`.env.example` shows the format):
   "👪 Family settle" menu prompt is recognised by the prompt's fixed first line (stateless, so
   a restart can't send it to the model), and the prompt decides the kind. The check is the
   first line of `process_expense_text`, so a settle message never reaches extraction. The
+  message as read (`raw_text` on the card) is saved as the payback's `note` on Confirm, never
+  a summary, like an expense's description (ADR-0008). A "Mark paid" payback, with nothing
+  typed, gets `payback_default_note`: the giver, plus "(for <family>)" when it paid someone
+  else's debt. The
   settle card (`app/services/settle_card.py`, callback prefix `su:`) follows the card rules:
   card lock, answer once, toast only on resolved cards, redraw from a copy. Every tap reruns
   `settle_up` from the reading and the snapshot kept on the card, never the database or the

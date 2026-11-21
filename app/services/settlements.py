@@ -90,17 +90,40 @@ def is_overpayment(clears_cents: int, suggested_cents: int) -> bool:
     return clears_cents > suggested_cents
 
 
+def _family_label(family: str) -> str:
+    """"Lee family" for a one-word label; a longer label ("Cedar Grove") is shown as it is."""
+    return f"{family} family" if len(family.split()) == 1 else family
+
+
+def _beneficiary_label(card: dict) -> str:
+    """Whose debt a payback made on someone else's behalf pays: their family, else the person."""
+    family = card.get('family')
+    return _family_label(family) if family else card['names'][card['for_id']]
+
+
+def payback_default_note(card: dict) -> str:
+    """The note a "Mark paid" payback is saved with, since nobody typed anything for it.
+
+    It names the giver, and whose debt it paid when that was someone else's
+    ("Bob (for Lee family)"), the same words the card's From line uses. Chosen by
+    the owner on 2026-11-22 so every payback has a note; a typed settle's note is its
+    message instead.
+    """
+    giver = card['names'][card['from_id']]
+    if card.get('for_id') is None:
+        return giver
+    return f"{giver} (for {_beneficiary_label(card)})"
+
+
 def settlement_card_text(card: dict) -> str:
     """Show both agreed amounts, the people, and an explicit warning for an overpayment."""
     payer = card['names'].get(card['from_id'], "Choose who paid")
     family = card.get('family')
     from_line = payer
     if card.get('for_id') is not None:
-        label = (f"{family} family" if len(family.split()) == 1 else family) if family else card['names'][card['for_id']]
-        from_line += f", on behalf of {label}"
+        from_line += f", on behalf of {_beneficiary_label(card)}"
     elif family:
-        label = f"{family} family" if len(family.split()) == 1 else family
-        from_line += f" ({label})"
+        from_line += f" ({_family_label(family)})"
     lines = ["💸 Payback", f"Trip: {card['trip_name']}", f"From: {from_line}",
              f"To: {card['names'][card['to_id']]}",
              f"Clears: {format_cents(card['clears_cents'])} {card['clears_currency']}",

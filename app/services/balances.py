@@ -10,6 +10,7 @@ to whom. Before roll-up, cancel person-level loops and shortcut only along exist
 rolled debt lines, choosing the fewest payments within a bounded deterministic search.
 """
 
+import datetime
 from dataclasses import dataclass, field
 
 from app.add_expense import format_money
@@ -664,6 +665,22 @@ def payment_button_label(payment, currency, names) -> str:
     return f"✅ {shortened(left, a)} → {shortened(right, b)} · {amount}"
 
 
+def _day_month(value) -> str:
+    """"21 Nov" from a date, or from the ISO text a bill's date is stored as.
+
+    transactions.date is TEXT (YYYY-MM-DD, docs/SCHEMA.md) while settlements.date is DATE,
+    so both reach the paybacks screen. Tests built bills with real dates, which hid this
+    until a payback named its bills in production. Text that isn't a date is shown as it
+    is, never an error, so one odd row can't take the whole screen down.
+    """
+    if isinstance(value, str):
+        try:
+            value = datetime.date.fromisoformat(value)
+        except ValueError:
+            return value
+    return f"{value.day} {value:%b}"
+
+
 def _bill_label(entry) -> str:
     """Keep a short bill description, cutting at a word boundary where possible."""
     if entry is None:
@@ -701,7 +718,7 @@ def trip_payback_lines(entries, names: dict, families: dict, currency: str, sett
                 and debtor_unit(s['from_id'], s['to_id'], families) != unit else '')
         handed = (f" (as {format_money(s['paid_cents'], s['paid_currency'])})"
                   if s.get('paid_currency', currency) != currency else '')
-        when = f", {s['date'].day} {s['date']:%b}" if s.get('date') else ''
+        when = f", {_day_month(s['date'])}" if s.get('date') else ''
         lines.append(f"• {giver} paid {receiver} {format_money(s['cents'], currency)}{note}{handed}{when}")
         # helped: {person id: cents} of this payback that really went to that person's
         # benefit. It starts from what the maths really took off each person's debt to the
@@ -712,8 +729,8 @@ def trip_payback_lines(entries, names: dict, families: dict, currency: str, sett
         if s.get('bills'):
             for row, cents in zip(s['bills'], row_amounts):
                 entry = bills.get(row['transaction_id'])
-                date = entry.get('date') if entry else None
-                when = f" ({date.day} {date:%b})" if date else ''
+                bill_date = entry.get('date') if entry else None
+                when = f" ({_day_month(bill_date)})" if bill_date else ''
                 # The bill line shows the share marked paid, which is what the bill list
                 # and the settle card count.
                 amount = format_money(cents, currency) if cents else 'nothing cleared'

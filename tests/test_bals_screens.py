@@ -321,3 +321,28 @@ def test_long_special_names_stay_plain_on_screen(island):
     text, markup = bot._bals_screen(TRIP, directory, DAY, 'IDR', 'pay')
     assert names[1] in text
     assert all(len(b.text) <= 64 for row in markup.inline_keyboard for b in row)
+
+
+def test_paybacks_read_a_bill_date_stored_as_text(island):
+    """transactions.date is TEXT (YYYY-MM-DD) in production, unlike the fixtures' dates, so
+    a payback naming its bills crashed "View paybacks" (#168). Both shapes
+    now read as "21 Nov", and text that isn't a date is shown as it is."""
+    entries, paid = island
+    for e in entries:
+        e['date'] = DAY.isoformat()
+    text, _ = bot._bals_screen(TRIP, DIRECTORY, DAY, 'IDR', 'pbk')
+    assert '    Erin\'s share of "Airbnb 2300 on my…" (21 Nov): IDR 150.00' in text.splitlines()
+    entries[0]['date'] = 'sometime'
+    lines = balances.trip_payback_lines(entries, NAMES, FAMILIES, 'IDR', paid)
+    assert any(line.endswith('(sometime): IDR 150.00') for line in lines)
+
+
+async def test_a_failed_error_toast_is_only_printed(island):
+    """A slow read can outlast Telegram's answer window; the error toast failing then must
+    not escape the handler as an unhandled traceback."""
+    update, query = _tap('bals:pbk:7:IDR')
+    bot.get_trip_split_entries.side_effect = RuntimeError('boom')
+    query.answer.side_effect = RuntimeError('Query is too old')
+    await bot.handle_bals_button(update, _context())
+    query.answer.assert_awaited_once_with(bot.BALS_ERROR)
+    query.edit_message_text.assert_not_awaited()

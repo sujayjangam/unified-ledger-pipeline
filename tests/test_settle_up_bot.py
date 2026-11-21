@@ -203,6 +203,9 @@ async def test_text_and_transcribed_voice_never_extract(flow, monkeypatch, voice
     bot.extract_transactions.assert_not_awaited()
     assert flow.user_data['pending_settle_ups'][500]['result'].can_confirm
     assert 'parse_mode' not in status.edit_text.await_args.kwargs
+    # The words as read are kept on the card, to be saved as the payback's note.
+    said = ('Settle, Carol' if voice else 'Settle Carol') + ' paid 381 for saree pleating and for Erin airbnb'
+    assert flow.user_data['pending_settle_ups'][500]['raw_text'] == said
 
 
 @pytest.mark.parametrize('failure', [RuntimeError('offline'), ValueError('bad snapshot')])
@@ -219,6 +222,7 @@ async def test_failed_read_and_refusal(flow, monkeypatch, failure, capsys):
 
 
 async def test_confirm_saving_before_write_and_resolved_toast(flow):
+    pending(flow)['raw_text'] = 'Settle Carol paid 381 for saree pleating'
     update, query = tap('su:confirm')
     def save(**kwargs):
         assert 'su:saving' in {b.callback_data for row in query.edit_message_text.await_args.kwargs['reply_markup'].inline_keyboard for b in row}
@@ -228,6 +232,8 @@ async def test_confirm_saving_before_write_and_resolved_toast(flow):
         assert kwargs['from_id'] == 3 and kwargs['to_id'] == 1 and kwargs['for_id'] is None
         assert kwargs['trip_id'] == 10 and kwargs['date'] == TODAY
         assert not kwargs['needs_statement_check'] and kwargs['fx_rate'] is None
+        # The typed message is saved as the payback's note (raw words, like ADR-0008).
+        assert kwargs['note'] == 'Settle Carol paid 381 for saree pleating'
         # Answered before the blocking save, so the button stops spinning.
         query.answer.assert_awaited_once_with()
     bot.add_settlement.side_effect = save
