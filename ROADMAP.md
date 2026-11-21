@@ -30,8 +30,6 @@ is tried on a Neon branch with a fictional trip-sized directory first.
 2. Read a settle message that says how the money was paid ("in cash"), ask about the closest
    bill when the words don't all match, and read "himself" as whoever paid
    ([#160](https://github.com/sujayjangam/unified-ledger-pipeline/issues/160)).
-3. A "Change card" button on the expense card, so a wrong card no longer means sending the
-   message again ([#161](https://github.com/sujayjangam/unified-ledger-pipeline/issues/161)).
 
 Later: load a finished trip's hand-kept spreadsheet as real bills, and work out the trip from the
 message itself for costs logged before it starts.
@@ -60,6 +58,12 @@ message itself for costs logged before it starts.
 - Aliases per sender ("dad", "mummy"; see Phase 1 below).
 
 **Recently shipped**, newest first. Each PR and ADR has the full story.
+
+- **2026-11-21: a "Change card" button on the expense card**
+  ([#161](https://github.com/sujayjangam/unified-ledger-pipeline/issues/161),
+  [ADR-0057](docs/decisions/0057-change-card-button.md)). A wrong or forgotten card meant
+  Cancel and send the message again. Now the card lists the open accounts to tap; the payer
+  follows the card. No migration.
 
 - **2026-11-21: a button menu, and `/trip_bals` first in the "/" menu**
   ([#163](https://github.com/sujayjangam/unified-ledger-pipeline/issues/163)). `/trip_bals` was
@@ -244,7 +248,6 @@ message itself for costs logged before it starts.
 **Open top-level issues:**
 [#137](https://github.com/sujayjangam/unified-ledger-pipeline/issues/137) screen speed on a phone (before the freeze) ·
 [#160](https://github.com/sujayjangam/unified-ledger-pipeline/issues/160) settle wording (before the freeze) ·
-[#161](https://github.com/sujayjangam/unified-ledger-pipeline/issues/161) Change card button (before the freeze) ·
 [#134](https://github.com/sujayjangam/unified-ledger-pipeline/issues/134) settle-up redesign, with
 [#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113) (PRs 1–3 merged; the `/trip_bals` button after the trip) ·
 [#143](https://github.com/sujayjangam/unified-ledger-pipeline/issues/143) bot screens hard to scan (after the trip) ·

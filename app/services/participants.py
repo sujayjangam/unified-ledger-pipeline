@@ -434,6 +434,23 @@ def _set_payment(transaction: dict, account: Account, payer: Participant, warnin
     return transaction
 
 
+def change_account(transaction: dict, directory: Directory, account: Account) -> dict:
+    """Return a copy with an offered account deliberately chosen on the card.
+
+    Owned cards decide the payer. Shared accounts keep a household payer, otherwise
+    fall back to the sender. The handler validates the account against its menu first.
+    """
+    payer = directory.participant(transaction.get("paid_by_participant_id"))
+    if account.owner_participant_id is not None:
+        payer = directory.participant(account.owner_participant_id)
+    elif payer is None or not payer.is_household:
+        payer = directory.participant(transaction["entered_by_participant_id"])
+    # Future payer taps must start from this deliberate choice, not undo it by using
+    # the account originally read from the message. Split ticks remain untouched.
+    changed = {**transaction, "base_account_id": account.id}
+    return _set_payment(changed, account, payer, None)
+
+
 def change_payer(transaction: dict, directory: Directory, payer: Participant) -> dict:
     """The entry as it would be with `payer` tapped on the card's "Paid by" menu. Returns a
     changed copy; the entry passed in is left alone, so the caller can redraw the card first and

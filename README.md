@@ -137,6 +137,9 @@ the options turned down, and what it cost. The ones that shaped the system most:
   stays out of the household totals.
 - A "Change who paid" button lists people to tap: the trip's members while the entry is on a
   trip, otherwise everyone the bot knows. If no account fits the person tapped, nothing changes.
+- A "Change card" button lists the open accounts to tap. An owned card makes its owner the
+  payer; Cash or the wallet keeps the payer, or the sender if the payer is outside the
+  household ([ADR-0057](docs/decisions/0057-change-card-button.md)).
 
 **Splits**
 

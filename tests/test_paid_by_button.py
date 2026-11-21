@@ -158,7 +158,7 @@ async def _press(context, data):
 async def test_card_has_the_button_and_offers_everyone(monkeypatch, directory):
     """Everyday menus include outside people without widening the text reader."""
     _, pending = await _card(monkeypatch, directory)
-    assert _data(bot_core._keyboard_for(pending))[-1] == ["payer:menu"]
+    assert _data(bot_core._keyboard_for(pending))[-1] == ["payer:menu", "card:menu"]
     assert _labels(bot_core._payer_keyboard(pending)) == [["✅ Alice", "Bob"], ["Carol"], ["◂ Back"]]
 
 
@@ -218,7 +218,7 @@ async def test_back_restores_the_card_buttons_unchanged(monkeypatch, directory):
     context, pending = await _card(monkeypatch, directory)
     query = await _press(context, "payer:back")
     markup = query.edit_message_reply_markup.await_args.kwargs["reply_markup"]
-    assert _data(markup) == [["confirm_save", "cancel_save"], ["split:menu"], ["payer:menu"]]
+    assert _data(markup) == [["confirm_save", "cancel_save"], ["split:menu"], ["payer:menu", "card:menu"]]
     assert pending["paid_by_participant_id"] == 1
 
 
@@ -236,7 +236,7 @@ async def test_picking_a_person_redraws_the_card_and_changes_the_entry(monkeypat
     assert "**Account:** Paid by someone else" in reply.args[0]
     assert "**Paid by:** Carol" in reply.args[0]
     # The card's own buttons are back, trip toggle included.
-    assert _data(reply.kwargs["reply_markup"]) == [["confirm_save", "cancel_save"], ["trip_toggle"], ["split:menu"], ["payer:menu"]]
+    assert _data(reply.kwargs["reply_markup"]) == [["confirm_save", "cancel_save"], ["trip_toggle"], ["split:menu"], ["payer:menu", "card:menu"]]
     # The same dict the cache holds was changed in place, and the trip tag was not touched.
     assert context.user_data["pending_cards"][500] is pending
     assert (pending["account_id"], pending["paid_by_participant_id"], pending["trip_id"]) == (15, 3, 7)
@@ -285,7 +285,7 @@ async def test_tapping_the_marked_person_closes_the_menu_and_clears_the_warning(
 
     reply = query.edit_message_text.await_args
     assert "Couldn't tell who paid" not in reply.args[0]
-    assert _data(reply.kwargs["reply_markup"])[-1] == ["payer:menu"]
+    assert _data(reply.kwargs["reply_markup"])[-1] == ["payer:menu", "card:menu"]
     assert (pending["account_id"], pending["paid_by_participant_id"], pending["payer_warning"]) == (10, 1, None)
 
 
@@ -384,7 +384,7 @@ async def test_pick_leaves_an_entry_that_confirm_took_during_the_redraw(monkeypa
     assert "already being saved" in query.answer.await_args.args[0]
 
 
-@pytest.mark.parametrize("change", ["payer:set:2", "trip_toggle"])
+@pytest.mark.parametrize("change", ["payer:set:2", "card:set:11", "trip_toggle"])
 async def test_confirm_waits_for_a_change_still_redrawing_the_card(monkeypatch, directory, change):
     # The webhook runs taps concurrently. A Confirm that arrives while a payer change (or trip
     # toggle) is still redrawing the card must wait for it, then save what the card now shows.
@@ -401,7 +401,8 @@ async def test_confirm_waits_for_a_change_still_redrawing_the_card(monkeypatch, 
 
     change_update, change_query = _tap(change)
     change_query.edit_message_text.side_effect = slow_redraw
-    handler = bot_core.handle_payer_button if change.startswith("payer:") else bot_core.handle_button_click
+    handler = (bot_core.handle_payer_button if change.startswith("payer:") else
+               bot_core.handle_card_button if change.startswith("card:") else bot_core.handle_button_click)
     changing = asyncio.create_task(handler(change_update, context))
     await redraw_started.wait()
 
