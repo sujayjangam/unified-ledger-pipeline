@@ -145,6 +145,9 @@ the options turned down, and what it cost. The ones that shaped the system most:
   model reads only who. Python matches the names and hands out whole cents that add up to the
   amount. The card shows every share before Confirm, and the shares are saved with the entry. A
   name it can't match is a warning line, never a guess.
+- A cost paid for someone is theirs to owe: "Carol paid 50 for Dave's ticket" shows "Dave owes
+  Carol 50.00". A gift word, or a name the bot doesn't know, means nobody owes
+  ([ADR-0054](docs/decisions/0054-paid-for-someone-means-they-owe.md)).
 - An "Add split" button opens a menu to tick people, or a whole family in one tap while the
   entry is on a trip. The card redraws with each tap.
 - Uneven shares by a count per person, like nights ("Airbnb 900 split by nights. Reds 5 nights,

@@ -61,6 +61,12 @@ message itself for costs logged before it starts.
 
 **Recently shipped**, newest first. Each PR and ADR has the full story.
 
+- **2026-11-21: a cost paid "for" someone is theirs to owe**
+  ([#154](https://github.com/sujayjangam/unified-ledger-pipeline/issues/154),
+  [ADR-0054](docs/decisions/0054-paid-for-someone-means-they-owe.md)). "Carol paid 50 for
+  Dave's ticket" now shows "Dave owes Carol 50.00" with no taps. Read in Python with no prompt
+  change; a gift word or an unknown name means no split. No migration.
+
 - **2026-11-20: a fresh `/trip_bals` after any trip payback, old reports kept**
   ([#151](https://github.com/sujayjangam/unified-ledger-pipeline/issues/151), PR
   [#152](https://github.com/sujayjangam/unified-ledger-pipeline/pull/152)). A payback saved

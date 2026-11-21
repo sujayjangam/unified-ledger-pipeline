@@ -16,6 +16,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 
 from app.add_expense import dollars_to_cents, format_cents
+from app.services.currencies import ISO_4217
 from app.services.participants import Participant, match_person
 
 # Card lines. Display only: never stored, and they never block a save.
@@ -100,6 +101,50 @@ _SPLIT_WITH = re.compile(
 _SENDER_IN_LIST = re.compile(r"(?<!\w)(?:me|myself|us)(?!\w)", re.IGNORECASE)
 # Said about the payer, not the sharers: "split between Carol and Bob, paid by me".
 _PAID_BY_ME = re.compile(r"(?<!\w)(?:paid\s+(?:for\s+)?)?by\s+(?:me|myself)(?!\w)", re.IGNORECASE)
+
+# --- "for <person>": a cost paid for someone, who owes it back (#154) ------------------------
+# "Carol paid 50 for Dave's ticket" means Dave owes Carol 50. Read by Python only, and only
+# when the message has no split word (a split word means the split rules above decide).
+FOR_NO_MATCH_WARNING = "⚠️ Couldn't match '{name}'. No split recorded."
+# Any of these and nobody owes: "gift for Dave", "for Carol's birthday", "Dave's treat".
+_GIFT_WORD = re.compile(
+    r"(?<!\w)(?:gift|gifts|gifted|present|presents|treat|treats|treated|birthday|birthdays|bday)(?!\w)",
+    re.IGNORECASE)
+# Where a list of people may start. "Paid for by Carol" names the payer, so "for by" is skipped.
+_FOR_WORD = re.compile(r"(?<!\w)(?:for|on\s+behalf\s+of)\s+(?=\S)(?!by(?!\w))", re.IGNORECASE)
+# "Carol paid 58 on my behalf" is "for me".
+_ON_MY_BEHALF = re.compile(r"(?<!\w)on\s+my\s+behalf(?!\w)", re.IGNORECASE)
+# A word (keeping its 's), or a mark that ends or joins a list.
+_LIST_TOKEN = re.compile(r"[\w'’]+|[^\w\s]")
+_WORD_TOKEN = re.compile(r"[\w'’]+")
+_POSSESSIVE = re.compile(r"['’]s$", re.IGNORECASE)
+# Words that say whose a thing is, as "Dave's" does: "Dave's ticket and her ticket".
+_OWNER_PRONOUNS = frozenset({"my", "her", "his", "their", "our", "your"})
+# After a later name in a list, one of these starts a phrase about it ("and Erin on the bus");
+# any other word ("and Erin booked it") means the name begins a new clause.
+_PREPOSITIONS = frozenset("on at in from to with by via during after before into onto over through".split())
+
+
+def _owner_word(word: str) -> bool:
+    """True for "Dave's" or "her": a word that says whose the next thing is."""
+    return bool(_POSSESSIVE.search(word)) or word.casefold() in _OWNER_PRONOUNS
+
+
+def _phrase_start(word: str) -> bool:
+    """True when a word after a name still belongs with it: a preposition ("Erin on the
+    bus"), an amount ("Erin 30") or a currency ("Erin sgd 30"). Anything else ("Erin booked
+    it") starts a new clause."""
+    return word in _PREPOSITIONS or word[0].isdigit() or word.upper() in ISO_4217
+_LIST_JOINERS = frozenset({",", "&", "and"})
+# "for Dave's mum" is for Dave's mum, not Dave, so Dave owes nothing ("my" works the same way).
+_RELATIVE_WORDS = frozenset("""
+    mum mom mummy mommy mother ma amma dad daddy father pa appa parent parents
+    wife husband partner girlfriend boyfriend fiance fiancee son daughter kid kids child children baby
+    brother sister bro sis grandma grandpa grandmother grandfather granny aunt aunty auntie uncle
+    cousin niece nephew friend friends boss colleague colleagues inlaws
+""".split())
+# The longest name tried at one place in the list: "Ann Lee", or "the Reds family".
+_MAX_NAME_WORDS = 3
 
 
 def asks_for_split(message: str) -> bool:
@@ -485,6 +530,123 @@ def drop_share_entries(transactions: list[dict], message: str) -> list[dict]:
 
 def resolve_split(reference: dict | None, candidates, sender: Participant,
                   families: dict[int, str], trip_on: bool, message: str | None = None) -> SplitResult:
+    """Who shares the entry: the model's split_reference (see _read_reference), or, when that
+    finds nothing and the message has no split word, the people it was paid "for" (#154).
+
+    The "for" reading comes second so that every split the rules below already read stays
+    exactly as it was; it only fills in entries that would otherwise be personal.
+    """
+    result = _read_reference(reference, candidates, sender, families, trip_on, message)
+    if message is None or result.people or result.warnings or asks_for_split(message):
+        return result
+    return read_for_people(message, candidates, sender, families, trip_on)
+
+
+def read_for_people(message: str, candidates, sender: Participant,
+                    families: dict[int, str], trip_on: bool) -> SplitResult:
+    """The people a cost was paid for, who each owe an even share of it (#154).
+
+    "Carol paid 50 for Dave's ticket" -> Dave. "for Carol and Dave" -> both. "for me", "for my
+    haircut" and "on my behalf" -> the sender. The payer is left to the card: a "for" list
+    naming only the payer is no split there (_owed_split in bot_core).
+
+    Nothing is guessed. A gift word means nobody owes. A "for" with no known person after it
+    ("for dinner", "for Dave's mum") is not about a person, so it is silent. A list that names a
+    person and also something unknown ("for her and Dave") records nothing and says why.
+    """
+    if _GIFT_WORD.search(message):
+        return SplitResult((), ())
+    lists = [_for_list(message[found.end():], candidates, sender, families, trip_on)
+             for found in _FOR_WORD.finditer(message)]
+    if _ON_MY_BEHALF.search(message):
+        lists.append(([sender], []))
+    people = {}
+    for matched, unmatched in lists:
+        if not matched:
+            continue  # "for dinner": no person in it
+        if unmatched:
+            return SplitResult((), (FOR_NO_MATCH_WARNING.format(name=unmatched[0]),))
+        people.update((p.id, p) for p in matched)
+    return SplitResult(tuple(people[pid] for pid in sorted(people)), ())
+
+
+def _for_list(text: str, candidates, sender: Participant, families: dict[int, str],
+              trip_on: bool) -> tuple[list[Participant], list[str]]:
+    """Reads the list right after one "for": the people it names, and the items that matched
+    nobody. `text` is the message after "for".
+
+    Items are separated by ",", "&" or "and", and a repeated "for" ("for Dave and for Erin")
+    is skipped. Each item is matched by its longest opening run of words that is a person, a
+    family or a trip label ("Ann Lee", "Carol's family", "the Reds"); words after that are the
+    thing bought ("Dave's ticket"). An item that matches nobody goes on the unmatched list, and
+    the list carries on only if a joiner follows it. Two kinds of unknown item just end the
+    list instead: one after a comma ("for Carol, 80" is a new clause), and a plain thing after
+    a thing ("for Dave's flight and hotel": the hotel is Dave's too). An unknown owner there
+    ("Dave's ticket and Zed's ticket", "and her ticket") is still unmatched. A later name
+    followed by anything but an owner's "'s" or a preposition starts a new clause, so the list
+    ends before it ("for Dave's ticket and Erin booked it").
+    """
+    tokens = _LIST_TOKEN.findall(text)
+    matched, unmatched = [], []
+    i, joiner, after_thing = 0, None, False
+    while i < len(tokens):
+        # One item: the words up to the next joiner or mark ("$", ".", "(" ...).
+        end = i
+        while end < len(tokens) and _WORD_TOKEN.fullmatch(tokens[end]) and tokens[end].casefold() != "and":
+            end += 1
+        words = tokens[i:end]
+        # "for Dave and for Erin": a second "for" says a person comes next, so an unknown
+        # one there is unmatched, never taken for a thing bought.
+        repeated_for = joiner is not None and bool(words) and words[0].casefold() == "for"
+        if repeated_for:
+            words = words[1:]
+        if not words:
+            break
+        found = None
+        for n in range(min(len(words), _MAX_NAME_WORDS), 0, -1):
+            people = _people_named(" ".join(words[:n]), candidates, sender, families, trip_on)
+            if people:
+                found = (n, people)
+                break
+        after = words[found[0]].casefold() if found and found[0] < len(words) else None
+        if (found and joiner is not None and after is not None
+                and not _owner_word(words[found[0] - 1]) and not _phrase_start(after)):
+            break  # "for Dave's ticket and Erin booked it": Erin starts a new clause
+        if found and (after is None or _POSSESSIVE.sub("", after) not in _RELATIVE_WORDS):
+            matched.extend(found[1])
+            after_thing = after is not None
+        elif not repeated_for and (joiner == "," or (after_thing and not _owner_word(words[0]))):
+            break
+        else:
+            # Nobody, or a relative of someone ("Dave's mum"): not a known person.
+            unmatched.append(" ".join(words))
+            if found:
+                break
+        if end >= len(tokens) or tokens[end].casefold() not in _LIST_JOINERS:
+            break
+        # "Dave, Erin, and Frank": the "and" after an Oxford comma joins too, and is the
+        # joiner that counts for the next item.
+        i = end
+        while i < len(tokens) and tokens[i].casefold() in _LIST_JOINERS:
+            joiner = tokens[i].casefold()
+            i += 1
+    return matched, unmatched
+
+
+def _people_named(said: str, candidates, sender: Participant, families: dict[int, str],
+                  trip_on: bool) -> tuple[Participant, ...]:
+    """Who one item of a "for" list stands for, by the same matching a split name gets in
+    _read_reference: a person, their family, or a trip label. "My" is the sender, as "me" is."""
+    if said.casefold() == "my":
+        said = "me"
+    result = _read_reference({"kind": "named", "include_sender": False,
+                              "people": [{"name": said, "is_family": False}]},
+                             candidates, sender, families, trip_on)
+    return result.people if not result.warnings else ()
+
+
+def _read_reference(reference: dict | None, candidates, sender: Participant,
+                    families: dict[int, str], trip_on: bool, message: str | None = None) -> SplitResult:
     """Turns the model's split_reference into the participants who share the entry.
 
     `candidates` are the people who may be named: the sender's trip members while a trip is on,

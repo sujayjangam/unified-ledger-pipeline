@@ -46,7 +46,7 @@ supersedes the old one rather than editing history.
 | [0036](0036-trip-switch-per-person.md) | Trip mode is a switch per person, picked from buttons, shown by a pinned banner | Accepted | 2026-11-14 |
 | [0037](0037-paid-by-person-read-from-text.md) | The payer is a person column, read from the message by Python; an owned account decides the payer | Accepted | 2026-11-15 |
 | [0038](0038-paid-by-button-starts-from-the-message.md) | A tapped payer starts from the account the message named, using the card's own directory snapshot | Accepted | 2026-11-16 |
-| [0039](0039-splits-read-by-the-model-worked-out-by-python.md) | The model reads who shares an entry; Python matches the names and hands out the cents | Accepted | 2026-11-16 |
+| [0039](0039-splits-read-by-the-model-worked-out-by-python.md) | The model reads who shares an entry; Python matches the names and hands out the cents | Partly superseded by [0054](0054-paid-for-someone-means-they-owe.md) | 2026-11-16 |
 | [0040](0040-model-as-second-reader-for-the-payer.md) | The model is a second reader for the payer, used only when Python finds nobody | Accepted | 2026-11-16 |
 | [0041](0041-split-menu-and-wider-people-menus.md) | The split menu, and people menus that offer every participant when no trip is on | Accepted | 2026-11-16 |
 | [0042](0042-uneven-shares-by-count.md) | Uneven shares by a count per person, read by the model and checked in Python | Accepted (edited 2026-11-18) | 2026-11-16 |
@@ -61,6 +61,7 @@ supersedes the old one rather than editing history.
 | [0051](0051-debts-per-person-then-families.md) | Debts are worked out per person, then rolled up to families | Accepted | 2026-11-19 |
 | [0052](0052-settle-up-by-typed-message.md) | Settling up any bill by a typed "settle" message, linked to the bills it clears | Accepted | 2026-11-19 |
 | [0053](0053-other-currency-paybacks-at-a-reference-rate.md) | A payback in another currency is converted at a reference rate, then checked against the statement | Accepted | 2026-11-19 |
+| [0054](0054-paid-for-someone-means-they-owe.md) | A cost paid "for" someone means they owe it | Accepted | 2026-11-21 |
 
 ## Writing a new one
 

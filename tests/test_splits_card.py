@@ -223,3 +223,27 @@ async def test_split_without_a_split_word_is_dropped(monkeypatch, directory):
     _, pending, text = await _card(monkeypatch, directory, WITH_CAROL, message="dinner with Carol 70")
     assert pending['split'] == () and pending['split_warnings'] == ()
     assert 'Split' not in text
+
+
+@pytest.mark.parametrize('trip', [True, False])
+async def test_paid_for_someone_shows_who_owes_and_saves_it(monkeypatch, directory, trip):
+    """"Bob paid 50 for Carol's ticket": Carol owes Bob all of it, with no taps (#154)."""
+    context, pending, text = await _card(monkeypatch, directory, message="Bob paid 50 for Carol's ticket",
+                                         amount=50, payment_method='Cash', trip=trip)
+    assert pending['paid_by_participant_id'] == 2
+    assert '👥 **Split:** Carol owes Bob 50.00' in text
+    save, _ = await _confirm(monkeypatch, context)
+    assert save.call_args.kwargs['splits'] == [(3, 5000)]
+
+
+async def test_paid_for_yourself_is_no_split(monkeypatch, directory):
+    """"For me" with the sender paying names only the payer: nothing is owed."""
+    context, _, text = await _card(monkeypatch, directory, message='I paid 50 for me', amount=50)
+    assert 'Split' not in text
+    save, _ = await _confirm(monkeypatch, context)
+    assert save.call_args.kwargs['splits'] == []
+
+
+async def test_a_transfer_for_someone_is_never_split(monkeypatch, directory):
+    _, pending, _ = await _card(monkeypatch, directory, message='sent 50 to Bob for Carol', transaction_type='Transfer')
+    assert pending['split'] == ()
