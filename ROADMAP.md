@@ -61,6 +61,14 @@ message itself for costs logged before it starts.
 
 **Recently shipped**, newest first. Each PR and ADR has the full story.
 
+- **2026-11-21: a "between" list read by Python first**
+  ([#158](https://github.com/sujayjangam/unified-ledger-pipeline/issues/158),
+  [ADR-0055](docs/decisions/0055-between-list-read-by-python-first.md)). "Carol paid 100.
+  Split between Reds" went to the whole trip, and "Split between Blues" added the payer: the
+  model misread both. Python now reads a "between" list of known names itself, and the model's
+  "everyone" with no names is a warning when the message lists sharers. A first slice of the
+  Python-only split reader planned for after the trip (#122). No prompt change, no migration.
+
 - **2026-11-21: a cost paid "for" someone is theirs to owe**
   ([#154](https://github.com/sujayjangam/unified-ledger-pipeline/issues/154),
   [ADR-0054](docs/decisions/0054-paid-for-someone-means-they-owe.md)). "Carol paid 50 for

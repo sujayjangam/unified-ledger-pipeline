@@ -142,8 +142,10 @@ the options turned down, and what it cost. The ones that shaped the system most:
 
 - Say who shares a bill in plain words: "split with Carol", "split between Alice's and Bob's
   families", "split between everyone except Dave". "With" includes you; "between" doesn't. The
-  model reads only who. Python matches the names and hands out whole cents that add up to the
-  amount. The card shows every share before Confirm, and the shares are saved with the entry. A
+  model reads only who, and a "between" list of known people or families is read by Python
+  itself, so "Carol paid, split between the Reds" is the Reds alone
+  ([ADR-0055](docs/decisions/0055-between-list-read-by-python-first.md)). Python matches the
+  names and hands out whole cents that add up to the amount. The card shows every share before Confirm, and the shares are saved with the entry. A
   name it can't match is a warning line, never a guess.
 - A cost paid for someone is theirs to owe: "Carol paid 50 for Dave's ticket" shows "Dave owes
   Carol 50.00". A gift word, or a name the bot doesn't know, means nobody owes

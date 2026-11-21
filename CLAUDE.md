@@ -134,8 +134,14 @@ Env vars (`.env.example` shows the format):
   the names and `share_out` hands out whole cents (both in `app/services/splits.py`). The message
   decides whether an entry is split, never trip mode: a split the model read is kept only if the text has a
   split word (`asks_for_split`), and "with"/"between" decide whether the sender shares
-  (`sender_shares`), both read by Python. With no split word, a cost paid "for" known people
-  ("for Dave's ticket", "on my behalf") is theirs to owe: `read_for_people` reads it in Python,
+  (`sender_shares`), both read by Python. A "between" list that Python reads in full (every
+  item a known person, family, trip label or "me", no known name after it) decides who shares,
+  over the model's names and kind (`read_split_list`,
+  [ADR-0055](docs/decisions/0055-between-list-read-by-python-first.md)): only when the model
+  read a split, with no count, uneven or "except" words. "With" lists stay the model's. The
+  model's "everyone" with no names and no "except" names, in a message that lists sharers
+  but never says everyone, is a ⚠️ line, never the whole trip. With no split word, a cost paid
+  "for" known people ("for Dave's ticket", "on my behalf") is theirs to owe: `read_for_people` reads it in Python,
   only after the split rules find nobody, so no split read today changes. A gift word, a
   relative ("Dave's mum") or a list with an unknown name records no split
   ([ADR-0054](docs/decisions/0054-paid-for-someone-means-they-owe.md)). Nobody is guessed: an unmatched name, or

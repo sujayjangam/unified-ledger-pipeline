@@ -279,8 +279,13 @@ def _mentions(name: str, message: str) -> list[re.Match]:
 def _is_paying(found: re.Match, message: str) -> bool:
     """True when this mention of a name says who paid, not who shares: "Carol paid",
     "Carol pays", "paid by Carol", "paid for by Carol" - the same wordings read_payer reads."""
-    return bool(re.match(r"\s+(?:paid|pays)(?!\w)", message[found.end():], re.IGNORECASE)
-                or re.search(r"(?<!\w)paid\s+(?:for\s+)?by\s+$", message[:found.start()], re.IGNORECASE))
+    return _paying_at(message, found.start(), found.end())
+
+
+def _paying_at(message: str, start: int, end: int) -> bool:
+    """_is_paying for the name at message[start:end]."""
+    return bool(re.match(r"\s+(?:paid|pays)(?!\w)", message[end:], re.IGNORECASE)
+                or re.search(r"(?<!\w)paid\s+(?:for\s+)?by\s+$", message[:start], re.IGNORECASE))
 
 
 def _only_paying(name: str, message: str, count: int) -> bool:
@@ -656,6 +661,126 @@ def _people_named(said: str, candidates, sender: Participant, families: dict[int
     return result.people if not result.warnings else ()
 
 
+# --- The list after "between" or "split with", read by Python first (#158) -------------------
+# "Carol paid 100 sgd for cash. Split between Reds" came back from the model as the whole trip,
+# "Split between Blues." with the payer added, and "Split between Erin and Frank" as the whole
+# trip again, over 95% sure (3 real calls, 2026-11-21, temperature 0). The model never sees the
+# trip's names or family labels, so it guesses which words are people. Python has the list.
+# A sentence ends at . ! ? ; or a new line, but not at the point in 28.62. Commas don't end it:
+# they separate names.
+_SENTENCE_END = re.compile(r"[!?;\n]|\.(?!\d)")
+# Words that end a list of names: "for dinner", "paid by card", "on Tuesday", "equally". Any
+# other word after a name may be part of a name the trip doesn't have ("Ann Kim" when only Ann
+# Lee is on it), so the list is left to the model.
+_LIST_ENDERS = _PREPOSITIONS | {"for", "paid", "pay", "pays", "each", "equally", "evenly"}
+
+
+def _ends_list(word: str) -> bool:
+    """True when a word after a name, or after a comma, can't be part of a name: a word from
+    _LIST_ENDERS, an amount or a currency."""
+    word = word.casefold()
+    return word in _LIST_ENDERS or _phrase_start(word)
+
+
+def _lists_sharers(message: str) -> bool:
+    """True when the message says who shares with "between", "among" or "split with"."""
+    return bool(_BETWEEN.search(message) or _SPLIT_WITH.search(message))
+
+
+def read_split_list(message: str, candidates, sender: Participant, families: dict[int, str],
+                    trip_on: bool) -> list[str] | None:
+    """The sharers as said in the list after "between", "among" or "amongst", or None when
+    Python can't read every one of them exactly.
+
+    Only "between": it lists the sharers in full (as sender_shares reads it), so the payer
+    shares only if listed. "Carol paid 90, split with Bob" may mean Carol and Bob, or the
+    sender and Bob, so "with" keeps the model's reading.
+
+    "Split between Reds", "between Carol, Dave and me", "between the Blues & Erin": each
+    item, separated by ",", "&" or "and", is a person, a family, a trip label or "me", matched
+    as a "for" list item is (_people_named). The list ends at the end of the sentence, or at a
+    word that can't be part of a name (_ends_list), after a name ("between Carol and Dave for
+    dinner") or after a comma ("between Carol and Dave, paid by card").
+
+    None, so the model's reading stands, when:
+      - an item names nobody: "between Carol and the kids", "between Carol, Dave, Zed";
+      - a name runs on into a word that may be part of another name: "between Carol and Ann
+        Kim" when only Ann Lee is known;
+      - a name is the owner of a thing ("between Carol's place and the airport");
+      - a known name comes after the end of the list in the same sentence, other than as the
+        payer ("between Carol and Dave for dinner with Erin"): a name the list may have missed.
+    """
+    between = _BETWEEN.search(message)
+    if between is None:
+        return None
+    start = between.start("rest")
+    stop = next((m.start() for m in _SENTENCE_END.finditer(message, start)), len(message))
+    tokens = list(_LIST_TOKEN.finditer(message, start, stop))
+
+    def named_by(words: list[str]) -> int:
+        """How many of the words, from the first, name someone: the longest run that does."""
+        for n in range(min(len(words), _MAX_NAME_WORDS), 0, -1):
+            if _people_named(" ".join(words[:n]), candidates, sender, families, trip_on):
+                return n
+        return 0
+
+    said, i, joiner, rest = [], 0, None, stop
+    while i < len(tokens):
+        # One item: the words up to the next joiner or mark.
+        end = i
+        while (end < len(tokens) and _WORD_TOKEN.fullmatch(tokens[end].group())
+               and tokens[end].group().casefold() != "and"):
+            end += 1
+        words = [t.group() for t in tokens[i:end]]
+        n = named_by(words)
+        # "between Carol and Dave, Erin paid": Erin paid, she isn't listed.
+        paying = bool(n) and _paying_at(message, tokens[i].start(), tokens[i + n - 1].end())
+        if not n or paying:
+            if joiner == "," and said and (paying or (words and _ends_list(words[0]))):
+                rest = tokens[i].start()  # ", paid by card": the list ended at the comma
+                break
+            return None  # "Erin, Frank, Zed": Zed may be a sharer the trip doesn't have
+        if n < len(words) and (_POSSESSIVE.search(words[n - 1]) or not _ends_list(words[n])):
+            # "Carol's place" is a thing, not Carol; "Ann Kim" may not be Ann Lee.
+            return None
+        said.append(" ".join(words[:n]))
+        if n < len(words):
+            rest = tokens[i + n].start()  # "Dave for dinner": the list ends at "for"
+            break
+        if end >= len(tokens) or tokens[end].group().casefold() not in _LIST_JOINERS:
+            rest = tokens[end].start() if end < len(tokens) else stop
+            break
+        # "Carol, Dave, and Erin": the "and" after an Oxford comma is the joiner that counts.
+        i = end
+        while i < len(tokens) and tokens[i].group().casefold() in _LIST_JOINERS:
+            joiner = tokens[i].group().casefold()
+            i += 1
+    if not said or _names_someone(message, rest, stop, candidates, sender, families, trip_on):
+        return None
+    return said
+
+
+def _names_someone(message: str, start: int, stop: int, candidates, sender: Participant,
+                   families: dict[int, str], trip_on: bool) -> bool:
+    """True when message[start:stop] names a known person, family, label or "me", other than
+    as the payer ("Erin paid", "paid by Erin")."""
+    words = list(_WORD_TOKEN.finditer(message, start, stop))
+    for k in range(len(words)):
+        for n in range(1, min(_MAX_NAME_WORDS, len(words) - k) + 1):
+            run = words[k:k + n]
+            if (_people_named(" ".join(w.group() for w in run), candidates, sender, families, trip_on)
+                    and not _paying_at(message, run[0].start(), run[-1].end())):
+                return True
+    return False
+
+
+def _model_read_counts(reference: dict) -> bool:
+    """True when the model read a count for anyone, or a default count."""
+    return reference.get("default_count") is not None or any(
+        isinstance(e, dict) and e.get("count") is not None
+        for e in (*(reference.get("people") or ()), *(reference.get("except_people") or ())))
+
+
 def _read_reference(reference: dict | None, candidates, sender: Participant,
                     families: dict[int, str], trip_on: bool, message: str | None = None) -> SplitResult:
     """Turns the model's split_reference into the participants who share the entry.
@@ -674,6 +799,16 @@ def _read_reference(reference: dict | None, candidates, sender: Participant,
     if not reference or reference.get("kind", "none") == "none":
         return SplitResult((), ())
     candidates = tuple(candidates)
+    # Who shares, read by Python from a "between" list when it can read all of it (#158): the
+    # model's names and kind give way. Only for a split the model also read, so
+    # Python never starts one ("taxi between the hotel and the airport"), and only an even one:
+    # a count, uneven wording or an "except" keeps the model's reading and the rules below.
+    if (message is not None and not _model_read_counts(reference) and not says_uneven(message)
+            and not _EXCEPT_WORD.search(message)):
+        said = read_split_list(message, candidates, sender, families, trip_on)
+        if said is not None:
+            reference = {**reference, "kind": "named", "except_people": [],
+                         "people": [{"name": name, "is_family": False} for name in said]}
     if message is not None:
         # Before anything reads the entries: an added count is what lets "the rest" below
         # read its own count (it is read only beside someone else's).
@@ -767,8 +902,15 @@ def _read_reference(reference: dict | None, candidates, sender: Participant,
     people = {}
     explicit_counts = {}
     kind = reference.get("kind")
-    if kind == "everyone" and entries and message is not None and not says_everyone:
-        kind = "named"
+    if kind == "everyone" and message is not None and not says_everyone:
+        if entries:
+            kind = "named"
+        elif not exceptions and _lists_sharers(message):
+            # The message lists who shares, the model named nobody and said "everyone", and
+            # the message never says everyone: the model read "Split between Erin and Frank"
+            # this way, over 95% sure (#158). Nobody is guessed. A bare "split dinner 80" on a
+            # trip still means the trip, and "split except Dave" everyone but Dave.
+            return SplitResult((), (NOBODY_SHARES_WARNING,))
     if kind == "everyone":
         if not trip_on:
             # Outside a trip "everyone" has no fixed meaning, and the whole directory would be

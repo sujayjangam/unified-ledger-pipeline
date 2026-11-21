@@ -950,3 +950,93 @@ def test_for_matches_only_the_candidates():
     """Off a trip's member list, a name is nobody, as in any split."""
     result = resolve_split({'kind': 'none'}, FOR_PEOPLE[:3], FOR_PEOPLE[0], {}, True, "Carol paid 50 for Dave's ticket")
     assert result.people == () and result.warnings == ()
+
+
+# --- The "between" list, read by Python first (#158) -----------------------------------------
+# The same fictional trip as the "for" tests: Alice sends; Bob and Frank are the Reds, Carol
+# and Dave the Blues.
+_EVERYONE_NO_NAMES = {'kind': 'everyone', 'include_sender': False, 'people': []}
+
+
+@pytest.mark.parametrize('message,reference,names', [
+    # The model said "everyone" with no names (over 95% sure for the second, 2026-11-21).
+    ('Carol paid 100 sgd for cash. Split between Reds', _EVERYONE_NO_NAMES, ['Bob', 'Frank']),
+    ('Dave paid 28.62 sgd for SIM cards x4. Split between Erin and Frank', _EVERYONE_NO_NAMES,
+     ['Erin', 'Frank']),
+    # The model added the payer, who isn't in the list.
+    ('Erin paid 157 sgd for the hotel. Split between Blues.',
+     {'kind': 'named', 'include_sender': True,
+      'people': [{'name': 'Erin', 'is_family': False}, {'name': 'Blues', 'is_family': False}]},
+     ['Carol', 'Dave']),
+])
+def test_between_list_beats_the_model(message, reference, names):
+    result = resolve_split(reference, FOR_PEOPLE, FOR_PEOPLE[0], FOR_FAMILIES, True, message)
+    assert [p.display_name for p in result.people] == names and result.warnings == ()
+
+
+@pytest.mark.parametrize('message,said', [
+    ('dinner 80 split between Erin and Frank', ['Erin', 'Frank']),
+    ('lunch 60 split between Carol, Dave, and me', ['Carol', 'Dave', 'me']),   # an Oxford comma
+    ('taxi 40 between the Reds & Erin', ['the Reds', 'Erin']),
+    ("hotel 300 split between Bob's family and Erin", ["Bob's family", 'Erin']),
+    ('dinner 80 split between Ann Lee and Erin', ['Ann Lee', 'Erin']),         # a two-word name
+    ('split between Erin and Frank for dinner', ['Erin', 'Frank']),             # words end the list
+    ('split between Erin and Frank 28.62', ['Erin', 'Frank']),                  # not a sentence end
+    ('split between Erin and Frank, paid by card', ['Erin', 'Frank']),
+    ('split between Erin and Frank, Carol paid', ['Erin', 'Frank']),            # the payer
+    ('Split between Erin. Frank paid', ['Erin']),                               # the sentence ends
+    ('Carol paid 90, split among Erin and Frank', ['Erin', 'Frank']),
+    ('split between Erin and Frank equally', ['Erin', 'Frank']),
+    ('split between Erin and Frank, 30', ['Erin', 'Frank']),
+    ('split between Erin and Frank sgd 30', ['Erin', 'Frank']),
+])
+def test_read_split_list(message, said):
+    from app.services.splits import read_split_list
+    assert read_split_list(message, FOR_PEOPLE, FOR_PEOPLE[0], FOR_FAMILIES, True) == said
+
+
+@pytest.mark.parametrize('message', [
+    'dinner 80 split with Erin',                                # "with" keeps the model's reading
+    'split between Erin and the kids',                          # an unknown name after "and"
+    'split between Erin and Zed',
+    'dinner 80 split between all of us',                        # not a name: the "everyone" rules
+    'split between everyone except Erin',
+    "taxi 40 between Carol's place and the airport",            # an owner, not a sharer
+    'split between Erin and Frank for dinner with Dave',        # a name after the list
+    'split between Erin/Frank',
+    'split between Ann and Erin',                               # two people called Ann
+    'split between Erin, Frank, Zed',                           # an unknown name after a comma
+    'split between Erin and Ann Smith',                         # "Ann" runs on into another name
+    'split between Erin and Frank yesterday',                   # not clearly the end: model's
+])
+def test_read_split_list_leaves_unclear_lists_to_the_model(message):
+    from app.services.splits import read_split_list
+    assert read_split_list(message, FOR_PEOPLE, FOR_PEOPLE[0], FOR_FAMILIES, True) is None
+
+
+def test_between_list_never_starts_a_split():
+    """The model read no split: Python's list doesn't make one."""
+    result = resolve_split({'kind': 'none'}, FOR_PEOPLE, FOR_PEOPLE[0], FOR_FAMILIES, True,
+                           'taxi 40 between Erin and Frank')
+    assert result.people == () and result.warnings == ()
+
+
+def test_between_list_leaves_counts_to_the_model():
+    """A split by count keeps the model's reading and its counts."""
+    reference = {'kind': 'named', 'include_sender': False, 'count_unit': 'nights',
+                 'people': [{'name': 'Erin', 'count': 2}, {'name': 'Frank', 'count': 3}]}
+    result = resolve_split(reference, FOR_PEOPLE, FOR_PEOPLE[0], FOR_FAMILIES, True,
+                           'hotel 500 split between Erin and Frank, Erin 2 nights, Frank 3 nights')
+    assert [p.display_name for p in result.people] == ['Erin', 'Frank'] and result.counts == {5: 2, 6: 3}
+
+
+@pytest.mark.parametrize('message,names,warnings', [
+    # The list names someone the trip doesn't have, and the model said "everyone".
+    ('Carol paid 100 for cash. Split between Zed', [], ("⚠️ Couldn't tell who shares this. No split recorded.",)),
+    # Saying everyone, or no list at all, still means the trip.
+    ('dinner 80 split between all of us', ['Alice', 'Bob', 'Carol', 'Dave', 'Erin', 'Frank', 'Ann Lee', 'Ann Kim'], ()),
+    ('split dinner 80', ['Alice', 'Bob', 'Carol', 'Dave', 'Erin', 'Frank', 'Ann Lee', 'Ann Kim'], ()),
+])
+def test_everyone_with_no_names_needs_the_word(message, names, warnings):
+    result = resolve_split(_EVERYONE_NO_NAMES, FOR_PEOPLE, FOR_PEOPLE[0], FOR_FAMILIES, True, message)
+    assert [p.display_name for p in result.people] == names and result.warnings == warnings
