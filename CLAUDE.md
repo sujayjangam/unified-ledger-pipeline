@@ -281,7 +281,8 @@ Env vars (`.env.example` shows the format):
   saved from the line's receiver and a shortcut's pass-on piece from its middle person
   (`Part.giver`); a payment cut over several cards gets disjoint bill paths (`_sgd_paths`). Each
   part's key is made when the card opens, so a failed Confirm retries only what's missing, and
-  the payer can't change after saving starts. Full lines only.
+  the payer can't change after saving starts. The payer is never someone the card pays, and a
+  card that hands money back to the owing family is paid only from inside it. Full lines only.
 - A message whose first word is "settle" (or first words "family settle") is a payback, read
   by `app/services/settle.py` with no model
   ([ADR-0052](docs/decisions/0052-settle-up-by-typed-message.md),

@@ -387,3 +387,20 @@ async def test_shortcut_line_shows_tip_and_saves_each_debt_from_its_own_giver(sg
         (3, 1, None, 'SGD', '10.00', '10.00'),
         (3, 2, None, 'IDR', '200.00', '2.00'),
         (2, 1, None, 'SGD', '2.00', '2.00')]
+
+
+async def test_netted_card_is_paid_only_from_inside_the_owing_family(sgd, directory):
+    """Codex review of #171: Carol owes Alice 10.00 and Alice owes Carol USD 2.00 (4.00), so
+    the card asks 6.00. Paid by Bob, an outsider, it would record Bob handing over 10.00 and
+    Alice receiving 4.00, so only Carol's family may pay it."""
+    sgd[0][:] = [dict(transaction_id='a', date=DAY, currency='SGD', paid_by=1, splits={3: 1000}),
+                 dict(transaction_id='b', date=DAY, currency='USD', paid_by=3, splits={1: 200})]
+    context = context_for(directory)
+    update, query = tap('sgd:new:7:1:600')
+    await bot.handle_sgd_button(update, context)
+    card = context.user_data['pending_settlements'][20]
+    assert [p.id for p in card['people']] == [3]
+    update, query = tap('sgd:person:2')
+    query.message.message_id = 20
+    await bot.handle_sgd_button(update, context)
+    assert context.user_data['pending_settlements'][20]['from_id'] is None

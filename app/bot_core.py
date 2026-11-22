@@ -2485,6 +2485,11 @@ async def _new_sgd_settlement(update, context):
                                       if p.giver is None and not p.reverse}
         payer = line.from_unit[1] if line.from_unit[0] == 'person' else sender.id if sender.id in members else None
         payer = None if payer in paid_to else payer
+        # A netted card hands money back to the owing family (the receiver repays their
+        # smaller debt). Paid by an outsider, that would record the outsider handing over the
+        # gross amount and a relative receiving money they never got (Codex review, #171),
+        # so such a card is paid only from inside the owing family.
+        insiders_only = any(p.payment.to_unit[1] in members for p in line.parts)
         all_paths = _sgd_paths(lines, entries, families, paid, trip.member_ids)
         parts = []
         for j, part in enumerate(line.parts):
@@ -2499,7 +2504,8 @@ async def _new_sgd_settlement(update, context):
                     family=line.from_unit[1] if line.from_unit[0] == 'family' else None,
                     date=get_sgt_now().date(), entered_by_participant_id=sender.id,
                     people=tuple(sorted((p for p in directory.participants
-                                         if p.id in trip.member_ids and p.id not in paid_to),
+                                         if p.id in trip.member_ids and p.id not in paid_to
+                                         and (p.id in members or not insiders_only)),
                                         key=lambda p: (p.id not in members, p.display_name.lower(), p.id))))
     except Exception as exc:
         await query.answer(str(exc) if isinstance(exc, _SettlementUnavailable) else BALS_ERROR)
