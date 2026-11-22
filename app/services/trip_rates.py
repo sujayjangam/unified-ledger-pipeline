@@ -5,7 +5,7 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from sqlalchemy import text
 
-from app.database import get_connection
+from app.database import get_connection, get_read_connection
 
 # How far a typed rate may be from the ECB rate. Real card, Wise or money-changer rates sit
 # within a few percent of it, while a rate typed the wrong way round is far outside even for
@@ -17,7 +17,7 @@ TYPED_LOW, TYPED_HIGH = Decimal('0.8'), Decimal('1.25')
 def get_trip_rates(trip_id):
     """Return currency-keyed rows; None means a failed read, never an empty trip."""
     try:
-        with get_connection() as conn:
+        with get_read_connection() as conn:
             rows = conn.execute(text('''
                 SELECT currency, rate, rate_date, source, set_by_participant_id, ecb_rate
                 FROM trip_fx_rates WHERE trip_id = :trip_id AND paid_currency = 'SGD'

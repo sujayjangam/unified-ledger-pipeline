@@ -70,7 +70,7 @@ def writing(monkeypatch):
     """Replace every read and token request before a writer can reach external I/O."""
     conn = MagicMock()
     conn.execute.return_value.all.return_value = list(NAMES.items())
-    monkeypatch.setattr(sheet, "get_connection", lambda: nullcontext(conn))
+    monkeypatch.setattr(sheet, "get_read_connection", lambda: nullcontext(conn))
     monkeypatch.setattr(sheet, "trip_sheet_target", MagicMock(return_value=("Beach", SHEET_ID)))
     monkeypatch.setattr(sheet, "trip_families", lambda *_: ())
     monkeypatch.setattr(sheet, "get_trip_split_entries", MagicMock(return_value=[bill(description="=1+1")]))

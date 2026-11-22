@@ -565,7 +565,7 @@ def test_everyday_reads_use_null_safe_scope(monkeypatch, trip_id):
     conn = manager.__enter__.return_value
     conn.execute.return_value.mappings.return_value.all.return_value = []
     conn.execute.return_value.fetchall.return_value = []
-    monkeypatch.setattr(ledger_queries, 'get_connection', lambda: manager)
+    monkeypatch.setattr(ledger_queries, 'get_read_connection', lambda: manager)
     assert ledger_queries.get_trip_split_entries(trip_id) == []
     assert ledger_queries.get_trip_settlements(trip_id) == []
     for call in conn.execute.call_args_list:
@@ -640,7 +640,7 @@ def test_trip_paybacks_include_ordered_bill_rows_and_fail_closed(monkeypatch):
     ]
     conn.execute.side_effect = [rows, bills]
     connect = MagicMock(return_value=manager)
-    monkeypatch.setattr(ledger_queries, 'get_connection', connect)
+    monkeypatch.setattr(ledger_queries, 'get_read_connection', connect)
     assert ledger_queries.get_trip_settlements(7) == [dict(id=2, bills=[]), dict(id=1, bills=[
         dict(transaction_id='a', for_id=3, cents=100, payer_id=1),
         dict(transaction_id='b', for_id=4, cents=200, payer_id=2)])]
@@ -693,7 +693,7 @@ def test_read_shape_order_and_failure(monkeypatch):
     results[0].mappings.return_value.all.return_value = [row]
     results[1].mappings.return_value.all.return_value = []
     conn.execute.side_effect = results
-    monkeypatch.setattr(ledger_queries, 'get_connection', lambda: manager)
+    monkeypatch.setattr(ledger_queries, 'get_read_connection', lambda: manager)
     assert ledger_queries.get_trip_settlements(7) == [dict(row, bills=[])]
     sql, params = conn.execute.call_args_list[0].args
     assert 'for_participant_id AS for_id' in str(sql)

@@ -10,7 +10,7 @@ import httpx
 from sqlalchemy import text
 
 from app.add_expense import format_cents, format_money
-from app.database import get_connection
+from app.database import get_read_connection
 from app.services.balances import open_bill_shares
 from app.services.ledger_queries import get_trip_settlements, get_trip_split_entries
 from app.services.trips import trip_families, trip_sheet_target
@@ -140,7 +140,7 @@ async def refresh_trip_sheet(trip_id: int) -> None:
         # Serialize from the reads onward, so a waiting save writes fresh data. Separate
         # Cloud Run instances can still race; the next save reads fresh and corrects it.
         async with _trip_locks.setdefault(trip_id, asyncio.Lock()):
-            with get_connection() as conn:
+            with get_read_connection() as conn:
                 target = trip_sheet_target(conn, trip_id)
                 if target is None:
                     return

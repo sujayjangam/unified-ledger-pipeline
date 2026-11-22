@@ -150,7 +150,7 @@ def _fake_connection(monkeypatch, row):
     conn.execute.return_value.mappings.return_value.first.return_value = row
     context_manager = MagicMock()
     context_manager.__enter__.return_value = conn
-    monkeypatch.setattr(ledger_queries, "get_connection", lambda: context_manager)
+    monkeypatch.setattr(ledger_queries, "get_read_connection", lambda: context_manager)
     return conn
 
 
@@ -174,7 +174,7 @@ def test_a_failed_query_returns_none_rather_than_raising(monkeypatch):
     def unreachable():
         raise ConnectionError("Neon is down")
 
-    monkeypatch.setattr(ledger_queries, "get_connection", unreachable)
+    monkeypatch.setattr(ledger_queries, "get_read_connection", unreachable)
 
     assert ledger_queries.find_recent_duplicate(550, "SGD", 5) is None
 

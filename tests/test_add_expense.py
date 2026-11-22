@@ -83,7 +83,8 @@ def _fake_connection(monkeypatch, module):
     conn = MagicMock()
     context_manager = MagicMock()
     context_manager.__enter__.return_value = conn
-    monkeypatch.setattr(module, "get_connection", lambda: context_manager)
+    factory = "get_read_connection" if module is ledger_queries else "get_connection"
+    monkeypatch.setattr(module, factory, lambda: context_manager)
     return conn
 
 

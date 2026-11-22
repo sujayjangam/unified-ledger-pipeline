@@ -303,6 +303,7 @@ def _fake_connection(monkeypatch, rowcount=1):
     conn.execute.return_value.rowcount = rowcount
     conn.__enter__.return_value = conn
     monkeypatch.setattr(ledger_queries, "get_connection", lambda: conn)
+    monkeypatch.setattr(ledger_queries, "get_read_connection", lambda: conn)
     return conn
 
 

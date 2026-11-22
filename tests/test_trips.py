@@ -31,7 +31,7 @@ def test_trip_families():
 def test_bot_reads_trip_and_members_in_one_connection(monkeypatch, active):
     manager = MagicMock()
     connection = MagicMock(return_value=manager)
-    monkeypatch.setattr(bot_core, "get_connection", connection)
+    monkeypatch.setattr(bot_core, "get_read_connection", connection)
     load = MagicMock(return_value=active)
     members = MagicMock(return_value=((1, "Alice family"), (2, "Bob family"), (3, "Carol family")))
     monkeypatch.setattr(bot_core, "load_active_trip", load)
@@ -140,6 +140,7 @@ def command_db(monkeypatch, directory):
     monkeypatch.setattr(bot_core, "_load_directory", lambda: directory)
     manager = MagicMock()
     monkeypatch.setattr(bot_core, "get_connection", lambda: manager)
+    monkeypatch.setattr(bot_core, "get_read_connection", lambda: manager)
     operations = {}
     defaults = {"load_active_trip": None, "member_trips": ([BEACH], False),
                 "switch_trip_on": BEACH, "switch_trip_off": BEACH,

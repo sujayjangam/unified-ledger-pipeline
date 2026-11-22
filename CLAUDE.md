@@ -46,6 +46,11 @@ committing doc changes or when picking work back up after a gap; otherwise check
 - **Never poll the production bot token** — polling deletes its registered webhook. Local runs use
   `python -m app.bot_local`, which loads `.env.local` (a separate test bot and a Neon branch) and
   refuses the production token ([ADR-0019](docs/decisions/0019-separate-bot-token-for-local-testing.md)).
+- **The bot runs on Cloud Run in `us-east4`**, next to Neon in Ohio
+  ([ADR-0061](docs/decisions/0061-cloud-run-next-to-the-database.md)). The idle Singapore
+  service is the rollback: its `WEBHOOK_URL` points at the us-east4 URL, so a start there can't
+  take the webhook back. Point it at itself only to roll back. The deploy trigger's
+  `_DEPLOY_REGION` is `us-east4`, in the trigger and in its inline build.
 - `tests/` never touches the network or a database: an autouse fixture in `tests/conftest.py`
   makes any connection fail, because locally `.env` is production. Stub queries and Telegram
   objects (see `tests/test_button_callback.py`). Test-only dependencies go in
@@ -366,6 +371,14 @@ Env vars (`.env.example` shows the format):
 
 - The engine (`app/database.py`) is created lazily, never at import time, so importing any module
   works without a `.env` — the CI import check depends on it.
+- Round trips to the database are what make a screen slow: about 21 ms each from `us-east4`,
+  0.22 s from Singapore before the move ([ADR-0060](docs/decisions/0060-bot-reads-in-autocommit.md)).
+  In the bot, a block that only runs `SELECT`s and never commits uses `get_read_connection()`
+  (autocommit: no `BEGIN`, no `ROLLBACK`); the REST API and CLI still use `get_connection()`.
+  Anything that writes or stores a value stays on `get_connection()`. The settle card's loads
+  share one connection through each loader's `conn=` argument (`/trip_bals` doesn't yet), and
+  each loader keeps its own error handling. Keep `pool_pre_ping`, and never make the whole
+  engine autocommit.
 - **Money is integer cents.** In only through `dollars_to_cents`, out only through `format_cents`
   (both in `app/add_expense.py`). Never format a float amount yourself, and never split an amount
   by rounding each share — splits hand out whole cents

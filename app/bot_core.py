@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 import truststore
 import os
 import uuid
@@ -27,7 +28,7 @@ from app.services.ledger_queries import (
     get_trip_split_entries, get_trip_settlements,
 )
 from app.services.dates import apply_date_resolution
-from app.database import get_connection
+from app.database import get_connection, get_read_connection
 from app.services.participants import (
     CLOSED_CARD_WARNING, NO_WALLET_MESSAGE, Directory, WalletNotSetUp, load_directory, resolve_payment,
     NO_OUTSIDE_ACCOUNT_MESSAGE, PAYER_UNCLEAR_WARNING, OutsideAccountNotSetUp, read_payer,
@@ -80,7 +81,7 @@ def _load_directory() -> Directory:
     OpenAI call that takes seconds. Kept as its own function so tests can swap it for a fixture -
     they must never open a real connection (tests/conftest.py).
     """
-    with get_connection() as conn:
+    with get_read_connection() as conn:
         return load_directory(conn)
 
 
@@ -88,7 +89,7 @@ def _load_active_trip(participant_id: int) -> Trip | None:
     """Reads which trip, if any, is on. Read fresh for every entry, like the directory, so a
     /trip switch by this person applies to the very next message. Its own function so tests can
     swap it out without a database."""
-    with get_connection() as conn:
+    with get_read_connection() as conn:
         trip = load_active_trip(conn, participant_id)
         # Read members in this connection, without another checkout for payer inference.
         if trip is None:
@@ -807,7 +808,7 @@ async def trip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     authed = time.perf_counter()
     sender = directory.participant_by_telegram_id(str(update.effective_user.id))
     try:
-        with get_connection() as conn:
+        with get_read_connection() as conn:
             active = load_active_trip(conn, sender.id)
             choices, more = member_trips(conn, sender.id, 0, TRIP_PAGE_SIZE)
         status, keyboard = _trip_menu(active, choices, more, get_sgt_now().date())
@@ -863,7 +864,7 @@ async def _update_trip_banner(bot, chat_id, participant_id, active, previous, to
     """
     ok = True
     try:
-        with get_connection() as conn:
+        with get_read_connection() as conn:
             old_id = banner_message_id(conn, participant_id)
     except Exception as e:
         print(f"Could not read trip banner id: {e}")
@@ -1005,14 +1006,15 @@ TELEGRAM_MESSAGE_LIMIT = 4096
 BALS_CUT_SHORT = "… (Too long to show in full.)"
 
 
-def _load_bals_trip(participant_id: int, trip_id: int | None) -> Trip | None:
+def _load_bals_trip(participant_id: int, trip_id: int | None, *, conn=None) -> Trip | None:
     """The trip to show balances for, with its members' families, or None.
 
     trip_id None means "the trip this person has switched on". A trip id (from a button) is
     loaded only if this person is a member of it. Its own function, like _load_directory, so
     tests can swap it out without a database.
     """
-    with get_connection() as conn:
+    # Share one checkout per screen: each checkout costs a ping round trip to the database.
+    with (nullcontext(conn) if conn is not None else get_read_connection()) as conn:
         if trip_id is None:
             trip = load_active_trip(conn, participant_id)
         else:
@@ -1023,9 +1025,10 @@ def _load_bals_trip(participant_id: int, trip_id: int | None) -> Trip | None:
         return replace(trip, member_ids=tuple(pid for pid, _ in families), families=families)
 
 
-def _load_bals_choices(participant_id: int, offset: int):
+def _load_bals_choices(participant_id: int, offset: int, *, conn=None):
     """One page of this person's trips for the picker, newest first: (trips, more to come)."""
-    with get_connection() as conn:
+    # Share one checkout per screen: each checkout costs a ping round trip to the database.
+    with (nullcontext(conn) if conn is not None else get_read_connection()) as conn:
         return member_trips(conn, participant_id, offset, TRIP_PAGE_SIZE)
 
 
@@ -1855,11 +1858,13 @@ def _bill_date(value):
         return value
 
 
-def _load_settle_bills(trip):
+def _load_settle_bills(trip, *, conn=None):
     """Read and fold one scope with its own families; None is failure, never empty debts."""
     scope = trip.id if trip else None
-    entries = get_trip_split_entries(scope)
-    settlements = get_trip_settlements(scope)
+    # Share one checkout per screen: each checkout costs a ping round trip to the database.
+    with (nullcontext(conn) if conn is not None else get_read_connection()) as conn:
+        entries = get_trip_split_entries(scope, conn=conn)
+        settlements = get_trip_settlements(scope, conn=conn)
     if entries is None or settlements is None:
         raise RuntimeError('Bills or paybacks unavailable')
     opened = open_bill_shares(entries, dict(trip.families) if trip else {}, settlements)
@@ -1875,28 +1880,30 @@ def _load_settle_snapshot(sender, directory):
     An absent active trip is normal. Missing membership details or failed pages
     are errors, because silently omitting a trip could match the wrong bill.
     """
-    active = _load_bals_trip(sender.id, None)
-    trips = [active] if active else []
-    if active is None:
-        offset = 0
-        while True:
-            page = _load_bals_choices(sender.id, offset)
-            if page is None:
-                raise RuntimeError('Trip list unavailable')
-            choices, more = page
-            for choice in choices:
-                trip = _load_bals_trip(sender.id, choice.id)
-                if trip is None:
-                    raise RuntimeError('Trip unavailable')
-                trips.append(trip)
-            if not more:
-                break
-            if not choices:
-                raise RuntimeError('Empty unfinished trip page')
-            offset += TRIP_PAGE_SIZE
-    bills = list(_load_settle_bills(None))
-    for trip in trips:
-        bills.extend(_load_settle_bills(trip))
+    # One checkout for the screen saves a ping round trip to the database for each loader.
+    with get_read_connection() as conn:
+        active = _load_bals_trip(sender.id, None, conn=conn)
+        trips = [active] if active else []
+        if active is None:
+            offset = 0
+            while True:
+                page = _load_bals_choices(sender.id, offset, conn=conn)
+                if page is None:
+                    raise RuntimeError('Trip list unavailable')
+                choices, more = page
+                for choice in choices:
+                    trip = _load_bals_trip(sender.id, choice.id, conn=conn)
+                    if trip is None:
+                        raise RuntimeError('Trip unavailable')
+                    trips.append(trip)
+                if not more:
+                    break
+                if not choices:
+                    raise RuntimeError('Empty unfinished trip page')
+                offset += TRIP_PAGE_SIZE
+        bills = list(_load_settle_bills(None, conn=conn))
+        for trip in trips:
+            bills.extend(_load_settle_bills(trip, conn=conn))
     # Stable sorting retains the query's created_at ordering for same-day bills.
     # str() keeps an unparsed date (left as text by _bill_date) from crashing the sort;
     # a date's str is its ISO text, so the order is the same.
