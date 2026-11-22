@@ -2397,6 +2397,10 @@ def _sgd_keyboard(card, people=False):
         return _people_keyboard(card['people'], 'sgd:person', 'sgd:back', (card['from_id'],))
     first = ([InlineKeyboardButton('Confirm', callback_data='sgd:confirm')]
              if card['from_id'] is not None else [])
+    if card.get('save_started'):
+        # After a half-finished save only a retry makes sense: Cancel and Who paid would
+        # leave the saved parts without the rest (_sgd_tap refuses both as well).
+        return InlineKeyboardMarkup([first])
     return InlineKeyboardMarkup([first + [InlineKeyboardButton('Cancel', callback_data='sgd:cancel')],
                                  [InlineKeyboardButton('Who paid', callback_data='sgd:who')]])
 
@@ -2585,6 +2589,11 @@ async def _sgd_tap(query, context):
         await _refresh_saved_trip_sheet(card['trip_id'])
         return
     if action == 'cancel':
+        if card.get('save_started'):
+            # Some parts may already be saved. Cancelling would throw away the keys that let
+            # Confirm finish the rest, leaving the line half recorded, so only Confirm is left.
+            await query.answer('Some of this is already saved. Tap Confirm to finish it.')
+            return
         await query.answer()
         await query.edit_message_text(_sgd_card_text(card) + '\n❌ Cancelled.', reply_markup=None)
         pending.pop(message_id)

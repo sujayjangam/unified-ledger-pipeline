@@ -7,13 +7,19 @@ from sqlalchemy import text
 
 from app.database import get_connection
 
+# How far a typed rate may be from the ECB rate. Real card, Wise or money-changer rates sit
+# within a few percent of it, while a rate typed the wrong way round is far outside even for
+# currencies close to SGD (USD: 0.78 vs 1.28, 64% apart; AUD: 1.15 vs 0.87, 32% apart). Half
+# to double, the first try, let a wrong-way-round USD rate through.
+TYPED_LOW, TYPED_HIGH = Decimal('0.8'), Decimal('1.25')
+
 
 def get_trip_rates(trip_id):
     """Return currency-keyed rows; None means a failed read, never an empty trip."""
     try:
         with get_connection() as conn:
             rows = conn.execute(text('''
-                SELECT currency, rate, rate_date, source, set_by_participant_id
+                SELECT currency, rate, rate_date, source, set_by_participant_id, ecb_rate
                 FROM trip_fx_rates WHERE trip_id = :trip_id AND paid_currency = 'SGD'
                 ORDER BY currency
             '''), dict(trip_id=trip_id)).mappings().all()
@@ -24,20 +30,28 @@ def get_trip_rates(trip_id):
 
 
 def upsert_trip_rate(trip_id, currency, rate, rate_date, source, set_by_participant_id=None):
-    """Store an agreement; automatic inserts must not overwrite a concurrent typed rate."""
+    """Store an agreement; automatic inserts must not overwrite a concurrent typed rate.
+
+    A looked-up rate is also kept as `ecb_rate`. A typed rate replaces `rate` but never
+    `ecb_rate` (COALESCE keeps the old one), so the within-25% check in parse_rate
+    still has the ECB rate to compare with on the second and later typed rates.
+    """
+    ecb_rate = rate if source == 'frankfurter' else None
     try:
         with get_connection() as conn:
             conn.execute(text('''
                 INSERT INTO trip_fx_rates
-                    (trip_id, paid_currency, currency, rate, rate_date, source, set_by_participant_id)
-                VALUES (:trip_id, 'SGD', :currency, :rate, :rate_date, :source, :setter)
+                    (trip_id, paid_currency, currency, rate, ecb_rate, rate_date, source,
+                     set_by_participant_id)
+                VALUES (:trip_id, 'SGD', :currency, :rate, :ecb_rate, :rate_date, :source, :setter)
                 ON CONFLICT (trip_id, paid_currency, currency) DO UPDATE
                 SET rate = EXCLUDED.rate, rate_date = EXCLUDED.rate_date,
                     source = EXCLUDED.source, set_by_participant_id = EXCLUDED.set_by_participant_id,
+                    ecb_rate = COALESCE(EXCLUDED.ecb_rate, trip_fx_rates.ecb_rate),
                     set_at = now()
                 WHERE EXCLUDED.source = 'typed'
-            '''), dict(trip_id=trip_id, currency=currency, rate=rate, rate_date=rate_date,
-                       source=source, setter=set_by_participant_id))
+            '''), dict(trip_id=trip_id, currency=currency, rate=rate, ecb_rate=ecb_rate,
+                       rate_date=rate_date, source=source, setter=set_by_participant_id))
             conn.commit()
         return True
     except Exception as exc:
@@ -73,10 +87,13 @@ def parse_rate(value, currency, prompt, stored=None):
         rate = Decimal(1) / rate
     elif f'how many {currency} 1 SGD bought' not in prompt:
         raise ValueError('Open the rate prompt again.')
-    if stored and stored['source'] == 'frankfurter' and not (
-            stored['rate'] / 2 <= rate <= stored['rate'] * 2):
+    # Compare with the ECB rate kept on the row, even when someone has typed a rate since:
+    # otherwise only the first typed rate would be checked. No ECB rate (the lookup
+    # failed) means nothing to compare with, so any positive number is accepted.
+    ecb = stored.get('ecb_rate') if stored else None
+    if ecb and not (ecb * TYPED_LOW <= rate <= ecb * TYPED_HIGH):
         # Show the ECB rate the same way round as the prompt asked for it (1 USD = 1.2834
         # SGD, 1 SGD = 14,080 IDR), so a reply typed the wrong way round is easy to spot.
-        raise ValueError(f"That's far from the ECB rate {rate_equation(currency, stored['rate'])}. "
+        raise ValueError(f"That's far from the ECB rate {rate_equation(currency, ecb)}. "
                          "Check which way round.")
     return rate

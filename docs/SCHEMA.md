@@ -159,6 +159,9 @@ One rate per currency per trip for the "All in SGD" screen
 - **currency**: TEXT, NOT NULL; a bills' currency, never the same as `paid_currency`
 - **rate**: NUMERIC, NOT NULL, positive; bills' currency per 1 of `paid_currency`, the same
   meaning as `settlements.fx_rate`
+- **ecb_rate**: NUMERIC, nullable, positive; the ECB rate looked up for the trip, kept when a
+  typed rate replaces `rate`, so every typed rate is checked against it (within 25%). NULL when
+  the lookup failed before anyone typed a rate.
 - **rate_date**: DATE, NOT NULL; the ECB date for a looked-up rate, the day typed for a typed one
 - **source**: TEXT, NOT NULL, `frankfurter` or `typed`
 - **set_by_participant_id**: BIGINT, nullable, FK → `participants.id`; who typed it (NULL when

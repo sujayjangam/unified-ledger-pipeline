@@ -21,12 +21,16 @@ def upgrade() -> None:
         sa.Column('paid_currency', sa.Text(), nullable=False),
         sa.Column('currency', sa.Text(), nullable=False),
         sa.Column('rate', sa.Numeric(), nullable=False),
+        # The ECB rate looked up for this trip, kept even after someone types the group's own
+        # rate, so every later typed rate is still checked against it (within 25%).
+        sa.Column('ecb_rate', sa.Numeric()),
         sa.Column('rate_date', sa.Date(), nullable=False),
         sa.Column('source', sa.Text(), nullable=False),
         sa.Column('set_by_participant_id', sa.BigInteger(), sa.ForeignKey('participants.id')),
         sa.Column('set_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
         sa.PrimaryKeyConstraint('trip_id', 'paid_currency', 'currency'),
         sa.CheckConstraint('rate > 0', name='ck_trip_fx_positive'),
+        sa.CheckConstraint('ecb_rate IS NULL OR ecb_rate > 0', name='ck_trip_fx_positive_ecb'),
         sa.CheckConstraint("source IN ('frankfurter', 'typed')", name='ck_trip_fx_source'),
         sa.CheckConstraint('currency <> paid_currency', name='ck_trip_fx_different'),
     )

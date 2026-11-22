@@ -302,6 +302,23 @@ async def test_partial_save_cannot_change_payer(sgd, directory):
     assert context.user_data['pending_settlements'][20]['from_id'] == 1
 
 
+async def test_partial_save_cannot_be_cancelled(sgd, directory):
+    """Codex review of #171: Cancel after a half-saved Confirm would drop the retry keys."""
+    context, card = await open_card(directory)
+    bot.add_settlement.side_effect = [True, RuntimeError('offline')]
+    update, query = tap('sgd:confirm')
+    query.message.message_id = 20
+    await bot.handle_sgd_button(update, context)
+    # The redrawn card offers only Confirm.
+    assert list(_buttons(query.edit_message_text.await_args.kwargs['reply_markup']).values()) == ['sgd:confirm']
+    update, query = tap('sgd:cancel')
+    query.message.message_id = 20
+    await bot.handle_sgd_button(update, context)
+    query.answer.assert_awaited_once_with('Some of this is already saved. Tap Confirm to finish it.')
+    query.edit_message_text.assert_not_awaited()
+    assert context.user_data['pending_settlements'][20]['parts'] == card['parts']
+
+
 async def test_card_keeps_shortcut_rows_for_confirm(sgd, directory, monkeypatch):
     from app.services.balances import LinePart
 

@@ -75,7 +75,7 @@ sequenceDiagram
 - Until someone types the rate the group really used (a ✏️ button, a ForceReply prompt
   recognised by its fixed first line, no model), it is the ECB reference rate on the trip's last
   day (today, while the trip is on), looked up once when the screen is first opened and stored.
-  A typed rate far from the ECB one (outside half to double) is refused as a likely
+  A typed rate more than 25% from the ECB one is refused as a likely
   wrong-way-round entry.
 - Each payback saved from that screen stores the rate on `settlements` as before
   (`fx_source` "frankfurter" or "typed"), with `needs_statement_check` false: the rate was

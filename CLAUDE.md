@@ -272,7 +272,7 @@ Env vars (`.env.example` shows the format):
   never overwrites a typed one. A typed rate comes from a ForceReply prompt recognised by its
   fixed first line (`💱 <CUR> rate · <trip> · #<id>`, so a restart can't send it to the model),
   read in `handle_text` after the settle-prompt block; the prompt's own words decide which way
-  round it is; outside half to double the ECB rate is refused. A ✅ card follows the settle card
+  round it is; more than 25% from the ECB rate is refused. A ✅ card follows the settle card
   rules and saves one ordinary payback per part with `add_settlement` (paid in SGD, the stored
   rate, `needs_statement_check` false); a netted part is saved from the line's receiver. Each
   part's key is made when the card opens, so a failed Confirm retries only what's missing, and
