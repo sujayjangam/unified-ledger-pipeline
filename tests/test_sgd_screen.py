@@ -377,6 +377,8 @@ async def test_shortcut_line_shows_tip_and_saves_each_debt_from_its_own_giver(sg
     card_text = query.message.reply_text.await_args.args[0]
     assert 'IDR 200.00 at 1 SGD = 100 IDR → SGD 2.00 that Lee family owes Bob' in card_text
     assert 'SGD 2.00 of what Bob owes Alice, passed on by Bob' in card_text
+    # Bob is paid on this card, so he can't be its payer (Codex review): only Carol is offered.
+    assert [p.id for p in card['people']] == [3]
     card = dict(card, from_id=3)
     bot._save_sgd_parts(card)
     calls = [c.kwargs for c in bot.add_settlement.call_args_list]

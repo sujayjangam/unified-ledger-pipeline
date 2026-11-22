@@ -89,20 +89,25 @@ def test_split_shortcut_paths_are_disjoint_and_conserve_each_hop():
 
 
 def _cash_matches(lines, families):
-    """Every part saved as a payback must add up, per unit, to the cash on each card."""
+    """Each card's parts, saved as paybacks, must add up per unit to that card's own cash.
+
+    Checked card by card (Codex review, #171): a total over all cards can balance while
+    one card records money reaching someone other than the person it pays.
+    """
     from app.services.balances import unit_of
-    net = {}
     for line in lines:
         payer = line.from_unit if line.from_unit[0] == 'family' else unit_of(line.from_unit[1], families)
+        net = {payer: line.sgd_cents}
+        receiver = unit_of(line.to_person, families)
+        net[receiver] = net.get(receiver, 0) - line.sgd_cents
         for part in line.parts:
             giver = payer if part.giver is None else unit_of(part.giver, families)
             net[giver] = net.get(giver, 0) - part.sgd_cents
-            receiver = unit_of(part.payment.to_unit[1], families)
-            net[receiver] = net.get(receiver, 0) + part.sgd_cents
-        net[payer] = net.get(payer, 0) + line.sgd_cents
-        receiver = unit_of(line.to_person, families)
-        net[receiver] = net.get(receiver, 0) - line.sgd_cents
-    return not any(net.values())
+            to = unit_of(part.payment.to_unit[1], families)
+            net[to] = net.get(to, 0) + part.sgd_cents
+        if any(net.values()):
+            return False
+    return True
 
 
 def test_shortcut_moves_along_existing_lines_through_a_family():
@@ -145,3 +150,15 @@ def test_shortcut_inside_a_family_moves_the_whole_line_with_its_reverse_part():
         (1, 500, None, False), (2, 20, None, False), (3, 30, 2, False), (4, 10, 1, True)]
     assert _cash_matches(lines, families)
     assert lines == one_currency(payments, dict(reversed(list(families.items()))), {'USD': Decimal(1)})
+
+
+def test_no_partial_cut_through_an_earlier_shortcut():
+    """Codex review of #171: U->C already carries U->P->C, so V->U can't take 50 of it."""
+    payments = [payment(('person', 1), 2, 100, 'USD'), payment(('person', 2), 3, 100),
+                payment(('person', 1), 3, 10, 'EUR'), payment(('person', 4), 1, 50, 'AUD'),
+                payment(('person', 4), 3, 10)]
+    one = {'USD': Decimal(1), 'EUR': Decimal(1), 'AUD': Decimal(1)}
+    lines = one_currency(payments, {}, one)
+    assert [(line.from_unit[1], line.to_person, line.sgd_cents) for line in lines] == [
+        (1, 3, 110), (4, 1, 50), (4, 3, 10)]
+    assert _cash_matches(lines, {})

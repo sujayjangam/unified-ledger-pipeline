@@ -2478,7 +2478,13 @@ async def _new_sgd_settlement(update, context):
             raise _SettlementUnavailable('A debt rounds below one cent. Use its original currency to settle.')
         members = ((line.from_unit[1],) if line.from_unit[0] == 'person' else
                    tuple(pid for pid in trip.member_ids if unit_of(pid, families) == line.from_unit))
+        # Nobody may pay a card that would have them pay themselves: the line's receiver, and
+        # anyone a shortcut on it sends the payer's money to (Codex review, #171). Checked here,
+        # before any part is saved, since a half-saved card can't change payer.
+        paid_to = {line.to_person} | {p.payment.to_unit[1] for p in line.parts
+                                      if p.giver is None and not p.reverse}
         payer = line.from_unit[1] if line.from_unit[0] == 'person' else sender.id if sender.id in members else None
+        payer = None if payer in paid_to else payer
         all_paths = _sgd_paths(lines, entries, families, paid, trip.member_ids)
         parts = []
         for j, part in enumerate(line.parts):
@@ -2493,7 +2499,7 @@ async def _new_sgd_settlement(update, context):
                     family=line.from_unit[1] if line.from_unit[0] == 'family' else None,
                     date=get_sgt_now().date(), entered_by_participant_id=sender.id,
                     people=tuple(sorted((p for p in directory.participants
-                                         if p.id in trip.member_ids and p.id != line.to_person),
+                                         if p.id in trip.member_ids and p.id not in paid_to),
                                         key=lambda p: (p.id not in members, p.display_name.lower(), p.id))))
     except Exception as exc:
         await query.answer(str(exc) if isinstance(exc, _SettlementUnavailable) else BALS_ERROR)

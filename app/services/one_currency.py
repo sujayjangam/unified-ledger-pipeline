@@ -150,21 +150,33 @@ def _split(part, sgd, rates):
                     sgd_cents=part.sgd_cents - sgd))
 
 
+def _direct(line, part):
+    """A debt the line's own payer owes its own receiver: no shortcut or netting behind it."""
+    return part.giver is None and not part.reverse and part.payment.to_unit[1] == line.to_person
+
+
+def _can_give(line, sgd):
+    """All of the line, or no more than its direct debts (see _take)."""
+    return sgd == line.sgd_cents or sgd <= sum(p.sgd_cents for p in line.parts if _direct(line, p))
+
+
 def _take(line, sgd, rates):
     """Return (parts worth `sgd` of this line, the parts left on it).
 
-    The whole line moves when all of it is taken, reverse parts included, since its amount
-    is already net of them. Otherwise only parts its own payer hands over are taken, SGD
-    ones first so no rate rounding is needed; the line's amount is never more than those.
+    The whole line moves when all of it is taken, reverse parts and earlier shortcuts
+    included, since its amount is already net of them. Otherwise only its direct debts are
+    taken (_direct), SGD ones first so no rate rounding is needed: cutting a piece off an
+    earlier shortcut would leave its pass-on money on the wrong card (Codex review, #171).
+    _shortcut only asks for a part when the direct debts cover it.
     """
     if sgd == line.sgd_cents:
         return line.parts, ()
     order = sorted(range(len(line.parts)), key=lambda i: (
-        line.parts[i].giver is not None, line.parts[i].currency != 'SGD', line.parts[i].number))
+        not _direct(line, line.parts[i]), line.parts[i].currency != 'SGD', line.parts[i].number))
     taken, kept, left = [], {}, sgd
     for i in order:
         part = line.parts[i]
-        if left and part.giver is None:
+        if left and _direct(line, part):
             if part.sgd_cents <= left:
                 taken.append(part)
                 left -= part.sgd_cents
@@ -198,8 +210,11 @@ def _shortcut(lines, families, rates):
                         or b.from_unit != debtor_unit(a.to_person, b.to_person, families)):
                     continue
                 k = at.get((a.from_unit, b.to_person))
-                if k is not None and k not in (i, j) and lines[k].sgd_cents > 0:
-                    moves.append((-min(a.sgd_cents, b.sgd_cents), i, j, k))
+                x = min(a.sgd_cents, b.sgd_cents)
+                # One of the two lines goes whole, so every move removes a line.
+                if (k is not None and k not in (i, j) and lines[k].sgd_cents > 0
+                        and _can_give(a, x) and _can_give(b, x)):
+                    moves.append((-x, i, j, k))
         if not moves:
             return _ordered(lines)
         x, i, j, k = min(moves)
