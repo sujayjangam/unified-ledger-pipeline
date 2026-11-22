@@ -46,7 +46,7 @@ from app.services.trips import (
 from app.services.balances import (
     trip_balance_lines, trip_payments, unit_of, open_bill_shares, line_parts, payment_rows,
     balance_currencies, default_balance_currency, trip_payment_lines, trip_payback_lines, payment_button_label,
-    unit_name,
+    unit_name, unit_balances, NO_PAYER_LINE,
 )
 from app.services.settlements import (
     add_settlement, is_overpayment, settlement_card_text, change_settlement_amount, parse_settlement_amount,
@@ -2254,6 +2254,14 @@ def _sgd_screen(trip, directory, data=None):
     for currency in needed:
         lines.append(rate_display(currency, rates[currency], names) if currency in rates else
                      f'⚠️ No {currency} rate yet. Tap ✏️ {currency} rate.')
+    # A split bill with no payer is left out of trip_payments, so without this line the screen
+    # could say "Everyone is settled" while that bill was never counted (Codex review, #171).
+    # Same words as the main screen; put above the lines so the ✅ buttons still match them.
+    no_payer = len(unit_balances(entries, dict(trip.families), paid).no_payer)
+    if no_payer:
+        lines.append(NO_PAYER_LINE.format(count=no_payer,
+                                          entries='entry has' if no_payer == 1 else 'entries have',
+                                          they='it is' if no_payer == 1 else 'they are'))
     lines.append('')
     offset = len(lines)
     suggestions = ()

@@ -75,6 +75,15 @@ def test_screen_rates_lines_and_buttons(sgd, directory):
                                 '⬅ Back': 'bals:cur:7:IDR'}
 
 
+def test_bill_with_no_payer_is_warned_not_called_settled(sgd, directory):
+    """Codex review of #171: a payerless split bill must never read as "Everyone is settled"."""
+    sgd[0][:] = [dict(transaction_id='x', date=DAY, currency='IDR', paid_by=None, splits={1: 20000, 3: 20000})]
+    text, markup = bot._sgd_screen(TRIP, directory)
+    assert '⚠️ 1 split entry has no payer recorded, so it is not counted.' in text
+    assert 'Everyone is settled.' in text
+    assert not [d for d in _buttons(markup).values() if d.startswith('sgd:new:')]
+
+
 def test_missing_rates_have_no_confirm_and_failed_read_is_error(sgd, directory, monkeypatch):
     sgd[1].clear()
     text, markup = bot._sgd_screen(TRIP, directory)
