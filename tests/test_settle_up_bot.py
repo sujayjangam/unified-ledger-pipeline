@@ -21,6 +21,14 @@ BEACH = Trip(10, 'Beach trip', TODAY, TODAY, tuple(range(1, 7)), tuple(FAMILIES.
 DIRECTORY = Directory((replace(PEOPLE[0], telegram_user_id=str(ALICE)), *PEOPLE[1:]), ())
 
 
+@pytest.fixture(autouse=True)
+def read_connection(monkeypatch):
+    manager = MagicMock()
+    connect = MagicMock(return_value=manager)
+    monkeypatch.setattr(bot, 'get_read_connection', connect)
+    return connect
+
+
 @pytest.fixture
 def flow(monkeypatch):
     """Fail loudly if a tap tries to fetch anything or extract an expense."""
@@ -197,9 +205,9 @@ async def test_menu_reply_refusal_and_failed_prompt_delete(flow, monkeypatch, ca
 def test_snapshot_captures_each_trips_families(monkeypatch):
     """Inactive trip families are copied by scope and restricted to actual members."""
     other = replace(BEACH, id=11, member_ids=(1, 3, 5), families=((3, 'Ng'), (5, 'Ng'), (6, 'Ng')))
-    monkeypatch.setattr(bot, '_load_bals_trip', lambda _, tid: {10: BEACH, 11: other}.get(tid))
-    monkeypatch.setattr(bot, '_load_bals_choices', lambda *_: ([BEACH, other], False))
-    monkeypatch.setattr(bot, '_load_settle_bills', lambda *_: ())
+    monkeypatch.setattr(bot, '_load_bals_trip', lambda _, tid, **kwargs: {10: BEACH, 11: other}.get(tid))
+    monkeypatch.setattr(bot, '_load_bals_choices', lambda *_, **kwargs: ([BEACH, other], False))
+    monkeypatch.setattr(bot, '_load_settle_bills', lambda *_, **kwargs: ())
     snap, _, _ = bot._load_settle_snapshot(PEOPLE[0], DIRECTORY)
     assert snap['scope_families'] == {10: FAMILIES, 11: {3: 'Ng', 5: 'Ng'}}
 
@@ -465,7 +473,7 @@ async def test_lock_serializes_redraw_then_confirm(flow):
 
 def test_snapshot_pages_trips_and_folds_each_separately(monkeypatch):
     other = replace(BEACH, id=11, name='City trip', families=((1, 'Tan'), (3, 'Lee')))
-    trip_read = MagicMock(side_effect=lambda pid, tid: None if tid is None else {10: BEACH, 11: other}[tid])
+    trip_read = MagicMock(side_effect=lambda pid, tid, **kwargs: None if tid is None else {10: BEACH, 11: other}[tid])
     monkeypatch.setattr(bot, '_load_bals_trip', trip_read)
     pages = MagicMock(side_effect=[([BEACH], True), ([other], False)])
     monkeypatch.setattr(bot, '_load_bals_choices', pages)
@@ -475,7 +483,7 @@ def test_snapshot_pages_trips_and_folds_each_separately(monkeypatch):
     assert value['trip_id'] is None and people == DIRECTORY.participants and families == {}
     assert [c.args[0] for c in reads.call_args_list] == [None, BEACH, other]
     assert pages.call_args_list[1].args == (1, bot.TRIP_PAGE_SIZE)
-    trip_read.side_effect = lambda *_: BEACH
+    trip_read.side_effect = lambda *_, **kwargs: BEACH
     reads.reset_mock()
     value, people, families = bot._load_settle_snapshot(DIRECTORY.participants[0], DIRECTORY)
     assert value['trip_id'] == 10 and families == FAMILIES
@@ -487,12 +495,12 @@ def test_bill_snapshot_skips_missing_payer_and_failed_reads(monkeypatch):
     entries = [dict(transaction_id='a', date=TODAY.isoformat(), description='dinner', amount='12.50',
                     currency='SGD', paid_by=1, splits={3: 1250}),
                dict(transaction_id='b', paid_by=None, currency='SGD', splits={3: 1250})]
-    monkeypatch.setattr(bot, 'get_trip_split_entries', lambda _: entries)
-    monkeypatch.setattr(bot, 'get_trip_settlements', lambda _: [])
+    monkeypatch.setattr(bot, 'get_trip_split_entries', lambda _, **kwargs: entries)
+    monkeypatch.setattr(bot, 'get_trip_settlements', lambda _, **kwargs: [])
     bills = bot._load_settle_bills(BEACH)
     assert len(bills) == 1 and bills[0].amount_cents == 1250 and bills[0].open == {3: 1250}
     assert bills[0].date == TODAY
-    monkeypatch.setattr(bot, 'get_trip_settlements', lambda _: None)
+    monkeypatch.setattr(bot, 'get_trip_settlements', lambda _, **kwargs: None)
     with pytest.raises(RuntimeError):
         bot._load_settle_bills(BEACH)
 

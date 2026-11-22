@@ -197,7 +197,7 @@ def test_member_trip_checks_membership_in_the_query():
 def test_bals_loader_reads_trip_and_families_in_one_connection(monkeypatch):
     manager = MagicMock()
     conn = manager.__enter__.return_value
-    monkeypatch.setattr(bot_core, "get_connection", lambda: manager)
+    monkeypatch.setattr(bot_core, "get_read_connection", lambda: manager)
     active, member = MagicMock(return_value=CITY), MagicMock(return_value=CITY)
     monkeypatch.setattr(bot_core, "load_active_trip", active)
     monkeypatch.setattr(bot_core, "member_trip", member)

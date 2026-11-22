@@ -46,3 +46,13 @@ def get_connection():
     Exiting the block rolls back any uncommitted transaction and releases the connection.
     """
     return get_engine().connect()
+
+
+def get_read_connection():
+    """Return a pooled AUTOCOMMIT connection for SELECT-only blocks (ADR-0060).
+
+    Avoid transaction round trips across the Pacific. Read committed already takes
+    a fresh snapshot per statement, so reads see the same data as before.
+    SQLAlchemy resets isolation when the connection returns to the pool.
+    """
+    return get_engine().connect().execution_options(isolation_level="AUTOCOMMIT")

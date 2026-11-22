@@ -1,5 +1,6 @@
+from contextlib import nullcontext
 from sqlalchemy import text
-from app.database import get_connection
+from app.database import get_connection, get_read_connection
 
 # What /recent shows for one entry. Read from the transactions view, so a deleted entry never
 # comes back from here (ADR-0050). split_count is how many people share it (0 = not split).
@@ -25,7 +26,7 @@ def get_recent_page(offset: int, limit: int):
     One row more than the page is read, only to learn whether an older page exists.
     """
     try:
-        with get_connection() as conn:
+        with get_read_connection() as conn:
             rows = conn.execute(text(f'''
                 SELECT {_ENTRY_COLUMNS}
                 FROM transactions t
@@ -48,7 +49,7 @@ def get_live_entry(transaction_id: str):
     error, and neither may be taken for the other.
     """
     try:
-        with get_connection() as conn:
+        with get_read_connection() as conn:
             row = conn.execute(text(f'''
                 SELECT {_ENTRY_COLUMNS}
                 FROM transactions t
@@ -123,7 +124,7 @@ def find_recent_duplicate(amount_cents: int, currency: str, within_minutes: int)
     a broken check must never stop an entry being saved, so the caller just shows a normal card.
     """
     try:
-        with get_connection() as conn:
+        with get_read_connection() as conn:
             row = conn.execute(text('''
                 SELECT description,
                        CAST(EXTRACT(EPOCH FROM (now() - created_at)) AS integer) AS seconds_ago,
@@ -143,7 +144,7 @@ def find_recent_duplicate(amount_cents: int, currency: str, within_minutes: int)
 def get_period_summary(start_date: str, end_date: str):
     """Fetches counts and totals grouped by currency, separating expenses and transfers."""
     try:
-        with get_connection() as conn:
+        with get_read_connection() as conn:
             # Outside people's money is not household spending. NULL means not recorded
             # (old/CLI/API rows), which still counts as household in both totals.
             # Get Expenses grouped by currency
@@ -175,7 +176,7 @@ def get_period_summary(start_date: str, end_date: str):
 def get_category_summary(start_date: str, end_date: str):
     """Household category totals: exclude outside payers, but retain old/CLI/API NULLs."""
     try:
-        with get_connection() as conn:
+        with get_read_connection() as conn:
             result = conn.execute(text('''
                 SELECT category, currency, COUNT(*), SUM(amount)
                 FROM transactions
@@ -193,14 +194,15 @@ def get_category_summary(start_date: str, end_date: str):
         return []
 
 
-def get_trip_settlements(trip_id: int | None = None):
+def get_trip_settlements(trip_id: int | None = None, *, conn=None):
     """Read paybacks oldest first with ordered bill rows (empty for old paybacks).
 
     None selects everyday (untagged) paybacks. Either read failing returns None,
     never an apparently settled scope.
     """
     try:
-        with get_connection() as conn:
+        # Share one checkout per screen: each costs a ping across the Pacific.
+        with (nullcontext(conn) if conn is not None else get_read_connection()) as conn:
             rows = conn.execute(text('''
                 SELECT id, date, from_participant_id AS from_id, to_participant_id AS to_id,
                        for_participant_id AS for_id,
@@ -233,7 +235,7 @@ def get_trip_settlements(trip_id: int | None = None):
         return None
 
 
-def get_trip_split_entries(trip_id: int | None = None):
+def get_trip_split_entries(trip_id: int | None = None, *, conn=None):
     """Split entries for one trip, or everyday when None, in the balances reader's shape.
 
     Returns a list of dicts, oldest first:
@@ -252,7 +254,8 @@ def get_trip_split_entries(trip_id: int | None = None):
     Money stays in the entry's own currency (amount, not base_amount): no FX conversion.
     """
     try:
-        with get_connection() as conn:
+        # Share one checkout per screen: each costs a ping across the Pacific.
+        with (nullcontext(conn) if conn is not None else get_read_connection()) as conn:
             rows = conn.execute(text('''
                 SELECT t.transaction_id, t.date, t.description, t.amount, t.currency,
                        COALESCE(t.paid_by_participant_id, a.owner_participant_id,

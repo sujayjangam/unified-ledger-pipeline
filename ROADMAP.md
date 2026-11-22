@@ -26,7 +26,14 @@ is tried on a Neon branch with a fictional trip-sized directory first.
 **Next up, before the freeze:**
 
 1. Time the bot's screens on a phone, on the deployed bot and the test bot, the day before the
-   freeze ([#137](https://github.com/sujayjangam/unified-ledger-pipeline/issues/137)).
+   freeze ([#137](https://github.com/sujayjangam/unified-ledger-pipeline/issues/137)). The
+   production logs already show two slow steps: about 20–26 s for the first message after the
+   bot sits idle, and 6–7 s for a typed settle card, which is all database round trips
+   ([#173](https://github.com/sujayjangam/unified-ledger-pipeline/issues/173)).
+2. Fewer round trips per screen
+   ([#174](https://github.com/sujayjangam/unified-ledger-pipeline/issues/174), in review).
+3. Researching whether the bot can move to a US region next to the database before the trip
+   ([#175](https://github.com/sujayjangam/unified-ledger-pipeline/issues/175)).
 
 Later: load a finished trip's hand-kept spreadsheet as real bills, and work out the trip from the
 message itself for costs logged before it starts.

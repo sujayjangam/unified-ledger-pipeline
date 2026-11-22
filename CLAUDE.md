@@ -366,6 +366,12 @@ Env vars (`.env.example` shows the format):
 
 - The engine (`app/database.py`) is created lazily, never at import time, so importing any module
   works without a `.env` — the CI import check depends on it.
+- The database is a Pacific away from the bot, about 0.22 s per round trip, so round trips are
+  what make a screen slow ([ADR-0060](docs/decisions/0060-reads-in-autocommit-one-connection-per-screen.md)).
+  A block that only runs `SELECT`s and never commits uses `get_read_connection()` (autocommit:
+  no `BEGIN`, no `ROLLBACK`). Anything that writes or stores a value stays on `get_connection()`.
+  A screen's loads share one connection through a loader's `conn=` argument, and each loader
+  keeps its own error handling. Keep `pool_pre_ping`, and never make the whole engine autocommit.
 - **Money is integer cents.** In only through `dollars_to_cents`, out only through `format_cents`
   (both in `app/add_expense.py`). Never format a float amount yourself, and never split an amount
   by rounding each share — splits hand out whole cents

@@ -325,7 +325,7 @@ def _fake_connection(monkeypatch, rows):
     conn.execute.return_value.fetchall.return_value = rows
     context_manager = MagicMock()
     context_manager.__enter__.return_value = conn
-    monkeypatch.setattr(ledger_queries, 'get_connection', lambda: context_manager)
+    monkeypatch.setattr(ledger_queries, 'get_read_connection', lambda: context_manager)
     return conn, ledger_queries
 
 

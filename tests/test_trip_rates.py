@@ -50,6 +50,7 @@ def test_refuse_anything_but_a_positive_number(value):
 
 def test_failed_queries_are_explicit(monkeypatch):
     monkeypatch.setattr(rates, 'get_connection', MagicMock(side_effect=RuntimeError))
+    monkeypatch.setattr(rates, 'get_read_connection', MagicMock(side_effect=RuntimeError))
     assert rates.get_trip_rates(7) is None
     assert rates.upsert_trip_rate(7, 'IDR', Decimal(14080), ROW['rate_date'], 'typed', 1) is False
 
@@ -58,6 +59,7 @@ def test_query_shape_and_upsert_commit(monkeypatch):
     connection = MagicMock()
     connection.execute.return_value.mappings.return_value.all.return_value = [dict(ROW, currency='IDR')]
     monkeypatch.setattr(rates, 'get_connection', MagicMock(return_value=connection))
+    monkeypatch.setattr(rates, 'get_read_connection', MagicMock(return_value=connection))
     connection.__enter__.return_value = connection
     assert rates.get_trip_rates(7)['IDR']['rate'] == Decimal(14080)
     assert rates.upsert_trip_rate(7, 'IDR', Decimal(14080), ROW['rate_date'], 'typed', 1)
