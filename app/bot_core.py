@@ -2433,7 +2433,11 @@ def _sgd_card_text(card):
             amount += (f" at {rate_equation(part.currency, card['rates'][part.currency]['rate'])}"
                        f' → {format_money(part.sgd_cents, "SGD")}')
         debt = f'{unit_name(part.payment.from_unit, names)} owes {names[part.payment.to_unit[1]]}'
-        if part.reverse:
+        if part.reverse and part.payment.to_unit[1] not in card['debtor_member_ids']:
+            # Moved here with a whole shortcut line: it is owed to the middle person's side,
+            # so it comes off the money they pass on, not off this card's amount.
+            amount = f'Less {amount} that {debt}, off what is passed on'
+        elif part.reverse:
             amount = f'Less {amount} that {debt}'
         elif part.giver is not None:
             # A shortcut's middle person passes this on: it clears their family's debt.

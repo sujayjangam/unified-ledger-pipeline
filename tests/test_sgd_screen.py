@@ -389,6 +389,33 @@ async def test_shortcut_line_shows_tip_and_saves_each_debt_from_its_own_giver(sg
         (2, 1, None, 'SGD', '2.00', '2.00')]
 
 
+async def test_moved_reverse_money_reads_as_part_of_what_is_passed_on(sgd, directory):
+    """#171, seen on the test bot: Bob owes Alice IDR 400.00 (4.00) and Alice owes Bob USD 1.00
+    (2.00), so Bob's line is 2.00 and moves whole onto the Lees' line to Alice. Alice's USD
+    comes off what Bob passes on, not off the card, so the card's lines still add up to 12.00."""
+    sgd[0][:] = [dict(transaction_id='a', date=DAY, currency='SGD', paid_by=1, splits={3: 1000}),
+                 dict(transaction_id='b', date=DAY, currency='SGD', paid_by=2, splits={3: 500}),
+                 dict(transaction_id='c', date=DAY, currency='IDR', paid_by=1, splits={2: 40000}),
+                 dict(transaction_id='d', date=DAY, currency='USD', paid_by=2, splits={1: 100})]
+    text, _ = bot._sgd_screen(TRIP, directory)
+    assert text.endswith('Lee family pays Alice SGD 12.00\nLee family pays Bob SGD 3.00\n'
+                         '💡 Lee family pays Alice the SGD 2.00 Bob owes, and pays Bob SGD 2.00 less.')
+    context = context_for(directory)
+    update, query = tap('sgd:new:7:1:1200')
+    await bot.handle_sgd_button(update, context)
+    card_text = query.message.reply_text.await_args.args[0]
+    assert card_text.splitlines()[1:5] == [
+        'SGD 10.00',
+        'SGD 2.00 that Lee family owes Bob',
+        'IDR 400.00 at 1 SGD = 100 IDR → SGD 4.00 of what Bob owes Alice, passed on by Bob',
+        'Less USD 1.00 at 1 USD = 2.0000 SGD → SGD 2.00 that Alice owes Bob, off what is passed on']
+    card = dict(context.user_data['pending_settlements'][20], from_id=3)
+    bot._save_sgd_parts(card)
+    assert [(c.kwargs['from_id'], c.kwargs['to_id'], c.kwargs['clears_currency'],
+             c.kwargs['paid_amount']) for c in bot.add_settlement.call_args_list] == [
+        (3, 1, 'SGD', '10.00'), (3, 2, 'SGD', '2.00'), (2, 1, 'IDR', '4.00'), (1, 2, 'USD', '2.00')]
+
+
 async def test_netted_card_is_paid_only_from_inside_the_owing_family(sgd, directory):
     """Codex review of #171: Carol owes Alice 10.00 and Alice owes Carol USD 2.00 (4.00), so
     the card asks 6.00. Paid by Bob, an outsider, it would record Bob handing over 10.00 and
