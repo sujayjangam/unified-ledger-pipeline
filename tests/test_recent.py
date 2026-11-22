@@ -54,6 +54,30 @@ def _page(entries, more=False):
     return MagicMock(return_value=(entries, more))
 
 
+@pytest.mark.parametrize("action", ['del', 'undo'])
+@pytest.mark.parametrize("changed", [True, False, None])
+@pytest.mark.parametrize("trip_id, split_count", [(7, 2), (None, 2), (7, 0)])
+async def test_recent_sheet_hook(monkeypatch, action, changed, trip_id, split_count):
+    """Only a changed split row refreshes, after the toast and edited screen."""
+    entry = _entry(trip_id=trip_id, split_count=split_count)
+    read = MagicMock(return_value=entry)
+    monkeypatch.setattr(bot_core, 'get_live_entry', read)
+    monkeypatch.setattr(bot_core, 'soft_delete_entry', MagicMock(return_value=changed))
+    monkeypatch.setattr(bot_core, 'restore_entry', MagicMock(return_value=changed))
+    monkeypatch.setattr(bot_core, 'get_recent_page', _page([entry]))
+    update, context, query = _tap(f'recent:{action}:0:{TID}')
+    async def refresh(_):
+        """Both Telegram updates precede the optional write."""
+        query.answer.assert_awaited_once()
+        query.edit_message_text.assert_awaited_once()
+    hook = AsyncMock(side_effect=refresh)
+    monkeypatch.setattr(bot_core, 'refresh_trip_sheet', hook)
+    await bot_core.handle_recent_button(update, context)
+    assert hook.await_count == int(changed is True and trip_id is not None and split_count > 0)
+    if action == 'undo':
+        assert read.call_count == int(changed is True)
+
+
 # --- the list -----------------------------------------------------------------------------
 
 async def test_recent_lists_entries_with_a_delete_button_each(monkeypatch):

@@ -5,7 +5,7 @@ from app.database import get_connection
 # comes back from here (ADR-0050). split_count is how many people share it (0 = not split).
 _ENTRY_COLUMNS = '''
     t.transaction_id, t.date, t.description, t.amount, t.currency, t.category, t.transaction_type,
-    t.entered_by_participant_id, tr.name AS trip_name,
+    t.entered_by_participant_id, t.trip_id, tr.name AS trip_name,
     (SELECT count(*) FROM transaction_splits s WHERE s.transaction_id = t.transaction_id) AS split_count
 '''
 

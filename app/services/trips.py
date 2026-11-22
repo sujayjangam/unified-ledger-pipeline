@@ -20,6 +20,14 @@ class Trip:
     families: tuple[tuple[int, str], ...] = ()
 
 
+def trip_sheet_target(conn, trip_id: int) -> tuple[str, str] | None:
+    """Return the trip name and write destination, or None when sheets are off."""
+    row = conn.execute(text("""
+        SELECT name, sheet_id FROM trips WHERE id = :trip_id AND sheet_id IS NOT NULL
+    """), {"trip_id": trip_id}).first()
+    return (row[0], row[1]) if row else None
+
+
 def trip_families(conn, trip_id: int) -> tuple[tuple[int, str], ...]:
     """Read members and family labels together for payer and split matching."""
     rows = conn.execute(text("""

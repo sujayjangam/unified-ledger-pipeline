@@ -219,3 +219,30 @@ def test_seed_report_includes_household_promotions(monkeypatch, directory, capsy
     monkeypatch.setattr(seed_directory, "_seed", lambda conn, seed: {"participants": 0, "accounts": 0, "household_flags": 2})
     assert seed_directory.main(["--seed", "directory_seed.example.json", "--write"]) == 0
     assert "Household flags set:   2" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("value", ["https://docs.google.com/spreadsheets/d/fictional_sheet_id_12345", "short", None, 123, "a" * 20 + "\n"])
+def test_trip_sheet_id_rejects_non_ids(value):
+    """A provided destination must be an id, never a URL or a null clearing instruction."""
+    with pytest.raises(ValueError, match="Trip Beach: sheet_id"):
+        seed_directory._parse_trips([{"name": "Beach", "sheet_id": value}], set())
+
+
+@pytest.mark.parametrize("provided", [False, True])
+@pytest.mark.parametrize("changed", [0, 1])
+def test_seed_sets_only_provided_trip_sheet(provided, changed):
+    """Omitted ids leave existing destinations alone; updates count only changed rows."""
+    raw = {"name": "Beach", "start": "2026-12-01", "end": "2026-12-07", "families": {"Reds": ["Alice"]}}
+    if provided:
+        raw["sheet_id"] = "fictional_sheet_id_1234567890"
+    seed = parse_seed({"participants": [{"display_name": "Alice"}], "trips": [raw]})
+    conn = MagicMock()
+    conn.execute.return_value.rowcount = changed
+    counts = seed_directory._seed(conn, seed)
+    updates = [c for c in conn.execute.call_args_list if "UPDATE trips" in str(c.args[0])]
+    assert counts["trip_sheets"] == (changed if provided else 0)
+    assert len(updates) == int(provided)
+    if provided:
+        assert updates[0].args[1] == {"name": "Beach", "sheet_id": raw["sheet_id"]}
+        assert "sheet_id IS DISTINCT FROM :sheet_id" in str(updates[0].args[0])
+        assert "lower(name) = lower(:name)" in str(updates[0].args[0])

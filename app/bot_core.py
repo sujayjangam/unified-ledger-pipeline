@@ -17,6 +17,7 @@ import tempfile
 import time
 import re
 from app.add_expense import add_expense, dollars_to_cents, format_cents
+from app.services.trip_sheet import refresh_trip_sheet
 from app.services.utils import get_sgt_now, get_week_start, get_month_start
 from app.services.ledger_queries import (
     get_recent_page, get_live_entry, soft_delete_entry, restore_entry,
@@ -420,6 +421,17 @@ def _parse_recent_callback(data: str):
     raise ValueError("Invalid recent callback")
 
 
+async def _refresh_saved_trip_sheet(trip_id):
+    """Keep even an unexpected refresh failure away from an already saved card."""
+    if trip_id is None:
+        return
+    try:
+        # Await, never create_task: Cloud Run grants CPU only while the webhook is open.
+        await refresh_trip_sheet(trip_id)
+    except Exception as exc:
+        print(f"Trip sheet not updated for trip {trip_id}: {exc}")
+
+
 async def handle_recent_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """A tap under /recent: page, ask (first tap on 🗑), del (Yes, delete) or undo.
 
@@ -437,6 +449,7 @@ async def handle_recent_button(update: Update, context: ContextTypes.DEFAULT_TYP
     today = get_sgt_now().date()
     toast = None
     screen = None
+    changed_entry = None
     try:
         action, offset, transaction_id = _parse_recent_callback(query.data)
     except ValueError as e:
@@ -469,7 +482,8 @@ async def handle_recent_button(update: Update, context: ContextTypes.DEFAULT_TYP
             deleted = soft_delete_entry(transaction_id, sender.id)
             if deleted is None:
                 toast = RECENT_CHANGE_ERROR
-            elif deleted:
+            elif deleted is True:
+                changed_entry = entry
                 toast = RECENT_DELETED_TOAST
                 screen = _recent_deleted(entry, offset, today)
             else:
@@ -482,6 +496,9 @@ async def handle_recent_button(update: Update, context: ContextTypes.DEFAULT_TYP
             toast = RECENT_CHANGE_ERROR
         else:
             toast = RECENT_RESTORED_TOAST if restored else RECENT_ALREADY_LIVE_TOAST
+            if restored is True:
+                # Only the restored live view can supply the trip after an undo.
+                changed_entry = get_live_entry(transaction_id)
             screen = _recent_list_screen(offset, names, today)
             if screen is None:
                 # The undo committed; only the list couldn't be read. Drop the Undo button so
@@ -499,6 +516,8 @@ async def handle_recent_button(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.edit_message_text(text, reply_markup=keyboard)
     except Exception as e:
         print(f"Could not redraw /recent: {e}")
+    if changed_entry and changed_entry.get('split_count'):
+        await _refresh_saved_trip_sheet(changed_entry.get('trip_id'))
 
 async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await authorize(update) is None:
@@ -2062,6 +2081,7 @@ async def handle_settle_up_button(update: Update, context: ContextTypes.DEFAULT_
                     await _send_fresh_balances(context, query.message.chat_id,
                                                card['entered_by_participant_id'], result.trip_id,
                                                card['directory'], result.currency)
+                    await _refresh_saved_trip_sheet(result.trip_id)
                 return
             if action == 'cancel':
                 text, _ = build_settle_card({**card, 'outcome': 'cancelled'})
@@ -2359,6 +2379,7 @@ async def _settle_tap(query, context):
         await query.edit_message_text(settlement_card_text(card) + "\n✅ Payback saved.", reply_markup=None)
         await _send_fresh_balances(context, query.message.chat_id, card['entered_by_participant_id'],
                                    card['trip_id'], card['directory'], card['clears_currency'])
+        await _refresh_saved_trip_sheet(card['trip_id'])
         return
     if action == 'cancel':
         await query.answer()
@@ -3048,6 +3069,8 @@ async def _card_tap(query, context: ContextTypes.DEFAULT_TYPE, message_id: int):
             )
             # Editing the text. By omitting 'reply_markup', Telegram automatically removes the buttons.
             await query.edit_message_text(updated_summary, parse_mode="Markdown")
+            if _owed_split(transaction_to_save):
+                await _refresh_saved_trip_sheet(transaction_to_save.get('trip_id'))
         else:
             # Put the entry back and hand the buttons back with it, so a transient database
             # failure costs a retry rather than the whole entry. It keeps its original

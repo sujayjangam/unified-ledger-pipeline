@@ -93,6 +93,15 @@ Two guards run before the bot is even built:
 Stop the bot with `Ctrl+C`. There is nothing to undo afterwards — the production webhook was never
 touched.
 
+### Trip sheets on the test bot
+
+A trip sheet is written only when the trip has a `sheet_id` on the branch (set it with the seed
+script, `DATABASE_URL` pointed at the branch) and `SHEETS_IMPERSONATE_SA` names the bot's
+service account, in `.env.local` or the shell. The test bot then acts as that account through
+`gcloud`, so you need permission to (Service Account Token Creator on it). Without the variable
+the bot prints once that sheet writes are off and carries on. A test-bot write puts the branch's
+data in the workbook; the next production save writes production's back.
+
 ## Running migrations against the branch
 
 **`alembic` does not read `.env.local`.** `alembic/env.py` calls plain `load_dotenv()`, which loads
