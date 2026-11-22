@@ -2244,6 +2244,14 @@ def _sgd_line_text(line, names, button=False):
         f'{owing} {verb} {receiver} {format_money(line.sgd_cents, "SGD")}')
 
 
+def _sgd_shortcut_notes(line, names):
+    """The same 💡 words as each currency's own screen, one per shortcut on the line."""
+    return [f'💡 {unit_name(line.from_unit, names)} pays {names[line.to_person]} the '
+            f'{format_money(cents, "SGD")} {unit_name(unit, names)} owes, and pays '
+            f'{names[middle]} {format_money(cents, "SGD")} less.'
+            for unit, middle, cents in line.shortcuts]
+
+
 def _sgd_screen(trip, directory, data=None):
     """Render stored agreements only; automatic lookups belong solely to the opening tap."""
     entries, paid, rates, payments, needed = data or _sgd_data(trip)
@@ -2270,6 +2278,8 @@ def _sgd_screen(trip, directory, data=None):
         lines.extend(_sgd_line_text(line, names) for line in suggestions)
         if not suggestions:
             lines.append('Everyone is settled.')
+        # After the payment lines, so the ✅ buttons still match the lines they follow.
+        lines.extend(note for line in suggestions for note in _sgd_shortcut_notes(line, names))
     lines, kept = _cut_bals_lines(lines)
     rows.extend([InlineKeyboardButton('✅ ' + _sgd_line_text(line, names, True),
                                      callback_data=f'sgd:new:{trip.id}:{i}:{line.sgd_cents}')]
@@ -2415,17 +2425,24 @@ def _sgd_keyboard(card, people=False):
 
 def _sgd_card_text(card):
     """Explain the gross debts and retained reverse money behind the net cash transfer."""
-    lines = ['💱 ' + _sgd_line_text(card['line'], card['names'])]
-    for part in card['line'].parts:
+    names, line = card['names'], card['line']
+    lines = ['💱 ' + _sgd_line_text(line, names)]
+    for part in line.parts:
         amount = format_money(part.cents_in_currency, part.currency)
         if part.currency != 'SGD':
             amount += (f" at {rate_equation(part.currency, card['rates'][part.currency]['rate'])}"
                        f' → {format_money(part.sgd_cents, "SGD")}')
+        debt = f'{unit_name(part.payment.from_unit, names)} owes {names[part.payment.to_unit[1]]}'
         if part.reverse:
-            amount = (f'Less {amount} that {unit_name(part.payment.from_unit, card["names"])} owes '
-                      f'{card["names"][part.payment.to_unit[1]]}')
+            amount = f'Less {amount} that {debt}'
+        elif part.giver is not None:
+            # A shortcut's middle person passes this on: it clears their family's debt.
+            amount = f'{amount} of what {debt}, passed on by {names[part.giver]}'
+        elif part.payment.to_unit[1] != line.to_person:
+            amount = f'{amount} that {debt}'
         lines.append(amount)
-    lines.append('Paid by: ' + card['names'].get(card['from_id'], 'Choose who paid'))
+    lines.extend(_sgd_shortcut_notes(line, names))
+    lines.append('Paid by: ' + names.get(card['from_id'], 'Choose who paid'))
     return '\n'.join(lines)
 
 
@@ -2462,16 +2479,14 @@ async def _new_sgd_settlement(update, context):
         members = ((line.from_unit[1],) if line.from_unit[0] == 'person' else
                    tuple(pid for pid in trip.member_ids if unit_of(pid, families) == line.from_unit))
         payer = line.from_unit[1] if line.from_unit[0] == 'person' else sender.id if sender.id in members else None
-        reverse_paths = _sgd_reverse_paths(lines, entries, families, paid, trip.member_ids)
+        all_paths = _sgd_paths(lines, entries, families, paid, trip.member_ids)
         parts = []
-        for part in line.parts:
+        for j, part in enumerate(line.parts):
             unit = part.payment.from_unit
             part_members = ((unit[1],) if unit[0] == 'person' else
                             tuple(pid for pid in trip.member_ids if unit_of(pid, families) == unit))
-            paths = (reverse_paths[(line.parts[0].number, part.number)] if part.reverse else
-                     line_parts(entries, families, paid, part.currency, unit, part.payment.to_unit[1]))
             parts.append(dict(part=part, members=part_members, idempotency_key=str(uuid.uuid4()),
-                              line_parts=paths))
+                              line_parts=all_paths[(index - 1, j)]))
         card = dict(kind='sgd', trip_id=trip.id, trip_name=trip.name, line=line, parts=tuple(parts),
                     rates=rates, directory=directory, names={p.id: p.display_name for p in directory.participants},
                     from_id=payer, to_id=line.to_person, for_id=None, debtor_member_ids=members,
@@ -2488,31 +2503,35 @@ async def _new_sgd_settlement(update, context):
     _bounded_put(context.user_data.setdefault('pending_settlements', {}), sent.message_id, card)
 
 
-def _sgd_reverse_paths(lines, entries, families, paid, member_ids):
-    """Allocate split reverse shortcuts once, largest gross forward line first.
+def _sgd_paths(lines, entries, families, paid, member_ids):
+    """The bill paths behind every part, keyed (line index, part index).
 
-    Reusing the full original paths on each card would clear the first bill twice.
-    Keep disjoint portions instead; no changes to the existing balance helpers.
+    A payment can be cut over several cards (a reverse part, or a shortcut's pass-on
+    piece). Reusing its full paths on each card would clear the first bill twice, so each
+    piece gets a disjoint portion. Pieces someone else hands on go first, with that
+    person's own shares first, so a middle person's own debt is the one cleared.
     """
-    remaining, result = {}, {}
-    for line in sorted(lines, key=lambda item: (-sum(p.sgd_cents for p in item.parts if not p.reverse),
-                                                item.parts[0].number)):
+    used = {}
+    for line in lines:
         for part in line.parts:
-            if not part.reverse:
-                continue
-            unit = part.payment.from_unit
-            if part.number not in remaining:
-                remaining[part.number] = line_parts(entries, families, paid, part.currency,
-                                                     unit, part.payment.to_unit[1])
-            paths = remaining[part.number]
-            key = line.parts[0].number, part.number
-            if paths is None:
-                result[key] = None
-                continue
-            members = ((unit[1],) if unit[0] == 'person' else
-                       tuple(pid for pid in member_ids if unit_of(pid, families) == unit))
-            first = line.to_person if line.to_person in members else min(members)
-            result[key], remaining[part.number] = take_line_parts(paths, first, part.cents_in_currency)
+            used[part.number] = used.get(part.number, 0) + 1
+    remaining, result = {}, {}
+    order = sorted(((i, j) for i, line in enumerate(lines) for j in range(len(line.parts))),
+                   key=lambda ij: (lines[ij[0]].parts[ij[1]].giver is None, ij))
+    for i, j in order:
+        part = lines[i].parts[j]
+        unit = part.payment.from_unit
+        if part.number not in remaining:
+            remaining[part.number] = line_parts(entries, families, paid, part.currency,
+                                                 unit, part.payment.to_unit[1])
+        paths = remaining[part.number]
+        if paths is None or used[part.number] == 1:
+            result[(i, j)] = paths
+            continue
+        members = ((unit[1],) if unit[0] == 'person' else
+                   tuple(pid for pid in member_ids if unit_of(pid, families) == unit))
+        first = part.giver if part.giver in members else min(members)
+        result[(i, j)], remaining[part.number] = take_line_parts(paths, first, part.cents_in_currency)
     return result
 
 
@@ -2520,8 +2539,12 @@ def _save_sgd_parts(card):
     """Retry the same immutable parts in order; already inserted keys are harmless."""
     for item in card['parts']:
         part = item['part']
-        giver = card['to_id'] if part.reverse else card['from_id']
-        receiver = part.payment.to_unit[1] if part.reverse else card['to_id']
+        # Each part is a payback of its own payment, to that payment's receiver: the card's
+        # payer hands most over; a reverse part comes from the line's receiver, and a
+        # shortcut's pass-on piece from its middle person (Part.giver).
+        giver = (part.giver if part.giver is not None else
+                 card['to_id'] if part.reverse else card['from_id'])
+        receiver = part.payment.to_unit[1]
         beneficiary = None if giver in item['members'] else min(item['members'])
         unit = part.payment.from_unit
         note_card = dict(card, from_id=giver, for_id=beneficiary,

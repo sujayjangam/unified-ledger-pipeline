@@ -267,6 +267,9 @@ Env vars (`.env.example` shows the format):
   view over `trip_payments`, never a second balance engine: `one_currency`
   (`app/services/one_currency.py`) converts each payment at the trip's stored rate and nets
   two families' opposite debts, largest line first, using every payment's cents exactly once.
+  Then debts move only along lines that already exist (`_shortcut`, the #129 rule across
+  currencies, with the middle person's family standing in for them), with the same 💡
+  line: nobody is ever sent to someone they didn't already pay. Never a new pair.
   Rates live in `trip_fx_rates` (`app/services/trip_rates.py`): an ECB rate on the trip's last
   day (today while it's on) is looked up only on the tap that opens the screen and stored, and
   never overwrites a typed one. A typed rate comes from a ForceReply prompt recognised by its
@@ -274,7 +277,9 @@ Env vars (`.env.example` shows the format):
   read in `handle_text` after the settle-prompt block; the prompt's own words decide which way
   round it is; more than 25% from the ECB rate is refused. A ✅ card follows the settle card
   rules and saves one ordinary payback per part with `add_settlement` (paid in SGD, the stored
-  rate, `needs_statement_check` false); a netted part is saved from the line's receiver. Each
+  rate, `needs_statement_check` false), each to its own payment's receiver; a netted part is
+  saved from the line's receiver and a shortcut's pass-on piece from its middle person
+  (`Part.giver`); a payment cut over several cards gets disjoint bill paths (`_sgd_paths`). Each
   part's key is made when the card opens, so a failed Confirm retries only what's missing, and
   the payer can't change after saving starts. Full lines only.
 - A message whose first word is "settle" (or first words "family settle") is a payback, read

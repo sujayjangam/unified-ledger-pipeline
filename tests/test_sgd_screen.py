@@ -357,3 +357,31 @@ async def test_rate_reply_storage_failure_is_error_not_success(sgd, directory):
     update.message.reply_text.assert_awaited_once_with(bot.BALS_ERROR)
     context.bot.send_message.assert_not_awaited()
     bot.extract_transactions.assert_not_awaited()
+
+
+async def test_shortcut_line_shows_tip_and_saves_each_debt_from_its_own_giver(sgd, directory):
+    """#171: Carol's Lees owe Bob in IDR, Bob owes Alice in SGD, and the Lees already pay
+    Alice. Each currency's screen keeps three lines; All in SGD moves Bob's 2.00 onto the
+    Lees' line to Alice, and Confirm records it as two ordinary paybacks through Bob."""
+    sgd[0][:] = [dict(transaction_id='a', date=DAY, currency='SGD', paid_by=1, splits={3: 1000}),
+                 dict(transaction_id='b', date=DAY, currency='IDR', paid_by=2, splits={3: 20000}),
+                 dict(transaction_id='c', date=DAY, currency='SGD', paid_by=1, splits={2: 500})]
+    text, markup = bot._sgd_screen(TRIP, directory)
+    assert text.endswith('Lee family pays Alice SGD 12.00\nBob pays Alice SGD 3.00\n'
+                         '💡 Lee family pays Alice the SGD 2.00 Bob owes, and pays Bob SGD 2.00 less.')
+    assert 'sgd:new:7:1:1200' in _buttons(markup).values()
+    context = context_for(directory)
+    update, query = tap('sgd:new:7:1:1200')
+    await bot.handle_sgd_button(update, context)
+    card = context.user_data['pending_settlements'][20]
+    card_text = query.message.reply_text.await_args.args[0]
+    assert 'IDR 200.00 at 1 SGD = 100 IDR → SGD 2.00 that Lee family owes Bob' in card_text
+    assert 'SGD 2.00 of what Bob owes Alice, passed on by Bob' in card_text
+    card = dict(card, from_id=3)
+    bot._save_sgd_parts(card)
+    calls = [c.kwargs for c in bot.add_settlement.call_args_list]
+    assert [(c['from_id'], c['to_id'], c['for_id'], c['clears_currency'], c['clears_amount'],
+             c['paid_amount']) for c in calls] == [
+        (3, 1, None, 'SGD', '10.00', '10.00'),
+        (3, 2, None, 'IDR', '200.00', '2.00'),
+        (2, 1, None, 'SGD', '2.00', '2.00')]
