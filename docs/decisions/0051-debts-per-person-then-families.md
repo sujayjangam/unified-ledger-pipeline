@@ -64,6 +64,17 @@ shared by all four.
 On behalf: the Ngs are abroad and pay in another currency, so the Lees pay Alice what the Ngs owe.
 The Ngs drop out of "To settle". The Lees and the Ngs settle between themselves, using the record.
 
+## Amended 2026-11-22: family to receiver on the "All in SGD" screen ([#171](https://github.com/sujayjangam/unified-ledger-pipeline/issues/171))
+
+- On that screen only (ADR-0056, amended), a family pays as one: when two families owe each
+  other, the smaller side's debts come off the larger side's lines to the same family, largest
+  line first. Example (fictional): Carol owes Bob SGD 30 back after a family settle, and the Tan
+  family owes Carol USD 40; the screen shows one line, Tan family pays Carol the difference.
+- Each family's total is unchanged; inside a family, who ends up paying or receiving can shift.
+  That's the same as a family settle (ADR-0058), which already pays for the whole family.
+- A netted line saves the paybacks both ways (the receiver hands back the smaller side), so each
+  per-currency screen still follows this record's rules and reaches zero.
+
 ## Rejected
 
 - **A family as one wallet** (ADR-0044, ADR-0047): hides debts between relatives.

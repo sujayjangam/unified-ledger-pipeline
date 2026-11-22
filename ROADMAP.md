@@ -52,8 +52,19 @@ message itself for costs logged before it starts.
   first pass sits on the local branch `feat/splits-family-group`; the splits plan says how to pick
   it up.
 - Aliases per sender ("dad", "mummy"; see Phase 1 below).
+- "All in SGD" in the trip's own settle currency (AUD for a trip in Australia), and part
+  payments from that screen ([#171](https://github.com/sujayjangam/unified-ledger-pipeline/issues/171)
+  shipped SGD and full lines only).
 
 **Recently shipped**, newest first. Each PR and ADR has the full story.
+
+- **2026-11-22: "All in SGD" on `/trip_bals`**
+  ([#171](https://github.com/sujayjangam/unified-ledger-pipeline/issues/171), amendments to
+  ADR-0051, ADR-0053 and ADR-0056). A trip in several currencies couldn't be settled in one:
+  an SGD payback cleared only SGD lines. Now one screen adds up each family → receiver line
+  across currencies at the trip's rate (ECB on the last day, or typed in the bot), and a ✅
+  card saves one payback per currency. Migration 0013 adds `trip_fx_rates`. Still to do: the
+  settle currency chosen per trip (SGD for now).
 
 - **2026-11-22: a Google Sheet per trip, one row per bill**
   ([#167](https://github.com/sujayjangam/unified-ledger-pipeline/issues/167),

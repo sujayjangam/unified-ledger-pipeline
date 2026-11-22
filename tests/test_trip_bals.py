@@ -63,7 +63,8 @@ async def test_command_shows_the_active_trip_straight_away(bals):
         "Tan family is owed AUD 30.00", "", "2 payments to settle"])
     assert "parse_mode" not in reply.kwargs
     assert _buttons(reply.kwargs["reply_markup"]) == {
-        "All payments (2)": "bals:pay:7:AUD", "Other trip": "bals:page:0"}
+        "All payments (2)": "bals:pay:7:AUD", "Other trip": "bals:page:0",
+        "💱 All in SGD": "bals:sgd:7"}
 
 
 

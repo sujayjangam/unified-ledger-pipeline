@@ -263,6 +263,20 @@ Env vars (`.env.example` shows the format):
   never as "nobody owes anything". A split entry still with no payer after the fallback (account owner, else sender) is left out with a ⚠️ line,
   never guessed. A trip id from a button is loaded only through `member_trip`. The reply is
   plain text with no `parse_mode`.
+- "💱 All in SGD" (`bals:sgd`, `sgd:` callbacks; #171, amendments to ADR-0051/0053/0056) is a
+  view over `trip_payments`, never a second balance engine: `one_currency`
+  (`app/services/one_currency.py`) converts each payment at the trip's stored rate and nets
+  two families' opposite debts, largest line first, using every payment's cents exactly once.
+  Rates live in `trip_fx_rates` (`app/services/trip_rates.py`): an ECB rate on the trip's last
+  day (today while it's on) is looked up only on the tap that opens the screen and stored, and
+  never overwrites a typed one. A typed rate comes from a ForceReply prompt recognised by its
+  fixed first line (`💱 <CUR> rate · <trip> · #<id>`, so a restart can't send it to the model),
+  read in `handle_text` after the settle-prompt block; the prompt's own words decide which way
+  round it is; outside half to double the ECB rate is refused. A ✅ card follows the settle card
+  rules and saves one ordinary payback per part with `add_settlement` (paid in SGD, the stored
+  rate, `needs_statement_check` false); a netted part is saved from the line's receiver. Each
+  part's key is made when the card opens, so a failed Confirm retries only what's missing, and
+  the payer can't change after saving starts. Full lines only.
 - A message whose first word is "settle" (or first words "family settle") is a payback, read
   by `app/services/settle.py` with no model
   ([ADR-0052](docs/decisions/0052-settle-up-by-typed-message.md),

@@ -187,6 +187,12 @@ the options turned down, and what it cost. The ones that shaped the system most:
   family can pay the line in full. A typed amount and its prompt disappear once the card has
   updated, with any error shown in the next prompt. After Confirm a fresh `/trip_bals` is sent
   below the card; older reports stay where they are.
+- "💱 All in SGD", on a trip with any payment outside SGD: one line per family → receiver, every
+  currency converted at the trip's rate and added up, with debts both ways between two families
+  netted. The rate is the ECB rate on the trip's last day until someone types the rate the group
+  really used (✏️). A ✅ button per line opens a card showing each currency's part; Confirm saves
+  one payback per currency, paid in SGD, so every currency's own screen reaches zero
+  (amendments to ADR-0051, ADR-0053 and ADR-0056).
 - Settling up by message: a message starting "settle" ("Settle Carol paid 381 for saree
   pleating") is read in Python, never by the model, and shows a card of the bills it pays off,
   each share cleared or still owed, before anything is saved. With no bill named it pays the

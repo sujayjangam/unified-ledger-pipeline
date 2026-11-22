@@ -74,7 +74,8 @@ def test_three_currency_main_and_navigation(island):
     assert _buttons(markup) == {
         'AUD (2)': 'bals:cur:7:AUD', '✓ IDR (6)': 'bals:cur:7:IDR',
         'SGD (0)': 'bals:cur:7:SGD', 'All payments (6)': 'bals:pay:7:IDR',
-        'View paybacks (2)': 'bals:pbk:7:IDR', 'Other trip': 'bals:page:0'}
+        'View paybacks (2)': 'bals:pbk:7:IDR', 'Other trip': 'bals:page:0',
+        '💱 All in SGD': 'bals:sgd:7'}
     assert all(not line.startswith('    ') for line in text.splitlines())
     text, markup = bot._bals_screen(TRIP, DIRECTORY, DAY, 'SGD')
     assert 'Everyone is settled. · 1 payback' in text
@@ -277,7 +278,7 @@ def test_ten_people_six_bills_two_paybacks_reduces_baseline(island, monkeypatch)
     monkeypatch.setattr(bot, 'get_trip_settlements', lambda _: paid)
     text, markup = bot._bals_screen(TRIP, DIRECTORY, DAY)
     counts = len(text.splitlines()), sum(map(len, markup.inline_keyboard))
-    assert counts == (9, 3)
+    assert counts == (9, 4)
     assert counts[0] < 45 and counts[1] < 13
 
 

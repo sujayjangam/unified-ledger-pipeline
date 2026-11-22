@@ -16,7 +16,9 @@ import contextlib
 import tempfile
 import time
 import re
-from app.add_expense import add_expense, dollars_to_cents, format_cents
+from app.add_expense import add_expense, dollars_to_cents, format_cents, format_money
+from app.services.one_currency import one_currency, take_line_parts
+from app.services.trip_rates import get_trip_rates, upsert_trip_rate, rate_equation, rate_display, parse_rate
 from app.services.trip_sheet import refresh_trip_sheet
 from app.services.utils import get_sgt_now, get_week_start, get_month_start
 from app.services.ledger_queries import (
@@ -44,6 +46,7 @@ from app.services.trips import (
 from app.services.balances import (
     trip_balance_lines, trip_payments, unit_of, open_bill_shares, line_parts, payment_rows,
     balance_currencies, default_balance_currency, trip_payment_lines, trip_payback_lines, payment_button_label,
+    unit_name,
 )
 from app.services.settlements import (
     add_settlement, is_overpayment, settlement_card_text, change_settlement_amount, parse_settlement_amount,
@@ -1105,6 +1108,8 @@ def _bals_screen(trip: Trip, directory: Directory, today, currency=None, screen=
                 ('✓ ' if c == currency else '') + f"{c} ({sum(cur == c for cur, _ in payments)})",
                 callback_data=f"bals:cur:{trip.id}:{c}") for c in currencies]
             rows.extend(buttons[i:i + 4] for i in range(0, len(buttons), 4))
+        if any(c != 'SGD' for c, _ in payments):
+            rows.append([InlineKeyboardButton('💱 All in SGD', callback_data=f'bals:sgd:{trip.id}')])
         if selected:
             rows.append([InlineKeyboardButton(f"All payments ({len(selected)})",
                                               callback_data=f"bals:pay:{trip.id}:{currency}")])
@@ -1149,6 +1154,9 @@ async def handle_bals_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
     built first; then one answer(), then the redraw.
     """
     query = update.callback_query
+    if query.data.startswith('bals:sgd:'):
+        await _open_sgd_screen(update, context)
+        return
     directory = await authorize(update)
     if directory is None:
         await query.answer()
@@ -2215,6 +2223,392 @@ async def _settle_up_reply(update, context):
     return True
 
 
+def _sgd_data(trip):
+    """Read every input together and distinguish unavailable storage from missing rates."""
+    entries, paid, rates = (get_trip_split_entries(trip.id), get_trip_settlements(trip.id),
+                            get_trip_rates(trip.id))
+    if entries is None or paid is None or rates is None:
+        raise _SettlementUnavailable(BALS_ERROR)
+    payments = trip_payments(entries, dict(trip.families), paid)
+    needed = sorted({c for c, _ in payments if c != 'SGD'})
+    return entries, paid, rates, payments, needed
+
+
+def _sgd_line_text(line, names, button=False):
+    """The button and report use the same order and the same whole-cent amount."""
+    owing, receiver = unit_name(line.from_unit, names), names[line.to_person]
+    if line.sgd_cents == 0:
+        return f'{owing} and {receiver} are even'
+    verb = '→' if button else 'pays'
+    return f'{owing} {verb} {receiver} · {format_money(line.sgd_cents, "SGD")}' if button else (
+        f'{owing} {verb} {receiver} {format_money(line.sgd_cents, "SGD")}')
+
+
+def _sgd_screen(trip, directory, data=None):
+    """Render stored agreements only; automatic lookups belong solely to the opening tap."""
+    entries, paid, rates, payments, needed = data or _sgd_data(trip)
+    names = {p.id: p.display_name for p in directory.participants}
+    lines = [f'🧳 {trip.name} · all in SGD']
+    rows = [[InlineKeyboardButton(f'✏️ {c} rate', callback_data=f'sgd:rate:{trip.id}:{c}')
+             for c in needed[i:i + 4]] for i in range(0, len(needed), 4)]
+    for currency in needed:
+        lines.append(rate_display(currency, rates[currency], names) if currency in rates else
+                     f'⚠️ No {currency} rate yet. Tap ✏️ {currency} rate.')
+    lines.append('')
+    offset = len(lines)
+    suggestions = ()
+    if all(c in rates for c in needed):
+        suggestions = one_currency(payments, dict(trip.families), {c: r['rate'] for c, r in rates.items()})
+        lines.extend(_sgd_line_text(line, names) for line in suggestions)
+        if not suggestions:
+            lines.append('Everyone is settled.')
+    lines, kept = _cut_bals_lines(lines)
+    rows.extend([InlineKeyboardButton('✅ ' + _sgd_line_text(line, names, True),
+                                     callback_data=f'sgd:new:{trip.id}:{i}:{line.sgd_cents}')]
+                for i, line in enumerate(suggestions[:max(0, kept - offset)], 1))
+    currency = default_balance_currency(balance_currencies(entries, paid, payments), payments) or 'SGD'
+    rows.append([InlineKeyboardButton('⬅ Back', callback_data=f'bals:cur:{trip.id}:{currency}')])
+    return '\n'.join(lines), InlineKeyboardMarkup(rows)
+
+
+async def _open_sgd_screen(update, context):
+    """Fill absent rates once per opening, preserving stored or concurrently typed rates."""
+    query = update.callback_query
+    directory = context.user_data.get('bals_reports', {}).get(query.message.message_id)
+    if directory is None:
+        await query.answer(SETTLE_STALE)
+        return
+    try:
+        sender = directory.participant_by_telegram_id(str(update.effective_user.id))
+        if sender is None:
+            raise _SettlementUnavailable(BALS_NOT_MEMBER)
+        trip = _load_bals_trip(sender.id, int(query.data.split(':')[2]))
+        if trip is None:
+            raise _SettlementUnavailable(BALS_NOT_MEMBER)
+        data = _sgd_data(trip)
+        for currency in data[4]:
+            if currency in data[2]:
+                continue
+            found = await reference_rate('SGD', currency, min(trip.end_date, get_sgt_now().date()))
+            if found and not upsert_trip_rate(trip.id, currency, *found, 'frankfurter'):
+                raise _SettlementUnavailable(BALS_ERROR)
+        # Re-read so a racing typed agreement wins both storage and the displayed screen.
+        text, keyboard = _sgd_screen(trip, directory)
+    except Exception as exc:
+        await query.answer(str(exc) if isinstance(exc, _SettlementUnavailable) else BALS_ERROR)
+        return
+    await query.answer()
+    await query.edit_message_text(text, reply_markup=keyboard)
+
+
+def _sgd_prompt(trip, currency, row, names):
+    """Persist direction in the prompt itself, so replies survive a process restart."""
+    lines = [f'💱 {currency} rate · {trip.name} · #{trip.id}']
+    if row:
+        lines.append('Now: ' + rate_display(currency, row, names))
+    if row and row['rate'] < 1:
+        lines.append(f'Reply with how many SGD 1 {currency} cost, e.g. 1.2834')
+    else:
+        lines.append(f'Reply with how many {currency} 1 SGD bought, e.g. 14100')
+    return '\n'.join(lines)
+
+
+async def _sgd_rate_prompt(update, context):
+    """Use the report's directory snapshot, and check membership before offering a rate."""
+    query = update.callback_query
+    directory = context.user_data.get('bals_reports', {}).get(query.message.message_id)
+    if directory is None:
+        await query.answer(SETTLE_STALE)
+        return
+    try:
+        _, _, trip_id, currency = query.data.split(':')
+        sender = directory.participant_by_telegram_id(str(update.effective_user.id))
+        trip = _load_bals_trip(sender.id, int(trip_id)) if sender else None
+        if trip is None:
+            raise _SettlementUnavailable(BALS_NOT_MEMBER)
+        data = _sgd_data(trip)
+        if currency not in data[4]:
+            raise _SettlementUnavailable(SETTLE_STALE)
+        text = _sgd_prompt(trip, currency, data[2].get(currency),
+                           {p.id: p.display_name for p in directory.participants})
+    except Exception as exc:
+        await query.answer(str(exc) if isinstance(exc, _SettlementUnavailable) else BALS_ERROR)
+        return
+    await query.answer()
+    await query.message.reply_text(text, reply_markup=ForceReply(selective=True))
+
+
+async def _sgd_rate_reply(update, context, directory):
+    """Consume bot-authored rate replies statelessly, before any extraction path."""
+    message = update.message
+    replied = message.reply_to_message
+    if not (replied and replied.from_user and replied.from_user.id == context.bot.id
+            and isinstance(replied.text, str)):
+        return False
+    match = re.fullmatch(r'💱 ([A-Z]{3}) rate · .+ · #([0-9]+)', replied.text.split('\n', 1)[0])
+    if not match:
+        return False
+    currency, trip_id = match.group(1), int(match.group(2))
+    async with _reply_deleted_last(context, message):
+        try:
+            sender = directory.participant_by_telegram_id(str(update.effective_user.id))
+            trip = _load_bals_trip(sender.id, trip_id) if sender else None
+            if trip is None:
+                raise _SettlementUnavailable(BALS_NOT_MEMBER)
+            rates = get_trip_rates(trip_id)
+            if rates is None:
+                raise _SettlementUnavailable(BALS_ERROR)
+            if currency == 'SGD':
+                raise ValueError('SGD does not need a rate.')
+            rate = parse_rate(message.text, currency, replied.text, rates.get(currency))
+            if not upsert_trip_rate(trip_id, currency, rate, get_sgt_now().date(), 'typed', sender.id):
+                raise _SettlementUnavailable(BALS_ERROR)
+        except ValueError as exc:
+            # Keep the original direction even if another member changed the agreement.
+            text = replied.text.split('\n⚠️ ', 1)[0] + f'\n⚠️ {exc}'
+            await message.reply_text(text, reply_markup=ForceReply(selective=True))
+            await _delete_quietly(context.bot, message.chat_id, replied.message_id)
+            return True
+        except Exception as exc:
+            await message.reply_text(str(exc) if isinstance(exc, _SettlementUnavailable) else BALS_ERROR)
+            return True
+        await _delete_quietly(context.bot, message.chat_id, replied.message_id)
+        await _send_fresh_sgd(context, message.chat_id, sender.id, trip_id, directory)
+    return True
+
+
+async def _send_fresh_sgd(context, chat_id, sender_id, trip_id, directory):
+    """Serialize fresh reports and register their buttons; a saved payment stays saved."""
+    async with _redraw_lock(context, chat_id, trip_id):
+        try:
+            trip = _load_bals_trip(sender_id, trip_id)
+            if trip is None:
+                return
+            text, keyboard = _sgd_screen(trip, directory)
+            sent = await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard)
+            _bounded_put(context.user_data.setdefault('bals_reports', {}), sent.message_id, directory)
+        except Exception as exc:
+            print(f'Could not send fresh SGD balances: {type(exc).__name__}')
+
+
+def _sgd_keyboard(card, people=False):
+    """Full-line paybacks offer only payer selection, Confirm and Cancel."""
+    if people:
+        return _people_keyboard(card['people'], 'sgd:person', 'sgd:back', (card['from_id'],))
+    first = ([InlineKeyboardButton('Confirm', callback_data='sgd:confirm')]
+             if card['from_id'] is not None else [])
+    return InlineKeyboardMarkup([first + [InlineKeyboardButton('Cancel', callback_data='sgd:cancel')],
+                                 [InlineKeyboardButton('Who paid', callback_data='sgd:who')]])
+
+
+def _sgd_card_text(card):
+    """Explain the gross debts and retained reverse money behind the net cash transfer."""
+    lines = ['💱 ' + _sgd_line_text(card['line'], card['names'])]
+    for part in card['line'].parts:
+        amount = format_money(part.cents_in_currency, part.currency)
+        if part.currency != 'SGD':
+            amount += (f" at {rate_equation(part.currency, card['rates'][part.currency]['rate'])}"
+                       f' → {format_money(part.sgd_cents, "SGD")}')
+        if part.reverse:
+            amount = (f'Less {amount} that {unit_name(part.payment.from_unit, card["names"])} owes '
+                      f'{card["names"][part.payment.to_unit[1]]}')
+        lines.append(amount)
+    lines.append('Paid by: ' + card['names'].get(card['from_id'], 'Choose who paid'))
+    return '\n'.join(lines)
+
+
+async def _new_sgd_settlement(update, context):
+    """Recheck fresh debts and freeze every part's provenance and retry key at card-open."""
+    query = update.callback_query
+    directory = context.user_data.get('bals_reports', {}).get(query.message.message_id)
+    if directory is None:
+        await query.answer(SETTLE_STALE)
+        return
+    try:
+        sender = directory.participant_by_telegram_id(str(update.effective_user.id))
+        if sender is None:
+            raise _SettlementUnavailable(SETTLE_GONE)
+        match = re.fullmatch(r'sgd:new:([0-9]+):([0-9]+):([0-9]+)', query.data)
+        if not match:
+            raise _SettlementUnavailable(SETTLE_STALE)
+        trip_id, index, cents = map(int, match.groups())
+        if not (0 < trip_id <= 2**63 - 1 and 0 < index <= 2**63 - 1 and 0 <= cents <= 2**63 - 1):
+            raise _SettlementUnavailable(SETTLE_STALE)
+        trip = _load_bals_trip(sender.id, trip_id)
+        if trip is None:
+            raise _SettlementUnavailable(BALS_NOT_MEMBER)
+        entries, paid, rates, payments, needed = _sgd_data(trip)
+        if any(c not in rates for c in needed):
+            raise _SettlementUnavailable(SETTLE_STALE)
+        families = dict(trip.families)
+        lines = one_currency(payments, families, {c: r['rate'] for c, r in rates.items()})
+        if index > len(lines) or lines[index - 1].sgd_cents != cents:
+            raise _SettlementUnavailable(SETTLE_STALE)
+        line = lines[index - 1]
+        if any(p.sgd_cents <= 0 or p.cents_in_currency <= 0 for p in line.parts):
+            raise _SettlementUnavailable('A debt rounds below one cent. Use its original currency to settle.')
+        members = ((line.from_unit[1],) if line.from_unit[0] == 'person' else
+                   tuple(pid for pid in trip.member_ids if unit_of(pid, families) == line.from_unit))
+        payer = line.from_unit[1] if line.from_unit[0] == 'person' else sender.id if sender.id in members else None
+        reverse_paths = _sgd_reverse_paths(lines, entries, families, paid, trip.member_ids)
+        parts = []
+        for part in line.parts:
+            unit = part.payment.from_unit
+            part_members = ((unit[1],) if unit[0] == 'person' else
+                            tuple(pid for pid in trip.member_ids if unit_of(pid, families) == unit))
+            paths = (reverse_paths[(line.parts[0].number, part.number)] if part.reverse else
+                     line_parts(entries, families, paid, part.currency, unit, part.payment.to_unit[1]))
+            parts.append(dict(part=part, members=part_members, idempotency_key=str(uuid.uuid4()),
+                              line_parts=paths))
+        card = dict(kind='sgd', trip_id=trip.id, trip_name=trip.name, line=line, parts=tuple(parts),
+                    rates=rates, directory=directory, names={p.id: p.display_name for p in directory.participants},
+                    from_id=payer, to_id=line.to_person, for_id=None, debtor_member_ids=members,
+                    family=line.from_unit[1] if line.from_unit[0] == 'family' else None,
+                    date=get_sgt_now().date(), entered_by_participant_id=sender.id,
+                    people=tuple(sorted((p for p in directory.participants
+                                         if p.id in trip.member_ids and p.id != line.to_person),
+                                        key=lambda p: (p.id not in members, p.display_name.lower(), p.id))))
+    except Exception as exc:
+        await query.answer(str(exc) if isinstance(exc, _SettlementUnavailable) else BALS_ERROR)
+        return
+    await query.answer()
+    sent = await query.message.reply_text(_sgd_card_text(card), reply_markup=_sgd_keyboard(card, payer is None))
+    _bounded_put(context.user_data.setdefault('pending_settlements', {}), sent.message_id, card)
+
+
+def _sgd_reverse_paths(lines, entries, families, paid, member_ids):
+    """Allocate split reverse shortcuts once, largest gross forward line first.
+
+    Reusing the full original paths on each card would clear the first bill twice.
+    Keep disjoint portions instead; no changes to the existing balance helpers.
+    """
+    remaining, result = {}, {}
+    for line in sorted(lines, key=lambda item: (-sum(p.sgd_cents for p in item.parts if not p.reverse),
+                                                item.parts[0].number)):
+        for part in line.parts:
+            if not part.reverse:
+                continue
+            unit = part.payment.from_unit
+            if part.number not in remaining:
+                remaining[part.number] = line_parts(entries, families, paid, part.currency,
+                                                     unit, part.payment.to_unit[1])
+            paths = remaining[part.number]
+            key = line.parts[0].number, part.number
+            if paths is None:
+                result[key] = None
+                continue
+            members = ((unit[1],) if unit[0] == 'person' else
+                       tuple(pid for pid in member_ids if unit_of(pid, families) == unit))
+            first = line.to_person if line.to_person in members else min(members)
+            result[key], remaining[part.number] = take_line_parts(paths, first, part.cents_in_currency)
+    return result
+
+
+def _save_sgd_parts(card):
+    """Retry the same immutable parts in order; already inserted keys are harmless."""
+    for item in card['parts']:
+        part = item['part']
+        giver = card['to_id'] if part.reverse else card['from_id']
+        receiver = part.payment.to_unit[1] if part.reverse else card['to_id']
+        beneficiary = None if giver in item['members'] else min(item['members'])
+        unit = part.payment.from_unit
+        note_card = dict(card, from_id=giver, for_id=beneficiary,
+                         family=unit[1] if unit[0] == 'family' else None)
+        note = payback_default_note(note_card) + ' · all in SGD'
+        fx = {}
+        if part.currency != 'SGD':
+            row = card['rates'][part.currency]
+            fx = dict(fx_rate=row['rate'], fx_rate_date=row['rate_date'], fx_source=row['source'])
+            note += ' at ' + rate_equation(part.currency, row['rate'])
+        add_settlement(from_id=giver, to_id=receiver, for_id=beneficiary,
+                       clears_amount=format_cents(part.cents_in_currency), clears_currency=part.currency,
+                       paid_amount=format_cents(part.sgd_cents), paid_currency='SGD',
+                       trip_id=card['trip_id'], date=card['date'], source='telegram_bot',
+                       entered_by_participant_id=card['entered_by_participant_id'],
+                       idempotency_key=item['idempotency_key'], note=note, needs_statement_check=False,
+                       **({'bills': payment_rows(item['line_parts'], beneficiary or giver,
+                                                part.cents_in_currency)} if item['line_parts'] else {}), **fx)
+
+
+async def handle_sgd_button(update, context):
+    """Dispatch reports and serialize card taps without ever loading the directory."""
+    query = update.callback_query
+    if query.data.startswith('sgd:rate:'):
+        await _sgd_rate_prompt(update, context)
+        return
+    if query.data.startswith('sgd:new:'):
+        await _new_sgd_settlement(update, context)
+        return
+    async with _card_lock(context, query.message.message_id):
+        await _sgd_tap(query, context)
+
+
+async def _sgd_tap(query, context):
+    """Copy before redraw; save with original keys after showing a non-actionable button."""
+    message_id = query.message.message_id
+    outcome = _card_outcome(context, message_id)
+    if outcome:
+        await query.answer('✅ Paid back.' if outcome == 'saved' else '❌ Cancelled.')
+        return
+    pending = context.user_data.setdefault('pending_settlements', {})
+    card = pending.get(message_id)
+    if card is None or card.get('kind') != 'sgd':
+        await query.answer(SETTLE_GONE)
+        return
+    action = query.data.removeprefix('sgd:')
+    if action == 'saving':
+        await query.answer('⏳ Saving...')
+        return
+    if action == 'confirm':
+        if card['from_id'] not in {p.id for p in card['people']}:
+            await query.answer('Choose who paid first.')
+            return
+        await query.answer()
+        await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton('⏳ Saving...', callback_data='sgd:saving')]]))
+        # A partial save may already contain this giver. Retrying the same keys with a
+        # different giver would silently mix two agreements on one card.
+        card = dict(card, save_started=True)
+        pending[message_id] = card
+        try:
+            _save_sgd_parts(card)
+        except Exception as exc:
+            print(f'Could not save SGD payback: {type(exc).__name__}')
+            await query.edit_message_text(_sgd_card_text(card) + "\nCouldn't save. Try Confirm again.",
+                                          reply_markup=_sgd_keyboard(card))
+            return
+        pending.pop(message_id)
+        _mark_card_resolved(context, message_id, 'saved')
+        await query.edit_message_text(_sgd_card_text(card) + '\n✅ Paid back.', reply_markup=None)
+        await _send_fresh_sgd(context, query.message.chat_id, card['entered_by_participant_id'],
+                              card['trip_id'], card['directory'])
+        await _refresh_saved_trip_sheet(card['trip_id'])
+        return
+    if action == 'cancel':
+        await query.answer()
+        await query.edit_message_text(_sgd_card_text(card) + '\n❌ Cancelled.', reply_markup=None)
+        pending.pop(message_id)
+        _mark_card_resolved(context, message_id, 'cancelled')
+        return
+    changed = dict(card)
+    if action.startswith('person:'):
+        if card.get('save_started'):
+            await query.answer('Saving has started. Retry Confirm with the same payer.')
+            return
+        value = action.removeprefix('person:')
+        if not value.isascii() or not value.isdigit() or int(value) not in {p.id for p in card['people']}:
+            await query.answer('Choose someone from this trip.')
+            return
+        changed['from_id'] = int(value)
+        changed['for_id'] = None if int(value) in card['debtor_member_ids'] else min(card['debtor_member_ids'])
+    elif action not in ('who', 'back'):
+        await query.answer(SETTLE_GONE)
+        return
+    await query.answer()
+    await query.edit_message_text(_sgd_card_text(changed), reply_markup=_sgd_keyboard(changed, action == 'who'))
+    pending[message_id] = changed
+
+
 # typed expense entry - no transcription step, the message body IS the input
 SETTLE_STALE = "Balances changed, open /trip_bals again."
 SETTLE_GONE = "This payback card is no longer available. Open /trip_bals again."
@@ -2665,6 +3059,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await replied.delete()
         except Exception as exc:
             print(f'Could not delete settle menu prompt: {exc}')
+        return
+    if await _sgd_rate_reply(update, context, directory):
         return
     # Authorize first (every message, fail closed), then check whether this text is a reply
     # to a payback amount prompt. Such a reply is never an expense, so it stops here.
@@ -3212,6 +3608,7 @@ def get_application():
     app.add_handler(CallbackQueryHandler(handle_trip_button, pattern=r"^trip:"))
     app.add_handler(CallbackQueryHandler(handle_bals_button, pattern=r"^bals:"))
     app.add_handler(CallbackQueryHandler(handle_settle_button, pattern=r"^settle:"))
+    app.add_handler(CallbackQueryHandler(handle_sgd_button, pattern=r"^sgd:"))
     app.add_handler(CallbackQueryHandler(handle_settle_up_button, pattern=r"^su:"))
     app.add_handler(CallbackQueryHandler(handle_payer_button, pattern=r"^payer:"))
     app.add_handler(CallbackQueryHandler(handle_card_button, pattern=r"^card:"))
