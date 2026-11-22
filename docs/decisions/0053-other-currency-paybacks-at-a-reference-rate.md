@@ -67,6 +67,21 @@ sequenceDiagram
   `api.frankfurter.dev/v1/currencies` lists AUD, IDR, INR and SGD. Tests stub it; `tests/` never
   touches the network.
 
+## Amended 2026-11-22: one rate per trip for "All in SGD" ([#171](https://github.com/sujayjangam/unified-ledger-pipeline/issues/171))
+
+- The "All in SGD" screen (ADR-0056, amended) uses one rate per currency per trip, kept in
+  `trip_fx_rates`, not a rate per payback day: a group settles a finished trip at the rate it
+  agreed.
+- Until someone types the rate the group really used (a ✏️ button, a ForceReply prompt
+  recognised by its fixed first line, no model), it is the ECB reference rate on the trip's last
+  day (today, while the trip is on), looked up once when the screen is first opened and stored.
+  A typed rate more than 25% from the ECB one is refused as a likely
+  wrong-way-round entry.
+- Each payback saved from that screen stores the rate on `settlements` as before
+  (`fx_source` "frankfurter" or "typed"), with `needs_statement_check` false: the rate was
+  agreed, not taken from a card.
+- Bills still stay in their own currency; only the screen and the paybacks convert.
+
 ## Rejected
 
 - **Refuse another currency:** most trip paybacks are in SGD, so settling up wouldn't work on the

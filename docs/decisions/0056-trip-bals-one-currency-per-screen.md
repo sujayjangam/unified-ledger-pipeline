@@ -51,6 +51,18 @@ flowchart LR
 Evidence: on a fictional 10-person, 4-family trip, the main screen went from 45 lines and 13
 buttons to 9 lines and 3 buttons (`tests/test_bals_screens.py`).
 
+## Amended 2026-11-22: an "All in SGD" screen ([#171](https://github.com/sujayjangam/unified-ledger-pipeline/issues/171))
+
+- A trip with any payment outside SGD gets a `💱 All in SGD` button on its main screen. The
+  screen lists one line per family → receiver: that pair's payments in every currency,
+  converted at the trip's stored rates (ADR-0053, amended) and added up, largest first.
+- Debts both ways between the same two families net into one direction: the smaller side comes
+  off the larger side's lines, largest line first (ADR-0051, amended). Inside one family only an
+  exact reverse pair nets.
+- A ✅ button per line opens a card; Confirm saves one ordinary payback per currency, paid in
+  SGD, so every currency's own screen reaches zero. Full lines only; part payments use a typed
+  settle. The per-currency screens and the balance maths are unchanged.
+
 ## Rejected
 
 - **Converting every currency into one:** balances stay per currency with no FX conversion;
