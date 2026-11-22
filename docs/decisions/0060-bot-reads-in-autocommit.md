@@ -1,4 +1,4 @@
-# ADR-0060: Reads run in autocommit, one connection per screen
+# ADR-0060: The bot's reads run in autocommit, and the settle card's loads share one connection
 
 **Status:** Accepted
 **Date:** 2026-11-22
@@ -22,19 +22,21 @@ sequenceDiagram
     B->>D: BEGIN
     B->>D: SELECT
     B->>D: ROLLBACK (on return)
-    Note over B,D: After: one checkout per screen
+    Note over B,D: After: one checkout for the settle card
     B->>D: ping
     B->>D: SELECT
     B->>D: SELECT ...
 ```
 
-- **Reads go through `get_read_connection()`** (`app/database.py`), which runs in autocommit:
+- **The bot's reads go through `get_read_connection()`** (`app/database.py`), which runs in autocommit:
   no `BEGIN`, no `ROLLBACK`. A block uses it only if everything it runs is a `SELECT` and it
-  never commits. Anything that writes or stores a value stays on `get_connection()`.
+  never commits. Anything that writes or stores a value stays on `get_connection()`, and so do
+  the REST API and CLI, which are out of this change.
 - **Same data as before.** Postgres's default isolation, read committed, already takes a fresh
   snapshot for each statement, so a read in autocommit sees what it saw inside a transaction.
-- **One connection per screen.** A loader takes an optional `conn=`. The settle card's loads
-  share one checkout, and each loader keeps its own error handling and return values.
+- **One connection for the settle card.** A loader takes an optional `conn=`. The settle card's
+  loads share one checkout, and each loader keeps its own error handling and return values.
+  `/trip_bals` still checks out per load: sharing there needs its connection scopes reworked.
 - **The ping stays.** Neon's free tier suspends its compute when idle. Without the ping, a dead
   pooled connection would make the directory read fail, and the bot would refuse everyone.
 

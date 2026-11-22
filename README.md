@@ -54,9 +54,9 @@ never starts a network loop. `app/bot_local.py` runs it as a local polling loop 
 separate test bot. `app/bot_webhook.py` wraps the same code in FastAPI behind `POST /webhook` for
 Cloud Run, where idle containers sleep and polling doesn't work.
 
-**Storage.** Neon Postgres through a pooled SQLAlchemy Core engine. Reads run in autocommit, with
-one connection per screen, because each round trip to the database costs a fifth of a second
-(ADR-0060). Money is always stored as
+**Storage.** Neon Postgres through a pooled SQLAlchemy Core engine. The bot's reads run in
+autocommit, and the settle card's loads share one connection, because each round trip to the
+database costs a fifth of a second (ADR-0060). Money is always stored as
 integer cents, converted from dollars by one shared function using exact decimal maths (half a
 cent rounds up), so float rounding never reaches a stored amount. Alembic owns the schema; there
 is no `CREATE TABLE` in application code. Totals are grouped by currency, and nothing converts
