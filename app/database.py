@@ -51,7 +51,7 @@ def get_connection():
 def get_read_connection():
     """Return a pooled AUTOCOMMIT connection for SELECT-only blocks (ADR-0060).
 
-    Avoid transaction round trips across the Pacific. Read committed already takes
+    Saves the BEGIN and ROLLBACK round trips to the database. Read committed already takes
     a fresh snapshot per statement, so reads see the same data as before.
     SQLAlchemy resets isolation when the connection returns to the pool.
     """

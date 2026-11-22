@@ -1013,7 +1013,7 @@ def _load_bals_trip(participant_id: int, trip_id: int | None, *, conn=None) -> T
     loaded only if this person is a member of it. Its own function, like _load_directory, so
     tests can swap it out without a database.
     """
-    # Share one checkout per screen: each costs a ping across the Pacific.
+    # Share one checkout per screen: each checkout costs a ping round trip to the database.
     with (nullcontext(conn) if conn is not None else get_read_connection()) as conn:
         if trip_id is None:
             trip = load_active_trip(conn, participant_id)
@@ -1027,7 +1027,7 @@ def _load_bals_trip(participant_id: int, trip_id: int | None, *, conn=None) -> T
 
 def _load_bals_choices(participant_id: int, offset: int, *, conn=None):
     """One page of this person's trips for the picker, newest first: (trips, more to come)."""
-    # Share one checkout per screen: each costs a ping across the Pacific.
+    # Share one checkout per screen: each checkout costs a ping round trip to the database.
     with (nullcontext(conn) if conn is not None else get_read_connection()) as conn:
         return member_trips(conn, participant_id, offset, TRIP_PAGE_SIZE)
 
@@ -1861,7 +1861,7 @@ def _bill_date(value):
 def _load_settle_bills(trip, *, conn=None):
     """Read and fold one scope with its own families; None is failure, never empty debts."""
     scope = trip.id if trip else None
-    # Share one checkout per screen: each costs a ping across the Pacific.
+    # Share one checkout per screen: each checkout costs a ping round trip to the database.
     with (nullcontext(conn) if conn is not None else get_read_connection()) as conn:
         entries = get_trip_split_entries(scope, conn=conn)
         settlements = get_trip_settlements(scope, conn=conn)
@@ -1880,7 +1880,7 @@ def _load_settle_snapshot(sender, directory):
     An absent active trip is normal. Missing membership details or failed pages
     are errors, because silently omitting a trip could match the wrong bill.
     """
-    # One checkout for the screen avoids a ping across the Pacific for each loader.
+    # One checkout for the screen saves a ping round trip to the database for each loader.
     with get_read_connection() as conn:
         active = _load_bals_trip(sender.id, None, conn=conn)
         trips = [active] if active else []

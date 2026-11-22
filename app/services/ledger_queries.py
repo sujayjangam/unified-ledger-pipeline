@@ -201,7 +201,7 @@ def get_trip_settlements(trip_id: int | None = None, *, conn=None):
     never an apparently settled scope.
     """
     try:
-        # Share one checkout per screen: each costs a ping across the Pacific.
+        # Share one checkout per screen: each checkout costs a ping round trip to the database.
         with (nullcontext(conn) if conn is not None else get_read_connection()) as conn:
             rows = conn.execute(text('''
                 SELECT id, date, from_participant_id AS from_id, to_participant_id AS to_id,
@@ -254,7 +254,7 @@ def get_trip_split_entries(trip_id: int | None = None, *, conn=None):
     Money stays in the entry's own currency (amount, not base_amount): no FX conversion.
     """
     try:
-        # Share one checkout per screen: each costs a ping across the Pacific.
+        # Share one checkout per screen: each checkout costs a ping round trip to the database.
         with (nullcontext(conn) if conn is not None else get_read_connection()) as conn:
             rows = conn.execute(text('''
                 SELECT t.transaction_id, t.date, t.description, t.amount, t.currency,

@@ -11,6 +11,9 @@ The bot runs in Singapore and the database in Ohio, about 0.22 s per round trip.
 connection checkout cost four round trips before its first row came back, and a typed settle
 card checked out five connections. It took 6–7 s to draw, with 1 ms of real work.
 
+Since ADR-0061 (the same day) the bot runs next to the database, at about 21 ms a round
+trip. Fewer round trips still pay off, only less.
+
 ## Decision
 
 ```mermaid

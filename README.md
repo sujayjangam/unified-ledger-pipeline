@@ -55,8 +55,8 @@ separate test bot. `app/bot_webhook.py` wraps the same code in FastAPI behind `P
 Cloud Run, where idle containers sleep and polling doesn't work.
 
 **Storage.** Neon Postgres through a pooled SQLAlchemy Core engine. The bot's reads run in
-autocommit, and the settle card's loads share one connection, because each round trip to the
-database costs a fifth of a second (ADR-0060). Money is always stored as
+autocommit, and the settle card's loads share one connection, to save round trips to the database
+(ADR-0060). The bot runs on Cloud Run in the same US region as the database (ADR-0061). Money is always stored as
 integer cents, converted from dollars by one shared function using exact decimal maths (half a
 cent rounds up), so float rounding never reaches a stored amount. Alembic owns the schema; there
 is no `CREATE TABLE` in application code. Totals are grouped by currency, and nothing converts
