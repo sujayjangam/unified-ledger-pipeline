@@ -39,8 +39,12 @@ is tried on a Neon branch with a fictional trip-sized directory first.
 4. *(Done 2026-11-23.)* Formatted bot screens: HTML with every value escaped and a plain-text
    fallback, so a message with `_` or `*` can no longer stop a card showing
    ([#143](https://github.com/sujayjangam/unified-ledger-pipeline/issues/143)).
-5. "All payments" on `/trip_bals` grouped by who receives the money
-   ([#179](https://github.com/sujayjangam/unified-ledger-pipeline/issues/179), in review).
+5. *(Done 2026-11-23.)* "All payments" on `/trip_bals` grouped by who receives the money
+   ([#179](https://github.com/sujayjangam/unified-ledger-pipeline/issues/179)).
+6. *(Done 2026-11-23.)* A Summary tab in the trip workbook: paybacks done, still to settle,
+   and who paid on someone else's behalf, across families and within one
+   ([#177](https://github.com/sujayjangam/unified-ledger-pipeline/issues/177)). A new trip's
+   workbook needs the tab added by hand.
 
 Later: load a finished trip's hand-kept spreadsheet as real bills, and work out the trip from the
 message itself for costs logged before it starts.
