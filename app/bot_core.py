@@ -47,6 +47,7 @@ from app.services.trips import (
 from app.services.balances import (
     trip_balance_lines, trip_payments, unit_of, open_bill_shares, line_parts, payment_rows,
     balance_currencies, default_balance_currency, trip_payment_lines, trip_payback_lines, payment_button_label,
+    payment_display,
     unit_name, unit_balances, NO_PAYER_LINE,
 )
 from app.services.settlements import (
@@ -1115,11 +1116,12 @@ def _bals_screen(trip: Trip, directory: Directory, today, currency=None, screen=
         lines = [f"🧳 {bold(trip.name)} · {esc(currency)} · to settle",
                  *trip_payment_lines(entries, names, families, currency, settlements, html=True)]
         lines, kept = _cut_bals_lines(lines)
-        # The first body lines correspond one-to-one to selected payments. Position,
-        # rather than matching text, keeps cut or duplicate names from enabling a button.
+        # Body indices exclude the trip heading. Group headings and blank lines must
+        # not count as payments when deciding which buttons survived truncation.
+        _, positions = payment_display(payments, names, currency)
         rows = [[InlineKeyboardButton(payment_button_label(p, currency, names),
                                       callback_data=f"settle:new:{trip.id}:{n}:{p.cents}")]
-                for n, p in selected[:max(0, kept - 1)]][:99]
+                for n, p, line_index in positions if line_index + 1 < kept][:99]
     elif screen == 'pbk':
         lines, _ = _cut_bals_lines([f"🧳 {bold(trip.name)} · {esc(currency)} · paybacks",
                                    *trip_payback_lines(entries, names, families, currency, settlements, html=True)])

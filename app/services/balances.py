@@ -637,14 +637,35 @@ def trip_balance_lines(entries, names: dict, families: dict, settlements=(), cur
     return lines
 
 
+def payment_display(payments, names: dict, currency: str, *, html=False):
+    """Return receiver-grouped lines and (global number, payment, body line index).
+
+    Keep ordering and line positions together so truncation cannot expose a button for
+    a hidden payment. Numbers still refer to the original list across all currencies.
+    """
+    groups = {}
+    for number, (cur, payment) in enumerate(payments, 1):
+        if cur == currency:
+            groups.setdefault(payment.to_unit, []).append((number, payment))
+    lines, positions = [], []
+    for receiver in sorted(groups, key=lambda unit: (
+            -sum(p.cents for _, p in groups[unit]), unit_name(unit, names).casefold())):
+        group = groups[receiver]
+        name = unit_name(receiver, names)
+        amount = format_money(sum(p.cents for _, p in group), currency)
+        lines += ['', f"{bold(name) if html else name} is owed {bold(amount) if html else amount}"]
+        for number, payment in sorted(group, key=lambda item: (
+                -item[1].cents, unit_name(item[1].from_unit, names).casefold())):
+            payer = unit_name(payment.from_unit, names)
+            positions.append((number, payment, len(lines)))
+            lines.append(f"  · {format_money(payment.cents, currency)} from {esc(payer) if html else payer}")
+    return lines, positions
+
+
 def trip_payment_lines(entries, names: dict, families: dict, currency: str, settlements=(), *, html=False) -> list[str]:
     """List payments and shortcuts, plain by default for non-Telegram callers."""
     entries, settlements = tuple(entries), tuple(settlements)
-    text = esc if html else str
-    money = bold if html else str
-    lines = [f"{text(unit_name(p.from_unit, names))} pays {text(unit_name(p.to_unit, names))} "
-             f"{money(format_money(p.cents, c))}"
-             for c, p in trip_payments(entries, families, settlements) if c == currency]
+    lines, _ = payment_display(trip_payments(entries, families, settlements), names, currency, html=html)
     notes = []
     result = unit_balances(entries, families, settlements)
     for shown, creditor, middle, incoming, person, cents in result.shortcuts.get(currency, ()):

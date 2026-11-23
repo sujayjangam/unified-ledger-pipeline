@@ -241,7 +241,8 @@ async def test_simplified_report_notes_and_mark_paid_buttons(bals, monkeypatch, 
     reply = query.edit_message_text.await_args
     assert to_plain(reply.args[0]) == (
         '🧳 Beach_Trip · AUD · to settle\n'
-        'Tan family pays Alice AUD 510.00\nTan family pays Bob AUD 270.00\n'
+        '\nAlice is owed AUD 510.00\n  · AUD 510.00 from Tan family\n'
+        '\nBob is owed AUD 270.00\n  · AUD 270.00 from Tan family\n'
         '💡 Tan family pays Alice the AUD 60.00 Bob owes, and pays Bob AUD 60.00 less.')
     assert reply.kwargs["parse_mode"] == "HTML"
     assert _buttons(reply.kwargs['reply_markup']) == {

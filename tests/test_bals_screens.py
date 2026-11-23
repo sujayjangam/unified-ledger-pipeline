@@ -105,11 +105,30 @@ def test_payment_callbacks_keep_global_numbers(island, currency):
     entries, paid = island
     text, markup = bot._bals_screen(TRIP, DIRECTORY, DAY, currency, 'pay')
     expected = [f'settle:new:7:{n}:{p.cents}'
-                for n, (c, p) in enumerate(balances.trip_payments(entries, FAMILIES, paid), 1)
-                if c == currency]
+                for n, p, _ in balances.payment_display(
+                    balances.trip_payments(entries, FAMILIES, paid), NAMES, currency)[1]]
     assert list(_buttons(markup).values()) == expected + [f'bals:cur:7:{currency}']
     assert to_plain(text).startswith(f'🧳 Island trip · {currency} · to settle')
     assert not any(line[:1].isdigit() for line in text.splitlines())
+
+
+def test_grouped_buttons_reorder_but_preserve_two_currency_numbers(island):
+    """A smaller payment joins its receiver ahead of a larger other-receiver payment."""
+    entries, paid = island
+    paid.clear()
+    entries[:] = [bill('aud', 1, {3: 100}, 'AUD'),
+                  bill('alice', 1, {3: 300, 5: 200}, 'SGD'),
+                  bill('bob', 2, {7: 400}, 'SGD')]
+    text, markup = bot._bals_screen(TRIP, DIRECTORY, DAY, 'SGD', 'pay')
+    assert to_plain(text).splitlines() == [
+        '🧳 Island trip · SGD · to settle', '', 'Alice is owed SGD 5.00',
+        '  · SGD 3.00 from Blues family', '  · SGD 2.00 from Greens family',
+        '', 'Bob is owed SGD 4.00', '  · SGD 4.00 from Golds family']
+    assert list(_buttons(markup).items()) == [
+        ('✅ Blues family → Alice · SGD 3.00', 'settle:new:7:3:300'),
+        ('✅ Greens family → Alice · SGD 2.00', 'settle:new:7:4:200'),
+        ('✅ Golds family → Bob · SGD 4.00', 'settle:new:7:2:400'),
+        ('⬅ Back', 'bals:cur:7:SGD')]
 
 
 def test_labels_shorten_names_keep_amount_and_plain_characters():
@@ -126,7 +145,7 @@ def test_labels_shorten_names_keep_amount_and_plain_characters():
 
 def test_cut_payments_offer_only_whole_visible_lines(island, monkeypatch):
     text, _ = bot._bals_screen(TRIP, DIRECTORY, DAY, 'IDR', 'pay')
-    first_two = text.splitlines()[:3]
+    first_two = text.splitlines()[:5]  # Heading, blank, receiver, two payments.
     limit = visible_len('\n'.join(first_two + [bot.BALS_CUT_SHORT]))
     monkeypatch.setattr(bot, 'TELEGRAM_MESSAGE_LIMIT', limit)
     cut, markup = bot._bals_screen(TRIP, DIRECTORY, DAY, 'IDR', 'pay')
@@ -136,7 +155,7 @@ def test_cut_payments_offer_only_whole_visible_lines(island, monkeypatch):
     expected = balances.trip_payments(*[island[0], FAMILIES, island[1]])
     callbacks = list(_buttons(markup).values())[:-1]
     assert callbacks == [f'settle:new:7:{n}:{p.cents}'
-                         for n, (c, p) in enumerate(expected, 1) if c == 'IDR'][:2]
+                         for n, p, _ in balances.payment_display(expected, NAMES, 'IDR')[1]][:2]
 
 
 def test_paybacks_show_actual_shares_offsets_deleted_and_old(island):
