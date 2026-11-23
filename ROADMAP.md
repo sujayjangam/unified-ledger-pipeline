@@ -46,6 +46,9 @@ is tried on a Neon branch with a fictional trip-sized directory first.
    ([#177](https://github.com/sujayjangam/unified-ledger-pipeline/issues/177)). A new trip's
    workbook needs the tab added by hand.
 
+7. *(Done 2026-11-23.)* The trip sheet shows shares that cancel each other as cleared, with the agreed Summary wording
+   (#182), plus debts inside a family on the main `/trip_bals` screen (#183).
+
 Later: load a finished trip's hand-kept spreadsheet as real bills, and work out the trip from the
 message itself for costs logged before it starts.
 

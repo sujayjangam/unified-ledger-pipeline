@@ -72,6 +72,12 @@ buttons to 9 lines and 3 buttons (`tests/test_bals_screens.py`).
   list across currencies. A button appears only if its payment line survives truncation.
   Shortcut notes and the balance maths are unchanged.
 
+## Amended 2026-11-23: debts inside a family on the main screen (#183)
+
+- After family/person totals, show each existing person-to-person payment inside a family
+  as "X owes Y <amount>", largest first then names, for the selected currency. Family
+  nets can hide these debts; totals, counts, All payments and All in SGD are unchanged.
+
 ## Rejected
 
 - **Converting every currency into one:** balances stay per currency with no FX conversion;

@@ -244,7 +244,8 @@ def test_bill_inside_one_family_is_settled_per_person():
     """The family as a whole is settled, but its members still owe the one who paid."""
     entries = [entry(1, {1: 10000, 2: 10000, 3: 10000})]
     assert trip_balance_lines(entries, {1: 'Ann', 2: 'Ben', 3: 'Cy'}, dict.fromkeys((1, 2, 3), 'T')) == [
-        'SGD', '', 'T family is settled', '', '2 payments to settle']
+        'SGD', '', 'T family is settled', 'Ben owes Ann SGD 100.00',
+        'Cy owes Ann SGD 100.00', '', '2 payments to settle']
 
 
 @pytest.mark.parametrize(('alice_credit', 'bob_credit', 'debt', 'lines'), [

@@ -62,7 +62,7 @@ async def test_command_shows_the_active_trip_straight_away(bals):
     reply = update.effective_message.reply_text.await_args
     assert to_plain(reply.args[0]) == "\n".join([
         "🧳 Beach_Trip · 1–7 Dec", "AUD", "", "Lee family owes AUD 30.00",
-        "Tan family is owed AUD 30.00", "", "2 payments to settle"])
+        "Tan family is owed AUD 30.00", "Bob owes Alice AUD 30.00", "", "2 payments to settle"])
     assert reply.kwargs["parse_mode"] == "HTML"
     assert _buttons(reply.kwargs["reply_markup"]) == {
         "All payments (2)": "bals:pay:7:AUD", "Other trip": "bals:page:0",

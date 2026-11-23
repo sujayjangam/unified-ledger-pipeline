@@ -227,6 +227,7 @@ Env vars (`.env.example` shows the format):
   ([ADR-0056](docs/decisions/0056-trip-bals-one-currency-per-screen.md)): a main screen of one
   line per family, with currency buttons, then "All payments" and "View paybacks" screens, all
   read fresh on every tap. All payments is grouped by receiver.
+  The main screen adds one line per debt inside a family.
   A "Mark paid" button names its payment, and its callback keeps the
   payment's number in the whole `trip_payments` list, so payback cards and older reports work
   unchanged. "Paid on someone else's behalf" uses only what `_pay_back` really took off each debt
@@ -322,12 +323,13 @@ Env vars (`.env.example` shows the format):
   trip, a saved payback, and a `/recent` delete or undo that changed a row. It runs after the
   card says saved, awaited, never `create_task` (Cloud Run gives CPU only during a request);
   one write at a time per trip; it never raises, and a failure is only printed. Rows come from
-  `open_bill_shares`, at bill level before netting. Values are RAW (a description starting
+  `open_bill_shares`, at bill level before netting. Opposite open shares between two people
+  show as cleared by offset (display only). Values are RAW (a description starting
   with `=` stays text), written first and the rows below cleared after, so a failed call never
   blanks the sheet. The bot signs in as its Cloud Run identity (metadata server); locally only
   when `SHEETS_IMPERSONATE_SA` is set. The sheet is never read back. A new place that changes
   a trip's bills or paybacks needs the same call. Workbook ids never go in the repo.
-  A `Summary` tab (per currency: paybacks done, still to settle, paid for another family,
+  A `Summary` tab (per currency: paybacks done, still to settle, paid on behalf of another family,
   paid within own family) is written after the bill tab; it must exist in the workbook,
   created by hand like the sheet's formatting.
 - The duplicate check runs before the card is shown, never inside the insert, and a failed check

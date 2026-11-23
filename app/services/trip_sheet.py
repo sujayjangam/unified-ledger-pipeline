@@ -38,16 +38,51 @@ def _amount(cents: int, currency: str) -> str:
     return format_money(cents, currency).removeprefix(currency + " ")
 
 
+def offset_open_shares(entries, opened) -> tuple[dict, dict]:
+    """Return display-only open shares and cents cleared by each opposite pair.
+
+    Never mutate the payback allocation: these offsets are not stored settlements.
+    """
+    reduced, offsets, directions = dict(opened), {}, {}
+    for entry in entries:
+        payer = entry['paid_by']
+        if payer is None:
+            continue
+        for person in entry['splits']:
+            key = (entry['transaction_id'], person)
+            if person != payer and opened.get(key, 0) > 0:
+                directions.setdefault((person, payer, entry['currency']), []).append(key)
+    for (person, payer, currency), keys in directions.items():
+        if person >= payer:
+            continue  # Each unordered pair is cleared once, in both directions.
+        reverse = directions.get((payer, person, currency), [])
+        amount = min(sum(opened[k] for k in keys), sum(opened[k] for k in reverse))
+        for shares in (keys, reverse):
+            remaining = amount
+            # Entries retain query order: oldest date first, ties in received order.
+            for key in shares:
+                cleared = min(reduced[key], remaining)
+                if cleared:
+                    reduced[key] -= cleared
+                    offsets[key] = cleared
+                    remaining -= cleared
+                if not remaining:
+                    break
+    return reduced, offsets
+
+
 def sheet_rows(trip_name, entries, settlements, families, names, now) -> list[list]:
-    """Lay out one row per bill, preserving query order and gross, unnetted shares.
+    """Lay out bills in query order with display-only opposite-share offsets.
 
     Pure: the same bills and paybacks always give the same rows, so the tests check the
     layout with no network. open_bill_shares replays every payback the way /trip_bals does
     and returns what is still open on each person's share of each bill; a share missing
-    from it is fully paid. Bill level means before netting: if Bob owes Alice for lodging
-    and Alice owes Bob for a car, both bills still show their full shares here.
+    from it is fully paid. Gross shares stay visible, but opposite open shares between
+    two people in one currency count as cleared on this tab only.
     """
+    entries = tuple(entries)
     opened = open_bill_shares(entries, families, settlements)
+    opened, offsets = offset_open_shares(entries, opened)
 
     def name_of(person):
         # Every participant is read, so this is a safety net: one odd id must never stop
@@ -75,6 +110,8 @@ def sheet_rows(trip_name, entries, settlements, families, names, now) -> list[li
                 left_total += left
                 if not left:
                     line += " ✅"
+                    if (entry['transaction_id'], person) in offsets:
+                        line += " (offset)"
                 else:
                     owing.append(name)
                     if left < cents:
@@ -123,13 +160,13 @@ def summary_rows(trip_name, entries, settlements, families, names, now) -> list[
                      ['Still to settle', len(remaining), _number(sum(remaining))], []])
         other, own = behalf_totals(entries, families, settlements, currency)
         sections = [
-            ('Paid for another family', [(name_of(g), for_name(u), c) for (g, u), c in other.items()]),
+            ('Paid on behalf of another family', [(name_of(g), for_name(u), c) for (g, u), c in other.items()]),
             ('Paid within own family', [(name_of(g), name_of(p), c) for (g, p), c in own.items()]),
         ]
         for title, items in sections:
             rows.append([title])
             if items:
-                rows.append(['Giver', 'For', 'Amount'])
+                rows.append(['Paid by', 'Paid for', 'Amount'])
                 rows.extend([giver, beneficiary, _number(cents)] for giver, beneficiary, cents
                             in sorted(items, key=lambda item: (-item[2], item[0], item[1])))
             else:
