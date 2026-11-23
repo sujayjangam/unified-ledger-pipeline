@@ -171,7 +171,8 @@ the options turned down, and what it cost. The ones that shaped the system most:
   turn trip mode off. Each person has their own switch, and a banner is pinned in your chat
   while it's on. The card shows the trip, with a button to leave a single entry out of it.
 - `/trip_bals` shows who owes whom on a trip, worked out from the saved splits, one currency at
-  a time: a line per family, how many payments are left, and a button per currency to switch.
+  a time: a line per family and per debt inside a family, how many payments are left,
+  and a button per currency to switch.
   "All payments" groups payments by receiver, with a total and amounts from each payer,
   and "View paybacks" lists each payback,
   the bill shares it cleared, and what each person paid for other families
@@ -217,7 +218,8 @@ the options turned down, and what it cost. The ones that shaped the system most:
   saved split bill or payback on the trip, and every delete or undo of a split bill. One row
   per split bill: who paid, each person's
   share (✅ once paid back), paid back, still owed, and who still owes. The numbers are the
-  same maths as `/trip_bals`, before netting; a `Summary` tab adds netted totals and help given. Each trip has its own workbook, so one trip's
+  same maths as `/trip_bals`, with opposite open shares between two people cleared by offset
+  for display only; a `Summary` tab adds netted totals and help given. Each trip has its own workbook, so one trip's
   people never see another's bills, and the bot writes as its own Cloud Run identity, with no
   key to keep ([ADR-0059](docs/decisions/0059-live-sheet-per-trip.md)).
 

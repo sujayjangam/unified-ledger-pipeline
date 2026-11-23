@@ -602,7 +602,7 @@ def default_balance_currency(currencies, payments):
 
 
 def trip_balance_lines(entries, names: dict, families: dict, settlements=(), currency=None, *, html=False) -> list[str]:
-    """Build family totals; opt into HTML only at the Telegram boundary."""
+    """Build family totals and internal debts; opt into HTML at the Telegram boundary."""
     entries, settlements = tuple(entries), tuple(settlements)
     result = unit_balances(entries, families, settlements)
     payments = trip_payments(entries, families, settlements)
@@ -620,6 +620,20 @@ def trip_balance_lines(entries, names: dict, families: dict, settlements=(), cur
             display[unit] = display.get(unit, 0) + cents
         for unit in sorted(display, key=lambda u: (u[0], unit_name(u, names).lower())):
             lines.append(_says(unit_name(unit, names), display[unit], currency, html=html))
+        # A family's net hides debts between its own members; expose the existing
+        # person-to-person payments without changing family totals or payment counts.
+        internal = []
+        for cur, payment in payments:
+            if cur != currency or payment.from_unit[0] != 'person' or payment.to_unit[0] != 'person':
+                continue
+            family = unit_of(payment.from_unit[1], families)
+            if family[0] == 'family' and family == unit_of(payment.to_unit[1], families):
+                internal.append((unit_name(payment.from_unit, names),
+                                 unit_name(payment.to_unit, names), payment.cents))
+        for debtor, creditor, cents in sorted(internal, key=lambda item: (-item[2], item[0], item[1])):
+            amount = format_money(cents, currency)
+            lines.append(f"{esc(debtor) if html else debtor} owes {esc(creditor) if html else creditor} "
+                         f"{bold(amount) if html else amount}")
         k = sum(c == currency for c, _ in payments)
         m = sum(s['currency'] == currency for s in settlements)
         summary = f"{k} payment{'s' if k != 1 else ''} to settle" if k else 'Everyone is settled.'

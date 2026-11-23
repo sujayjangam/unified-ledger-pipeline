@@ -56,3 +56,12 @@ service account) and from a Cloud Run job running as it.
   individual relatives within the giver's family is informational, never a new debt.
 - Create the `Summary` tab by hand, like workbook formatting. A missing tab only
   prints a failure and leaves the already-written bill tab intact.
+
+## Amended 2026-11-23: bill offsets and Summary wording (#182)
+
+- Opposite open shares between the same two people in one currency clear by offset on
+  the bill tab only, oldest first in query order (received order for date ties).
+  Fully offset shares say `✅ (offset)`; paid-back, still-owed and status columns use
+  the reduced open amounts. No-payer bills, stored paybacks and balance maths are unchanged.
+- Summary sections say "Paid on behalf of another family" and "Paid within own family",
+  both with "Paid by | Paid for | Amount" headers; their totals are unchanged.

@@ -72,6 +72,7 @@ def test_three_currency_main_and_navigation(island):
         '🧳 Island trip · 21–21 Nov', 'IDR · 2 of 3', '',
         'Blues family owes IDR 740.00', 'Golds family owes IDR 10.00',
         'Greens family owes IDR 50.00', 'Reds family is owed IDR 800.00',
+        'Bob owes Alice IDR 100.00', 'Ian owes Alice IDR 90.00',
         '', '6 payments to settle · 2 paybacks']
     assert _buttons(markup) == {
         'AUD (2)': 'bals:cur:7:AUD', '✓ IDR (6)': 'bals:cur:7:IDR',
@@ -90,6 +91,23 @@ def test_default_currency_ties_and_all_settled():
     assert balances.default_balance_currency(['SGD', 'AUD'], [('SGD', p), ('AUD', p)]) == 'AUD'
     assert balances.default_balance_currency(['SGD', 'AUD'], []) == 'AUD'
     assert balances.default_balance_currency([], []) is None
+
+
+def test_main_exposes_internal_debt_hidden_by_family_net():
+    entries = [bill('outside', 1, {3: 6000}, 'SGD'),
+               bill('inside', 2, {1: 1500}, 'SGD')]
+    lines = balances.trip_balance_lines(entries, NAMES, FAMILIES)
+    assert lines == ['SGD', '', 'Blues family owes SGD 60.00',
+                     'Reds family is owed SGD 60.00', 'Alice owes Bob SGD 15.00',
+                     '', '2 payments to settle']
+    # Alice's personal credit is 45; the family's total remains 60 because Bob
+    # is owed the internal 15. Showing that debt must not alter the family net.
+    html = balances.trip_balance_lines(entries, {**NAMES, 1: 'Alice <', 2: 'Bob <'}, FAMILIES, html=True)
+    assert 'Alice &lt; owes Bob &lt; <b>SGD 15.00</b>' in html
+    assert to_plain('\n'.join(html)) == '\n'.join(lines).replace('Alice', 'Alice <').replace('Bob', 'Bob <')
+    assert balances.trip_balance_lines(entries[:1], NAMES, FAMILIES) == [
+        'SGD', '', 'Blues family owes SGD 60.00', 'Reds family is owed SGD 60.00',
+        '', '1 payment to settle']
 
 
 def test_currency_buttons_wrap_at_four(island):
@@ -299,7 +317,7 @@ def test_ten_people_six_bills_two_paybacks_reduces_baseline(island, monkeypatch)
     monkeypatch.setattr(bot, 'get_trip_settlements', lambda _: paid)
     text, markup = bot._bals_screen(TRIP, DIRECTORY, DAY)
     counts = len(text.splitlines()), sum(map(len, markup.inline_keyboard))
-    assert counts == (9, 4)
+    assert counts == (14, 4)  # Five internal debts are now visible; buttons stay the same.
     assert counts[0] < 45 and counts[1] < 13
 
 

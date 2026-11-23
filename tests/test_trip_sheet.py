@@ -272,7 +272,8 @@ def test_summary_two_currencies_help_and_counts():
         assert rows[i+2] == ['Still to settle', len(left), sheet._number(sum(left)), '', '']
     assert ['Bob', 'Red family', 2.0, '', ''] in rows
     assert ['Bob', 'Carol', 1.5, '', ''] in rows
-    assert rows[7:10] == [['Paid for another family', '', '', '', ''],
+    assert rows.count(['Paid by', 'Paid for', 'Amount', '', '']) == 2
+    assert rows[7:10] == [['Paid on behalf of another family', '', '', '', ''],
                           ['None yet.', '', '', '', ''], ['', '', '', '', '']]
 
 
@@ -282,3 +283,42 @@ def test_summary_empty_and_unknown_names():
     rows = sheet.summary_rows('Beach', [bill(splits={9: 100})],
                               [payback(100, for_id=9)], {}, {}, NOW)
     assert ['Person 2', 'Person 9', 1.0, '', ''] in rows
+
+
+def test_opposite_shares_after_part_payback_are_cleared_only_on_bill_tab():
+    entries = [bill('big', splits={2: 22649}), bill('small', paid_by=2, splits={1: 16412})]
+    settlements = [payback(6237)]
+    opened = sheet.open_bill_shares(entries, {}, settlements)
+    assert opened == {('big', 2): 16412, ('small', 1): 16412}
+    summary = sheet.summary_rows('Beach', entries, settlements, {}, NAMES, NOW)
+    rows = sheet.sheet_rows('Beach', entries, settlements, {}, NAMES, NOW)
+    assert rows[4][5:] == ['Bob 226.49 ✅ (offset)', 226.49, 226.49, 0.0, '✅ Paid']
+    assert rows[5][5:] == ['Alice 164.12 ✅ (offset)', 164.12, 164.12, 0.0, '✅ Paid']
+    assert sheet.summary_rows('Beach', entries, settlements, {}, NAMES, NOW) == summary
+    assert ['Paybacks done', 1, 62.37, '', ''] in summary
+    assert sheet.open_bill_shares(entries, {}, settlements) == opened
+
+
+def test_offset_helper_preserves_input_and_allocates_in_received_order():
+    """Same-date ties follow received order, not transaction ids."""
+    entries = [bill('z', splits={2: 100}), bill('a', splits={2: 200}),
+               bill('reverse', paid_by=2, splits={1: 150})]
+    opened = {('z', 2): 100, ('a', 2): 200, ('reverse', 1): 150}
+    reduced, offsets = sheet.offset_open_shares(entries, opened)
+    assert reduced == {('z', 2): 0, ('a', 2): 150, ('reverse', 1): 0}
+    assert offsets == {('z', 2): 100, ('a', 2): 50, ('reverse', 1): 150}
+    assert opened == {('z', 2): 100, ('a', 2): 200, ('reverse', 1): 150}
+    rows = sheet.sheet_rows('Beach', entries, [], {}, NAMES, NOW)
+    assert rows[5][5:] == ['Bob 2.00 (1.50 left)', 2.0, 0.5, 1.5, '⏳ Bob']
+
+
+def test_offsets_stay_within_pair_currency_and_known_payer():
+    entries = [bill('one', splits={2: 100, 3: 200}),
+               bill('two', paid_by=2, splits={1: 100}),
+               bill('aud', paid_by=3, currency='AUD', splits={1: 200}),
+               bill('unknown', paid_by=None, splits={1: 300})]
+    opened = {('one', 2): 100, ('one', 3): 200, ('two', 1): 100,
+              ('aud', 1): 200, ('unknown', 1): 300}
+    reduced, offsets = sheet.offset_open_shares(entries, opened)
+    assert reduced == {**opened, ('one', 2): 0, ('two', 1): 0}
+    assert offsets == {('one', 2): 100, ('two', 1): 100}
