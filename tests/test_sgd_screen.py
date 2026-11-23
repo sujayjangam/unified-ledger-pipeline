@@ -4,6 +4,8 @@ from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+from app.services.tg_html import to_plain, visible_len
+
 import pytest
 
 import app.bot_core as bot
@@ -68,7 +70,7 @@ def rate_reply(context, text, currency='IDR', trip=TRIP):
 
 def test_screen_rates_lines_and_buttons(sgd, directory):
     text, markup = bot._sgd_screen(TRIP, directory)
-    assert text == ('🧳 Island trip · all in SGD\n1 SGD = 100 IDR (ECB, 5 Jun)\n'
+    assert to_plain(text) == ('🧳 Island trip · all in SGD\n1 SGD = 100 IDR (ECB, 5 Jun)\n'
                     '1 USD = 2.0000 SGD (ECB, 5 Jun)\n\nTan family pays Carol SGD 11.60')
     assert _buttons(markup) == {'✏️ IDR rate': 'sgd:rate:7:IDR', '✏️ USD rate': 'sgd:rate:7:USD',
                                 '✅ Tan family → Carol · SGD 11.60': 'sgd:new:7:1:1160',
@@ -108,7 +110,7 @@ def test_main_button_only_for_non_sgd_payments(sgd, directory):
 
 def test_truncation_only_enables_kept_lines(sgd, directory, monkeypatch):
     text, _ = bot._sgd_screen(TRIP, directory)
-    monkeypatch.setattr(bot, 'TELEGRAM_MESSAGE_LIMIT', len(text) - 5)
+    monkeypatch.setattr(bot, 'TELEGRAM_MESSAGE_LIMIT', visible_len(text) - 5)
     text, markup = bot._sgd_screen(TRIP, directory)
     assert bot.BALS_CUT_SHORT in text
     assert not any(key.startswith('✅') for key in _buttons(markup))
@@ -132,7 +134,7 @@ async def test_open_only_looks_up_missing_rates(sgd, directory):
     await bot.handle_bals_button(update, context)
     bot.reference_rate.assert_awaited_once_with('SGD', 'IDR', DAY)
     assert '1 SGD = 101 IDR' in query.edit_message_text.await_args.args[0]
-    assert 'parse_mode' not in query.edit_message_text.await_args.kwargs
+    assert query.edit_message_text.await_args.kwargs["parse_mode"] == "HTML"
 
 
 async def test_open_failed_rate_read_does_not_lookup(sgd, directory):
@@ -172,7 +174,7 @@ async def test_bad_reply_replaces_prompt_and_deletes_reply_last(sgd, directory):
     context.bot.delete_message.side_effect = lambda **kw: events.append(kw['message_id'])
     await bot.handle_text(update, context)
     text = update.message.reply_text.await_args.args[0]
-    assert text.startswith(update.message.reply_to_message.text)
+    assert to_plain(text).startswith(update.message.reply_to_message.text)
     assert '\n⚠️ ' in text
     assert events == ['prompt', 25, 30]
     bot.upsert_trip_rate.assert_not_called()
@@ -367,7 +369,7 @@ async def test_shortcut_line_shows_tip_and_saves_each_debt_from_its_own_giver(sg
                  dict(transaction_id='b', date=DAY, currency='IDR', paid_by=2, splits={3: 20000}),
                  dict(transaction_id='c', date=DAY, currency='SGD', paid_by=1, splits={2: 500})]
     text, markup = bot._sgd_screen(TRIP, directory)
-    assert text.endswith('Lee family pays Alice SGD 12.00\nBob pays Alice SGD 3.00\n'
+    assert to_plain(text).endswith('Lee family pays Alice SGD 12.00\nBob pays Alice SGD 3.00\n'
                          '💡 Lee family pays Alice the SGD 2.00 Bob owes, and pays Bob SGD 2.00 less.')
     assert 'sgd:new:7:1:1200' in _buttons(markup).values()
     context = context_for(directory)
@@ -398,7 +400,7 @@ async def test_moved_reverse_money_reads_as_part_of_what_is_passed_on(sgd, direc
                  dict(transaction_id='c', date=DAY, currency='IDR', paid_by=1, splits={2: 40000}),
                  dict(transaction_id='d', date=DAY, currency='USD', paid_by=2, splits={1: 100})]
     text, _ = bot._sgd_screen(TRIP, directory)
-    assert text.endswith('Lee family pays Alice SGD 12.00\nLee family pays Bob SGD 3.00\n'
+    assert to_plain(text).endswith('Lee family pays Alice SGD 12.00\nLee family pays Bob SGD 3.00\n'
                          '💡 Lee family pays Alice the SGD 2.00 Bob owes, and pays Bob SGD 2.00 less.')
     context = context_for(directory)
     update, query = tap('sgd:new:7:1:1200')

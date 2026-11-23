@@ -30,20 +30,22 @@ is tried on a Neon branch with a fictional trip-sized directory first.
    production logs already show two slow steps: about 20–26 s for the first message after the
    bot sits idle, and 6–7 s for a typed settle card, which is all database round trips
    ([#173](https://github.com/sujayjangam/unified-ledger-pipeline/issues/173)).
-2. Fewer round trips per screen
-   ([#174](https://github.com/sujayjangam/unified-ledger-pipeline/issues/174), in review).
+2. *(Done 2026-11-23.)* Fewer round trips per screen
+   ([#174](https://github.com/sujayjangam/unified-ledger-pipeline/issues/174)).
 3. *(Done 2026-11-22.)* The bot moved to Cloud Run `us-east4`, next to the database: about
    21 ms a round trip, down from 0.22 s
    ([#175](https://github.com/sujayjangam/unified-ledger-pipeline/issues/175),
    [ADR-0061](docs/decisions/0061-cloud-run-next-to-the-database.md)).
+4. Formatted bot screens: HTML with every value escaped and a plain-text fallback, so a
+   message with `_` or `*` can no longer stop a card showing
+   ([#143](https://github.com/sujayjangam/unified-ledger-pipeline/issues/143), in review). It
+   goes live only if it works on the test bot first.
 
 Later: load a finished trip's hand-kept spreadsheet as real bills, and work out the trip from the
 message itself for costs logged before it starts.
 
 **After the trip:**
 
-- The rest of the formatted bot screens
-  ([#143](https://github.com/sujayjangam/unified-ledger-pipeline/issues/143)).
 - The button menu ([#163](https://github.com/sujayjangam/unified-ledger-pipeline/issues/163))
   hides while a reply prompt is open (Set amounts, payback amounts, Settle), and `/start`
   brings it back. Telegram keeps one keyboard per chat and opens any menu the bot sends, so

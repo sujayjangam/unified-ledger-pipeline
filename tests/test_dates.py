@@ -390,7 +390,7 @@ async def test_the_card_warns_under_the_date_when_it_looks_wrong(monkeypatch, di
         monkeypatch, directory, "lunch 12.50 90 days ago", model_ref(kind="days_ago", days_ago=90))
 
     # The ⚠️ line sits directly under the date line, not somewhere else on the card.
-    assert "📅 **Date:** 2026-06-25\n⚠️ This date is more than 60 days ago.\n" in card
+    assert "📅 Date: 2026-06-25\n<i>⚠️ This date is more than 60 days ago.</i>\n" in card
     # The warning changes nothing about the entry itself: same date, still waiting for Confirm.
     assert context.user_data["pending_cards"][500]["date"] == "2026-06-25"
 
@@ -446,4 +446,4 @@ async def test_a_failed_save_keeps_the_date_warning_on_the_card(monkeypatch):
     _, _, query = await _tap_confirm(monkeypatch, save_result=False)
 
     card = query.edit_message_text.await_args.args[0]
-    assert "📅 **Date:** 2026-06-25\n⚠️ This date is more than 60 days ago.\n" in card
+    assert "📅 Date: 2026-06-25\n<i>⚠️ This date is more than 60 days ago.</i>\n" in card

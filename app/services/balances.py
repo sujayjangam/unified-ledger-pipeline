@@ -13,6 +13,7 @@ rolled debt lines, choosing the fewest payments within a bounded deterministic s
 import datetime
 from dataclasses import dataclass, field
 
+from app.services.tg_html import esc, b as bold, i as italic, fold
 from app.add_expense import format_money
 
 
@@ -577,12 +578,15 @@ def unit_name(unit, names: dict) -> str:
     return f"{value} family" if len(value.split()) == 1 else value
 
 
-def _says(name: str, cents: int, currency: str) -> str:
+def _says(name: str, cents: int, currency: str, *, html=False) -> str:
     """Use words for the sign; family credit is a summary, not a new payment line."""
+    name = esc(name) if html else name
+    amount = format_money(abs(cents), currency)
+    amount = bold(amount) if html else amount
     if cents > 0:
-        return f"{name} is owed {format_money(cents, currency)}"
+        return f"{name} is owed {amount}"
     if cents < 0:
-        return f"{name} owes {format_money(-cents, currency)}"
+        return f"{name} owes {amount}"
     return f"{name} is settled"
 
 
@@ -597,8 +601,8 @@ def default_balance_currency(currencies, payments):
     return min(currencies, key=lambda c: (-sum(cur == c for cur, _ in payments), c), default=None)
 
 
-def trip_balance_lines(entries, names: dict, families: dict, settlements=(), currency=None) -> list[str]:
-    """Build one currency's family totals and counts; detail lives behind buttons."""
+def trip_balance_lines(entries, names: dict, families: dict, settlements=(), currency=None, *, html=False) -> list[str]:
+    """Build family totals; opt into HTML only at the Telegram boundary."""
     entries, settlements = tuple(entries), tuple(settlements)
     result = unit_balances(entries, families, settlements)
     payments = trip_payments(entries, families, settlements)
@@ -607,7 +611,7 @@ def trip_balance_lines(entries, names: dict, families: dict, settlements=(), cur
     lines = []
     if currency:
         position = f" · {currencies.index(currency) + 1} of {len(currencies)}" if len(currencies) > 1 else ''
-        lines = [currency + position, '']
+        lines = [esc(currency + position) if html else currency + position, '']
         display = {}
         # Roll up only for display. A family can total zero while members still owe
         # each other; its payment count must still come from the per-person maths.
@@ -615,35 +619,41 @@ def trip_balance_lines(entries, names: dict, families: dict, settlements=(), cur
             unit = unit_of(pid, families)
             display[unit] = display.get(unit, 0) + cents
         for unit in sorted(display, key=lambda u: (u[0], unit_name(u, names).lower())):
-            lines.append(_says(unit_name(unit, names), display[unit], currency))
+            lines.append(_says(unit_name(unit, names), display[unit], currency, html=html))
         k = sum(c == currency for c, _ in payments)
         m = sum(s['currency'] == currency for s in settlements)
         summary = f"{k} payment{'s' if k != 1 else ''} to settle" if k else 'Everyone is settled.'
         if m:
             summary += f" · {m} payback{'s' if m != 1 else ''}"
-        lines += ['', summary]
+        lines += ['', italic(summary) if html else summary]
     if not any(e.get('splits') for e in entries):
         lines.append(NO_SPLITS_LINE)
     if result.no_payer:
         count = len(result.no_payer)
         lines += ['', NO_PAYER_LINE.format(count=count, entries='entry has' if count == 1 else 'entries have',
                                            they='it is' if count == 1 else 'they are')]
+    if html:
+        lines = [italic(line) if line.startswith('⚠️') else line for line in lines]
     return lines
 
 
-def trip_payment_lines(entries, names: dict, families: dict, currency: str, settlements=()) -> list[str]:
-    """List this currency's payments in global order, followed by its shortcut notes."""
+def trip_payment_lines(entries, names: dict, families: dict, currency: str, settlements=(), *, html=False) -> list[str]:
+    """List payments and shortcuts, plain by default for non-Telegram callers."""
     entries, settlements = tuple(entries), tuple(settlements)
-    lines = [f"{unit_name(p.from_unit, names)} pays {unit_name(p.to_unit, names)} {format_money(p.cents, c)}"
+    text = esc if html else str
+    money = bold if html else str
+    lines = [f"{text(unit_name(p.from_unit, names))} pays {text(unit_name(p.to_unit, names))} "
+             f"{money(format_money(p.cents, c))}"
              for c, p in trip_payments(entries, families, settlements) if c == currency]
+    notes = []
     result = unit_balances(entries, families, settlements)
     for shown, creditor, middle, incoming, person, cents in result.shortcuts.get(currency, ()):
         amount = format_money(cents, currency)
         payer = '' if incoming == shown else unit_name(incoming, names) + ' '
-        lines.append(f"💡 {unit_name(shown, names)} pays {unit_name(('person', creditor), names)} the {amount} "
+        notes.append(f"💡 {unit_name(shown, names)} pays {unit_name(('person', creditor), names)} the {amount} "
                      f"{unit_name(middle, names)} owes, and {payer}pays "
                      f"{unit_name(('person', person), names)} {amount} less.")
-    return lines
+    return lines + ([fold('\n'.join(notes))] if html and notes else notes)
 
 
 def payment_button_label(payment, currency, names) -> str:
@@ -696,7 +706,7 @@ def _bill_label(entry) -> str:
     return label
 
 
-def trip_payback_lines(entries, names: dict, families: dict, currency: str, settlements=()) -> list[str]:
+def trip_payback_lines(entries, names: dict, families: dict, currency: str, settlements=(), *, html=False) -> list[str]:
     """Explain actual cleared shares and outside-family help, without creating debts.
 
     The reader supplies oldest-first paybacks, including its tie order. Replay in that
@@ -707,6 +717,8 @@ def trip_payback_lines(entries, names: dict, families: dict, currency: str, sett
     _fold_debts(entries, families, settlements, history)
     bills = {e.get('transaction_id'): e for e in entries}
     lines, behalf = [], {}
+    text = esc if html else str
+    strong = bold if html else str
     for s, (row_amounts, old_amounts) in zip(settlements, history):
         if s['currency'] != currency:
             continue
@@ -719,7 +731,9 @@ def trip_payback_lines(entries, names: dict, families: dict, currency: str, sett
         handed = (f" (as {format_money(s['paid_cents'], s['paid_currency'])})"
                   if s.get('paid_currency', currency) != currency else '')
         when = f", {_day_month(s['date'])}" if s.get('date') else ''
-        lines.append(f"• {giver} paid {receiver} {format_money(s['cents'], currency)}{note}{handed}{when}")
+        payment = f"{giver} paid {receiver} {format_money(s['cents'], currency)}"
+        lines.append(f"• {strong(payment)}{text(note + handed + when)}")
+        details = []
         # helped: {person id: cents} of this payback that really went to that person's
         # benefit. It starts from what the maths really took off each person's debt to the
         # receiver (old_amounts), never the gross share: if an opposite bill had already made
@@ -735,7 +749,7 @@ def trip_payback_lines(entries, names: dict, families: dict, currency: str, sett
                 # and the settle card count.
                 amount = format_money(cents, currency) if cents else 'nothing cleared'
                 person = unit_name(('person', row['for_id']), names)
-                lines.append(f'    {person}\'s share of "{_bill_label(entry)}"{when}: {amount}')
+                details.append(f'    {person}\'s share of "{_bill_label(entry)}"{when}: {amount}')
                 # An offset row (a bill the receiver didn't pay) belongs to a shortened line,
                 # a 💡 shortcut: the giver pays the receiver what a middle person owes, and
                 # the middle is owed that much less by the row's sharer (ADR-0052). The sharer
@@ -747,10 +761,11 @@ def trip_payback_lines(entries, names: dict, families: dict, currency: str, sett
                     helped[bill_payer] = helped.get(bill_payer, 0) - cents
         else:
             for pid, cents in old_amounts.items():
-                lines.append(f"    {unit_name(('person', pid), names)}: "
+                details.append(f"    {unit_name(('person', pid), names)}: "
                              f"{format_money(cents, currency)} (no bill record)")
             if not old_amounts:
-                lines.append('    (no bill record)')
+                details.append('    (no bill record)')
+        lines.extend([fold('\n'.join(line[4:] for line in details))] if html and details else details)
         # Rolled up per family, the way the help is talked about ("Carol paid for the Lees").
         # This explains help already given, and is never another ledger debt. Comparing
         # family units also leaves out a parent paying their own child's share.
@@ -764,9 +779,10 @@ def trip_payback_lines(entries, names: dict, families: dict, currency: str, sett
                 key = (s['from_id'], unit)
                 behalf[key] = behalf.get(key, 0) + cents
     if behalf:
-        lines += ['', "Paid on someone else's behalf:"]
+        lines += ['', strong("Paid on someone else's behalf:")]
         for (giver, unit), cents in behalf.items():
-            lines.append(f"• {unit_name(('person', giver), names)} paid {format_money(cents, currency)} "
-                         f"for {unit_name(unit, names)}")
-        lines.append('(Not in the balances: settle these between you.)')
+            lines.append(text(f"• {unit_name(('person', giver), names)} paid {format_money(cents, currency)} "
+                         f"for {unit_name(unit, names)}"))
+        note = '(Not in the balances: settle these between you.)'
+        lines.append(italic(note) if html else note)
     return lines

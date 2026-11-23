@@ -231,7 +231,7 @@ async def test_text_and_transcribed_voice_never_extract(flow, monkeypatch, voice
         await bot.handle_text(update, flow)
     bot.extract_transactions.assert_not_awaited()
     assert flow.user_data['pending_settle_ups'][500]['result'].can_confirm
-    assert 'parse_mode' not in status.edit_text.await_args.kwargs
+    assert status.edit_text.await_args.kwargs["parse_mode"] == "HTML"
     # The words as read are kept on the card, to be saved as the payback's note.
     said = ('Settle, Carol' if voice else 'Settle Carol') + ' paid 381 for saree pleating and for Erin airbnb'
     assert flow.user_data['pending_settle_ups'][500]['raw_text'] == said
@@ -726,7 +726,7 @@ async def test_saved_trip_payback_sends_a_new_report_from_the_card(flow, monkeyp
     screen.assert_called_once_with(BEACH, DIRECTORY, TODAY, 'SGD')
     kwargs = flow.bot.send_message.await_args.kwargs
     assert kwargs['chat_id'] == query.message.chat_id and kwargs['text'] == 'fresh balances'
-    assert 'parse_mode' not in kwargs
+    assert kwargs["parse_mode"] == "HTML"
     # Registered like a /trip_bals reply, so its "Mark paid" buttons work.
     assert flow.user_data['bals_reports'][40] is DIRECTORY
     bot._load_directory.assert_not_called()

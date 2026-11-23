@@ -309,7 +309,7 @@ async def test_active_trip_is_on_pending_entry_and_card(monkeypatch, directory, 
     assert pending["trip_id"] == 7
     assert pending["trip_offer"] == {"id": 7, "name": "Beach Trip"}
     reply = card.edit_text.await_args
-    assert "🧳 **Trip:** Beach Trip" in reply.args[0]
+    assert "🧳 Trip: Beach Trip" in reply.args[0]
     rows = reply.kwargs["reply_markup"].inline_keyboard
     assert len(rows) == 4  # Confirm/Cancel, the trip toggle, "Add split", "Change who paid"
     assert rows[0][0].text == confirm
@@ -326,7 +326,7 @@ async def test_no_trip_or_failed_lookup_has_no_toggle(monkeypatch, directory, fa
     assert pending["trip_id"] is None
     assert not pending.get("trip_offer")
     reply = card.edit_text.await_args
-    assert "**Trip:**" not in reply.args[0]
+    assert "Trip:" not in reply.args[0]
     assert (bot_core.TRIP_UNKNOWN_WARNING in reply.args[0]) is fails
     rows = reply.kwargs["reply_markup"].inline_keyboard
     assert len(rows) == 3  # Confirm/Cancel, "Add split" and "Change who paid": no trip toggle
@@ -353,7 +353,7 @@ async def test_trip_toggle_round_trip_uses_only_pending_snapshot(monkeypatch, cl
         assert pending["trip_offer"] == {"id": 7, "name": "Beach Trip"}
         assert bot_core._card_outcome(context, 500) is None
         reply = query.edit_message_text.await_args
-        assert f"🧳 **Trip:** {line}" in reply.args[0]
+        assert f"🧳 Trip: {line}" in reply.args[0]
         rows = reply.kwargs["reply_markup"].inline_keyboard
         assert len(rows) == 2
         assert rows[1][0].text == label
@@ -400,7 +400,7 @@ async def test_confirm_saves_selected_trip_and_keeps_trip_line(monkeypatch, dire
     reply = query.edit_message_text.await_args
     assert header in reply.args[0]
     line = "not a trip entry" if toggle else "Beach Trip"
-    assert f"🧳 **Trip:** {line}" in reply.args[0]
+    assert f"🧳 Trip: {line}" in reply.args[0]
     if success:
         assert not context.user_data["pending_cards"]
         assert bot_core._card_outcome(context, 500) == "saved"
@@ -433,7 +433,7 @@ async def test_a_trip_name_with_markdown_characters_is_escaped_on_the_card(monke
     # An unescaped _ opens italics that never close, and Telegram rejects the whole card.
     monkeypatch.setattr(bot_core, "_load_active_trip", lambda participant_id: replace(BEACH, name="Beach_2026"))
     context, card, _ = await _show_card(monkeypatch, directory, ALICE)
-    assert r"🧳 **Trip:** Beach\_2026" in card.edit_text.await_args.args[0]
+    assert r"🧳 Trip: Beach_2026" in card.edit_text.await_args.args[0]
     # The stored name and the button label stay as typed.
     assert context.user_data["pending_cards"][500]["trip_offer"]["name"] == "Beach_2026"
 
@@ -446,8 +446,8 @@ async def test_menu_and_banner_escape_names_but_not_labels(command_db):
     update, context, query = _trip_tap("trip:on:7")
     await bot_core.handle_trip_button(update, context)
     reply = query.edit_message_text.await_args
-    assert r"**Beach\_2026**" in reply.args[0]
-    assert r"**Beach\_2026**" in context.bot.send_message.await_args.kwargs["text"]
+    assert r"<b>Beach_2026</b>" in reply.args[0]
+    assert r"<b>Beach_2026</b>" in context.bot.send_message.await_args.kwargs["text"]
     # After a switch the menu has no buttons, so check the button label on the /trip menu.
     command_update = _update(ALICE)
     await bot_core.trip_command(command_update, _context())

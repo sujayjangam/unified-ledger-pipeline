@@ -147,16 +147,16 @@ def test_ticks_keep_amounts_until_they_misfit(pending):
 
 def test_card_lines_unchanged_without_amounts(pending):
     assert bot_core._split_lines(pending) == (
-        '👥 **Split by count between 2:**\n • Alice: 2, 90.00\n • Bob: 1, 45.00\n')
+        '👥 Split by count between 2:\n • Alice: 2, 90.00\n • Bob: 1, 45.00\n')
     pending['split_menu']['counts'] = {}
     pending['split'] = split_rows(pending, (1, 2))
     assert bot_core._split_lines(pending) == (
-        '👥 **Split between 2:**\n • Alice: 67.50\n • Bob: 67.50\n')
+        '👥 Split between 2:\n • Alice: 67.50\n • Bob: 67.50\n')
     changed = parse_split_amounts(pending, 'Bob 90', 1)
     changed['split'][1]['name'] = 'Bob_Lee'
-    assert ' • Bob\\_Lee: 90.00 ✏️' in bot_core._split_lines(changed)
+    assert ' • Bob_Lee: 90.00 ✏️' in bot_core._split_lines(changed)
     only_bob = {**changed, 'split': ({**changed['split'][1], 'share_cents': 13500},)}
-    assert ' • Bob\\_Lee: 135.00 ✏️' in bot_core._split_lines(only_bob)
+    assert ' • Bob_Lee: 135.00 ✏️' in bot_core._split_lines(only_bob)
 
 
 def test_tick_change_and_prompt_hints(pending):
@@ -339,7 +339,7 @@ async def test_reply_redraw_and_confirm(monkeypatch, directory, state):
             assert context.user_data['split_prompts'] == {602: 500}
         return
     edit = context.bot.edit_message_text.await_args.kwargs
-    assert edit['parse_mode'] == 'Markdown' and edit['message_id'] == 500
+    assert edit['parse_mode'] == 'HTML' and edit['message_id'] == 500
     assert _data(edit['reply_markup']) == _data(bot_core._keyboard_for(entry))
     assert 'Alice: 45.00' in edit['text'] and 'Carol: 90.00' in edit['text']
     assert '45.00 ✏️' in edit['text'] and "90.00 (what's left)" in edit['text']

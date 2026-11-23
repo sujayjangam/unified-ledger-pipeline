@@ -16,20 +16,20 @@ TRIP = Trip(7, "Beach Trip", date(2026, 12, 1), date(2026, 12, 7), (1, 2, 3),
 WITH_CAROL = {"kind": "named", "include_sender": True, "people": [{"name": "Carol", "is_family": False}]}
 
 
-@pytest.mark.parametrize('unit,heading', [('nights', 'nights'), (None, 'count'), ('night_units', r'night\_units')])
+@pytest.mark.parametrize('unit,heading', [('nights', 'nights'), (None, 'count'), ('night_units', r'night_units')])
 async def test_count_card_and_receipt(monkeypatch, directory, unit, heading):
     """Count shares use the same formatting on the live card and saved receipt."""
     reference = {'kind': 'named', 'count_unit': unit,
                  'people': [{'name': 'me', 'count': 3}, {'name': 'Carol', 'count': 2}]}
     context, pending, text = await _card(monkeypatch, directory, reference,
         message='Hotel 600 split by nights, me 3 and Carol 2', amount=600)
-    assert f'👥 **Split by {heading} between 2:**' in text
+    assert f'👥 Split by {heading} between 2:' in text
     assert ' • Alice: 3, 360.00' in text and ' • Carol: 2, 240.00' in text
     save, saved = await _confirm(monkeypatch, context)
     assert bot_core._split_lines(pending) in saved
     assert save.call_args.kwargs['splits'] == [(1, 36000), (3, 24000)]
     only_carol = {**pending, 'split': [{**pending['split'][1], 'share_cents': 60000}]}
-    assert bot_core._split_lines(only_carol) == '👥 **Split:** Carol owes Alice 600.00\n'
+    assert bot_core._split_lines(only_carol) == '👥 Split: Carol owes Alice 600.00\n'
 
 
 async def _card(monkeypatch, directory, reference=None, trip=True, **fields):
@@ -82,8 +82,8 @@ def test_family_grouping_and_escaping():
         {"participant_id": 4, "name": "Dave_name", "family": "Bob's family", "share_cents": 100},
     )
     text = bot_core._split_lines({'split': tuple(reversed(rows))})
-    assert text == ("👥 **Split between 4:**\nBob's family\n • Bob: 1.00\n • Dave\\_name: 1.00\n"
-                    "Carol\\_family\n • Carol: 1.00\n • Alice: 1.00\n")
+    assert text == ("👥 Split between 4:\nBob's family\n • Bob: 1.00\n • Dave_name: 1.00\n"
+                    "Carol_family\n • Carol: 1.00\n • Alice: 1.00\n")
     assert bot_core._split_lines({'split': [{**row, 'family': None} for row in rows]}).count('family') == 0
 
 
@@ -91,7 +91,7 @@ def test_one_person_split_says_who_owes_whom():
     """One sharer who didn't pay owes the payer everything; a split of only the payer is no split."""
     carol = {"participant_id": 3, "name": "Carol_x", "family": None, "share_cents": 555}
     by_alice = {'split': [carol], 'paid_by_participant_id': 1, 'paid_by': "Alice"}
-    assert bot_core._split_lines(by_alice) == "👥 **Split:** Carol\\_x owes Alice 5.55\n"
+    assert bot_core._split_lines(by_alice) == "👥 Split: Carol_x owes Alice 5.55\n"
     by_carol = {'split': [carol], 'paid_by_participant_id': 3, 'paid_by': "Carol_x"}
     assert bot_core._split_lines(by_carol) == ""
     assert bot_core._owed_split(by_carol) == ()
@@ -101,9 +101,9 @@ async def test_warning_only_on_live_cards(monkeypatch, directory):
     """An unknown name keeps known shares and warns on both pending and retry cards."""
     reference = {**WITH_CAROL, 'people': [{'name': 'Carol'}, {'name': 'Erin_name'}]}
     context, _, text = await _card(monkeypatch, directory, reference)
-    assert "Couldn't match 'Erin\\_name'" in text
+    assert "Couldn't match 'Erin_name'" in text
     _, failed = await _confirm(monkeypatch, context, False)
-    assert "Couldn't match 'Erin\\_name'" in failed and "Split between 2" in failed
+    assert "Couldn't match 'Erin_name'" in failed and "Split between 2" in failed
     _, saved = await _confirm(monkeypatch, context)
     assert "Couldn't match" not in saved and "Split between 2" in saved
 
@@ -234,7 +234,7 @@ async def test_paid_for_someone_shows_who_owes_and_saves_it(monkeypatch, directo
     context, pending, text = await _card(monkeypatch, directory, message="Bob paid 50 for Carol's ticket",
                                          amount=50, payment_method='Cash', trip=trip)
     assert pending['paid_by_participant_id'] == 2
-    assert '👥 **Split:** Carol owes Bob 50.00' in text
+    assert '👥 Split: Carol owes Bob 50.00' in text
     save, _ = await _confirm(monkeypatch, context)
     assert save.call_args.kwargs['splits'] == [(3, 5000)]
 

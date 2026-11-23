@@ -5,6 +5,8 @@ from datetime import date
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+from app.services.tg_html import to_plain, visible_len
+
 import pytest
 
 import app.bot_core as bot
@@ -66,7 +68,7 @@ def island(monkeypatch):
 
 def test_three_currency_main_and_navigation(island):
     text, markup = bot._bals_screen(TRIP, DIRECTORY, DAY)
-    assert text.splitlines() == [
+    assert to_plain(text).splitlines() == [
         '🧳 Island trip · 21–21 Nov', 'IDR · 2 of 3', '',
         'Blues family owes IDR 740.00', 'Golds family owes IDR 10.00',
         'Greens family owes IDR 50.00', 'Reds family is owed IDR 800.00',
@@ -106,7 +108,7 @@ def test_payment_callbacks_keep_global_numbers(island, currency):
                 for n, (c, p) in enumerate(balances.trip_payments(entries, FAMILIES, paid), 1)
                 if c == currency]
     assert list(_buttons(markup).values()) == expected + [f'bals:cur:7:{currency}']
-    assert text.startswith(f'🧳 Island trip · {currency} · to settle')
+    assert to_plain(text).startswith(f'🧳 Island trip · {currency} · to settle')
     assert not any(line[:1].isdigit() for line in text.splitlines())
 
 
@@ -125,11 +127,11 @@ def test_labels_shorten_names_keep_amount_and_plain_characters():
 def test_cut_payments_offer_only_whole_visible_lines(island, monkeypatch):
     text, _ = bot._bals_screen(TRIP, DIRECTORY, DAY, 'IDR', 'pay')
     first_two = text.splitlines()[:3]
-    limit = len('\n'.join(first_two + [bot.BALS_CUT_SHORT]))
+    limit = visible_len('\n'.join(first_two + [bot.BALS_CUT_SHORT]))
     monkeypatch.setattr(bot, 'TELEGRAM_MESSAGE_LIMIT', limit)
     cut, markup = bot._bals_screen(TRIP, DIRECTORY, DAY, 'IDR', 'pay')
     assert cut.splitlines() == first_two + [bot.BALS_CUT_SHORT]
-    assert len(cut) <= limit
+    assert visible_len(cut) <= limit
     assert len(markup.inline_keyboard) == 3  # Two visible payments and Back.
     expected = balances.trip_payments(*[island[0], FAMILIES, island[1]])
     callbacks = list(_buttons(markup).values())[:-1]
@@ -242,7 +244,7 @@ async def test_old_show_and_stale_currency_return_main_and_register_snapshot(isl
     bot._load_bals_trip.assert_called_once_with(1, 7)
     reply = query.edit_message_text.await_args
     assert reply.args[0].splitlines()[1] == 'IDR · 2 of 3'
-    assert 'parse_mode' not in reply.kwargs
+    assert reply.kwargs["parse_mode"] == "HTML"
     assert context.user_data['bals_reports'][query.message.message_id] is DIRECTORY
 
 
@@ -256,7 +258,7 @@ async def test_valid_taps_read_fresh_answer_then_edit(island, action):
     assert order == ['answer', 'edit']
     bot.get_trip_split_entries.assert_called_once_with(7)
     bot.get_trip_settlements.assert_called_once_with(7)
-    assert 'parse_mode' not in query.edit_message_text.await_args.kwargs
+    assert query.edit_message_text.await_args.kwargs["parse_mode"] == "HTML"
 
 
 async def test_fresh_report_opens_saved_currency_instead_of_busiest(island):
@@ -293,7 +295,7 @@ def test_every_screen_cuts_on_whole_lines(island, monkeypatch, screen):
     full, _ = bot._bals_screen(TRIP, DIRECTORY, DAY, 'IDR', screen)
     monkeypatch.setattr(bot, 'TELEGRAM_MESSAGE_LIMIT', 110)
     cut, _ = bot._bals_screen(TRIP, DIRECTORY, DAY, 'IDR', screen)
-    assert len(cut) <= 110 and cut.endswith(bot.BALS_CUT_SHORT)
+    assert visible_len(cut) <= 110 and cut.endswith(bot.BALS_CUT_SHORT)
     assert cut.splitlines()[:-1] == full.splitlines()[:len(cut.splitlines()) - 1]
 
 
@@ -320,7 +322,7 @@ def test_long_special_names_stay_plain_on_screen(island):
     directory = replace(DIRECTORY, participants=tuple(
         replace(p, display_name=names.get(p.id, p.display_name)) for p in DIRECTORY.participants))
     text, markup = bot._bals_screen(TRIP, directory, DAY, 'IDR', 'pay')
-    assert names[1] in text
+    assert names[1] in to_plain(text)
     assert all(len(b.text) <= 64 for row in markup.inline_keyboard for b in row)
 
 
@@ -332,7 +334,7 @@ def test_paybacks_read_a_bill_date_stored_as_text(island):
     for e in entries:
         e['date'] = DAY.isoformat()
     text, _ = bot._bals_screen(TRIP, DIRECTORY, DAY, 'IDR', 'pbk')
-    assert '    Erin\'s share of "Airbnb 2300 on my…" (21 Nov): IDR 150.00' in text.splitlines()
+    assert 'Erin\'s share of "Airbnb 2300 on my…" (21 Nov): IDR 150.00' in to_plain(text).splitlines()
     entries[0]['date'] = 'sometime'
     lines = balances.trip_payback_lines(entries, NAMES, FAMILIES, 'IDR', paid)
     assert any(line.endswith('(sometime): IDR 150.00') for line in lines)

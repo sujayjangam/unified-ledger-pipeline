@@ -3,6 +3,7 @@ import re
 
 from sqlalchemy import text
 
+from app.services.tg_html import esc, b as bold, i as italic
 from app.add_expense import dollars_to_cents, format_cents
 from app.database import get_connection
 from app.services.currencies import ISO_4217
@@ -115,7 +116,7 @@ def payback_default_note(card: dict) -> str:
     return f"{giver} (for {_beneficiary_label(card)})"
 
 
-def settlement_card_text(card: dict) -> str:
+def settlement_card_text(card: dict, *, html=False) -> str:
     """Show both agreed amounts, the people, and an explicit warning for an overpayment."""
     payer = card['names'].get(card['from_id'], "Choose who paid")
     family = card.get('family')
@@ -132,6 +133,10 @@ def settlement_card_text(card: dict) -> str:
     if is_overpayment(card['clears_cents'], card['suggested_cents']):
         lines.append(f"⚠️ This is more than the {format_cents(card['suggested_cents'])} "
                      f"{card['clears_currency']} owed. The extra will be owed back to {payer}.")
+    if html:
+        lines = [bold(line) if n == 0 else italic(line) if line.startswith('⚠️') else
+                 esc(line.split(': ', 1)[0]) + ': ' + bold(line.split(': ', 1)[1])
+                 if n in (4, 5) else esc(line) for n, line in enumerate(lines)]
     return "\n".join(lines)
 
 
