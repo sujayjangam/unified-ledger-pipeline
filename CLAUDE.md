@@ -327,6 +327,9 @@ Env vars (`.env.example` shows the format):
   blanks the sheet. The bot signs in as its Cloud Run identity (metadata server); locally only
   when `SHEETS_IMPERSONATE_SA` is set. The sheet is never read back. A new place that changes
   a trip's bills or paybacks needs the same call. Workbook ids never go in the repo.
+  A `Summary` tab (per currency: paybacks done, still to settle, paid for another family,
+  paid within own family) is written after the bill tab; it must exist in the workbook,
+  created by hand like the sheet's formatting.
 - The duplicate check runs before the card is shown, never inside the insert, and a failed check
   gives a normal card — it must never block a save
   ([ADR-0027](docs/decisions/0027-duplicate-warning-before-the-card.md)).

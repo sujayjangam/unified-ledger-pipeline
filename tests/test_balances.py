@@ -892,3 +892,23 @@ def test_deleted_receiver_bill_still_clears_nothing_only():
     lunch_deleted = entries[:1]
     assert unit_balances(lunch_deleted, {}, paid).lines == {'SGD': {(('person', 1), 5): 3000}}
     assert open_bill_shares(lunch_deleted, {}, paid) == {}
+
+
+@pytest.mark.parametrize('giver,expected', [(2, {(2, 3): 100}), (3, {})])
+def test_behalf_own_family_excludes_self_and_excess(giver, expected):
+    """Only the relative's actual debt counts, never excess or the giver's own share."""
+    entries = [bill('one', 1, {3: 100})]
+    settlements = [dict(from_id=giver, to_id=1, for_id=3, cents=150, currency='SGD')]
+    assert balances.behalf_totals(entries, {2: 'Blue', 3: 'Blue'}, settlements, 'SGD') == ({}, expected)
+
+
+def test_behalf_replay_offsets_and_currency():
+    """Offsets help the final sharer, not the middle; repeats cannot claim paid shares."""
+    entries = [bill('one', 1, {2: 100}), bill('two', 2, {3: 100})]
+    settlement = dict(from_id=4, to_id=1, cents=100, currency='SGD', bills=[
+        dict(transaction_id='one', for_id=2, cents=100),
+        dict(transaction_id='two', for_id=3, cents=100)])
+    families = {3: 'Blue', 4: 'Blue'}
+    assert balances.behalf_totals(entries, families, [settlement], 'SGD') == ({}, {(4, 3): 100})
+    assert balances.behalf_totals(entries, families, [settlement, settlement], 'SGD') == ({}, {(4, 3): 100})
+    assert balances.behalf_totals(entries, families, [settlement], 'AUD') == ({}, {})

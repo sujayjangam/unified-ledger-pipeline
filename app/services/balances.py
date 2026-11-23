@@ -727,6 +727,56 @@ def _bill_label(entry) -> str:
     return label
 
 
+def behalf_totals(entries, families, settlements, currency) -> tuple[dict, dict]:
+    """Actual help to other units and individual relatives, never new debts.
+
+    Replay oldest-first, including the caller's tie order, so later payments cannot
+    claim already cleared shares. Own-family totals exclude the giver.
+    """
+    entries, settlements = tuple(entries), tuple(settlements)
+    history = []
+    _fold_debts(entries, families, settlements, history)
+    bills = {e.get('transaction_id'): e for e in entries}
+    behalf, own = {}, {}
+    for s, (row_amounts, old_amounts) in zip(settlements, history):
+        if s['currency'] != currency:
+            continue
+        # helped: {person id: cents} of this payback that really went to that person's
+        # benefit. It starts from what the maths really took off each person's debt to the
+        # receiver (old_amounts), never the gross share: if an opposite bill had already made
+        # the debt smaller, the rest is owed back to the giver and helped nobody. Offset rows
+        # then move the rest (below).
+        helped = dict(old_amounts)
+        for row, cents in zip(s.get('bills') or (), row_amounts):
+            entry = bills.get(row['transaction_id'])
+            # An offset row (a bill the receiver didn't pay) belongs to a shortened line,
+            # a 💡 shortcut: the giver pays the receiver what a middle person owes, and
+            # the middle is owed that much less by the row's sharer (ADR-0052). The sharer
+            # gains it, and the middle gave it up, having gained the same on the
+            # receiver's side: nobody outside the chain was paid for.
+            bill_payer = row.get('payer_id') or (entry or {}).get('paid_by')
+            if cents and bill_payer is not None and bill_payer != s['to_id']:
+                helped[row['for_id']] = helped.get(row['for_id'], 0) + cents
+                helped[bill_payer] = helped.get(bill_payer, 0) - cents
+        # Rolled up per family, the way the help is talked about ("Carol paid for the Lees").
+        # This explains help already given, and is never another ledger debt. Comparing
+        # family units also leaves out a parent paying their own child's share.
+        giver_unit = unit_of(s['from_id'], families)
+        by_unit = {}
+        for pid, cents in helped.items():
+            unit = unit_of(pid, families)
+            by_unit[unit] = by_unit.get(unit, 0) + cents
+        for unit, cents in by_unit.items():
+            if cents > 0 and unit != giver_unit:
+                key = (s['from_id'], unit)
+                behalf[key] = behalf.get(key, 0) + cents
+        for pid, cents in helped.items():
+            if cents > 0 and pid != s['from_id'] and unit_of(pid, families) == giver_unit:
+                key = (s['from_id'], pid)
+                own[key] = own.get(key, 0) + cents
+    return behalf, own
+
+
 def trip_payback_lines(entries, names: dict, families: dict, currency: str, settlements=(), *, html=False) -> list[str]:
     """Explain actual cleared shares and outside-family help, without creating debts.
 
@@ -737,7 +787,8 @@ def trip_payback_lines(entries, names: dict, families: dict, currency: str, sett
     history = []
     _fold_debts(entries, families, settlements, history)
     bills = {e.get('transaction_id'): e for e in entries}
-    lines, behalf = [], {}
+    lines = []
+    behalf, _ = behalf_totals(entries, families, settlements, currency)
     text = esc if html else str
     strong = bold if html else str
     for s, (row_amounts, old_amounts) in zip(settlements, history):
@@ -755,12 +806,6 @@ def trip_payback_lines(entries, names: dict, families: dict, currency: str, sett
         payment = f"{giver} paid {receiver} {format_money(s['cents'], currency)}"
         lines.append(f"• {strong(payment)}{text(note + handed + when)}")
         details = []
-        # helped: {person id: cents} of this payback that really went to that person's
-        # benefit. It starts from what the maths really took off each person's debt to the
-        # receiver (old_amounts), never the gross share: if an opposite bill had already made
-        # the debt smaller, the rest is owed back to the giver and helped nobody. Offset rows
-        # then move the rest (below).
-        helped = dict(old_amounts)
         if s.get('bills'):
             for row, cents in zip(s['bills'], row_amounts):
                 entry = bills.get(row['transaction_id'])
@@ -771,15 +816,6 @@ def trip_payback_lines(entries, names: dict, families: dict, currency: str, sett
                 amount = format_money(cents, currency) if cents else 'nothing cleared'
                 person = unit_name(('person', row['for_id']), names)
                 details.append(f'    {person}\'s share of "{_bill_label(entry)}"{when}: {amount}')
-                # An offset row (a bill the receiver didn't pay) belongs to a shortened line,
-                # a 💡 shortcut: the giver pays the receiver what a middle person owes, and
-                # the middle is owed that much less by the row's sharer (ADR-0052). The sharer
-                # gains it, and the middle gave it up, having gained the same on the
-                # receiver's side: nobody outside the chain was paid for.
-                bill_payer = row.get('payer_id') or (entry or {}).get('paid_by')
-                if cents and bill_payer is not None and bill_payer != s['to_id']:
-                    helped[row['for_id']] = helped.get(row['for_id'], 0) + cents
-                    helped[bill_payer] = helped.get(bill_payer, 0) - cents
         else:
             for pid, cents in old_amounts.items():
                 details.append(f"    {unit_name(('person', pid), names)}: "
@@ -787,18 +823,6 @@ def trip_payback_lines(entries, names: dict, families: dict, currency: str, sett
             if not old_amounts:
                 details.append('    (no bill record)')
         lines.extend([fold('\n'.join(line[4:] for line in details))] if html and details else details)
-        # Rolled up per family, the way the help is talked about ("Carol paid for the Lees").
-        # This explains help already given, and is never another ledger debt. Comparing
-        # family units also leaves out a parent paying their own child's share.
-        giver_unit = unit_of(s['from_id'], families)
-        by_unit = {}
-        for pid, cents in helped.items():
-            unit = unit_of(pid, families)
-            by_unit[unit] = by_unit.get(unit, 0) + cents
-        for unit, cents in by_unit.items():
-            if cents > 0 and unit != giver_unit:
-                key = (s['from_id'], unit)
-                behalf[key] = behalf.get(key, 0) + cents
     if behalf:
         lines += ['', strong("Paid on someone else's behalf:")]
         for (giver, unit), cents in behalf.items():

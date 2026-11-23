@@ -217,7 +217,7 @@ the options turned down, and what it cost. The ones that shaped the system most:
   saved split bill or payback on the trip, and every delete or undo of a split bill. One row
   per split bill: who paid, each person's
   share (✅ once paid back), paid back, still owed, and who still owes. The numbers are the
-  same maths as `/trip_bals`, before netting. Each trip has its own workbook, so one trip's
+  same maths as `/trip_bals`, before netting; a `Summary` tab adds netted totals and help given. Each trip has its own workbook, so one trip's
   people never see another's bills, and the bot writes as its own Cloud Run identity, with no
   key to keep ([ADR-0059](docs/decisions/0059-live-sheet-per-trip.md)).
 

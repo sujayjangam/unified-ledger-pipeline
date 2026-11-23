@@ -44,3 +44,15 @@ service account) and from a Cloud Run job running as it.
 - **One shared workbook with a tab per trip:** every trip's people could see every trip.
 - **A service-account key as a secret:** the Cloud Run identity already has what it needs.
 - **A background task after the reply:** Cloud Run may pause its CPU, so the write could stall.
+
+
+## Amended 2026-11-23: Summary tab (#177)
+
+- Write `Summary` after the bill tab, under the same lock and from the same reads;
+  each tab uses RAW values, written before clearing stale trailing rows.
+- Per currency, show paybacks done and still-to-settle counts and amounts from the
+  same settlements and `trip_payments` as `/trip_bals`.
+- Share `behalf_totals` with the payback screen: actual help to other families and
+  individual relatives within the giver's family is informational, never a new debt.
+- Create the `Summary` tab by hand, like workbook formatting. A missing tab only
+  prints a failure and leaves the already-written bill tab intact.

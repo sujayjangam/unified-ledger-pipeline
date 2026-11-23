@@ -11,7 +11,9 @@ from sqlalchemy import text
 
 from app.add_expense import format_cents, format_money
 from app.database import get_read_connection
-from app.services.balances import open_bill_shares
+from app.services.balances import (
+    balance_currencies, behalf_totals, open_bill_shares, trip_payments, unit_name,
+)
 from app.services.ledger_queries import get_trip_settlements, get_trip_split_entries
 from app.services.trips import trip_families, trip_sheet_target
 from app.services.utils import get_sgt_now
@@ -97,6 +99,48 @@ def sheet_rows(trip_name, entries, settlements, families, names, now) -> list[li
     return [row + [""] * (10 - len(row)) for row in rows]
 
 
+def summary_rows(trip_name, entries, settlements, families, names, now) -> list[list]:
+    """Lay out netted totals and informational help from the same snapshot."""
+    entries, settlements = tuple(entries), tuple(settlements)
+    payments = trip_payments(entries, families, settlements)
+    currencies = balance_currencies(entries, settlements, payments)
+
+    def name_of(person):
+        return names.get(person, f"Person {person}")
+
+    def for_name(unit):
+        return name_of(unit[1]) if unit[0] == 'person' else unit_name(unit, names)
+
+    rows = [
+        [f"{trip_name} · summary"],
+        [f"Updated {now.day} {now:%b %Y %H:%M} SGT. Totals match /trip_bals; the first tab lists bills before netting."],
+        [],
+    ]
+    for currency in currencies:
+        done = [s['cents'] for s in settlements if s['currency'] == currency]
+        remaining = [p.cents for cur, p in payments if cur == currency]
+        rows.extend([[currency], ['Paybacks done', len(done), _number(sum(done))],
+                     ['Still to settle', len(remaining), _number(sum(remaining))], []])
+        other, own = behalf_totals(entries, families, settlements, currency)
+        sections = [
+            ('Paid for another family', [(name_of(g), for_name(u), c) for (g, u), c in other.items()]),
+            ('Paid within own family', [(name_of(g), name_of(p), c) for (g, p), c in own.items()]),
+        ]
+        for title, items in sections:
+            rows.append([title])
+            if items:
+                rows.append(['Giver', 'For', 'Amount'])
+                rows.extend([giver, beneficiary, _number(cents)] for giver, beneficiary, cents
+                            in sorted(items, key=lambda item: (-item[2], item[0], item[1])))
+            else:
+                rows.append(['None yet.'])
+            rows.append([])
+    if not currencies:
+        rows.append(['No split bills on this trip yet.'])
+    # Pad blank rows too so shorter sections cannot leave old values beside them.
+    return [row + [''] * (5 - len(row)) for row in rows]
+
+
 async def _access_token() -> str | None:
     """Use the runtime identity, or explicit local impersonation; never log tokens."""
     global _token, _token_until
@@ -157,7 +201,8 @@ async def refresh_trip_sheet(trip_id: int) -> None:
                     _off_printed = True
                 return
             trip_name, sheet_id = target
-            rows = sheet_rows(trip_name, entries, settlements, families, names, get_sgt_now())
+            now = get_sgt_now()
+            rows = sheet_rows(trip_name, entries, settlements, families, names, now)
             url = f"https://sheets.googleapis.com/v4/spreadsheets/{sheet_id}/values"
             async with httpx.AsyncClient(timeout=20, headers={"Authorization": f"Bearer {token}"}) as client:
                 # RAW keeps user text beginning with '=' as text, never executable formulas.
@@ -168,7 +213,15 @@ async def refresh_trip_sheet(trip_id: int) -> None:
                 # No tab name selects the first tab, even when its owner renames it.
                 response = await client.post(f"{url}/A{len(rows) + 1}:J:clear")
                 response.raise_for_status()
+                # Summary failures (including a missing tab) cannot block the bill write.
+                rows = summary_rows(trip_name, entries, settlements, families, names, now)
+                response = await client.put(f"{url}/'Summary'!A1:E{len(rows)}",
+                                            params={"valueInputOption": "RAW"}, json={"values": rows})
+                response.raise_for_status()
+                response = await client.post(f"{url}/'Summary'!A{len(rows) + 1}:E:clear")
+                response.raise_for_status()
     except httpx.HTTPStatusError as exc:
-        print(f"Trip sheet not updated for trip {trip_id}: HTTP {exc.response.status_code}: {exc.response.text[:300]}")
+        detail = " ".join(exc.response.text.split())[:300]
+        print(f"Trip sheet not updated for trip {trip_id}: HTTP {exc.response.status_code}: {detail}")
     except Exception as exc:
         print(f"Trip sheet not updated for trip {trip_id}: {exc}")
