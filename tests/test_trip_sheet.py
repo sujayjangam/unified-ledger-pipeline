@@ -117,11 +117,18 @@ async def test_write_then_clear_raw_ranges(writing, monkeypatch):
     requests = []
     transport(monkeypatch, lambda request: requests.append(request) or httpx.Response(200, json={}))
     await sheet.refresh_trip_sheet(7)
-    assert [r.method for r in requests] == ["PUT", "POST"]
+    assert [r.method for r in requests] == ["PUT", "POST", "PUT", "POST"]
     assert requests[0].url.path == f"/v4/spreadsheets/{SHEET_ID}/values/A1:J5"
     assert dict(requests[0].url.params) == {"valueInputOption": "RAW"}
     assert requests[1].url.path.endswith("/values/A6:J:clear")
     assert json.loads(requests[0].content)["values"][4][1] == "=1+1"
+    summary = sheet.summary_rows("Beach", sheet.get_trip_split_entries.return_value, [], {}, NAMES, NOW)
+    assert requests[2].url.path.endswith(f"/values/'Summary'!A1:E{len(summary)}")
+    assert dict(requests[2].url.params) == {"valueInputOption": "RAW"}
+    assert json.loads(requests[2].content)["values"] == summary
+    assert requests[3].url.path.endswith(f"/values/'Summary'!A{len(summary) + 1}:E:clear")
+    sheet.get_trip_split_entries.assert_called_once_with(7)
+    sheet.get_trip_settlements.assert_called_once_with(7)
     assert requests[0].headers["Authorization"] == "Bearer fictional-token"
 
 
@@ -197,7 +204,7 @@ async def test_no_identity_returns_none(identity):
 
 
 async def test_trip_lock_covers_reads_through_clear(writing, monkeypatch):
-    """A second refresh waits to read until the first has finished both requests."""
+    """A second refresh waits to read until the first has finished both tabs."""
     started, release = asyncio.Event(), asyncio.Event()
     calls = []
     async def respond(request):
@@ -215,7 +222,7 @@ async def test_trip_lock_covers_reads_through_clear(writing, monkeypatch):
     assert sheet.get_trip_split_entries.call_count == 1
     release.set()
     await asyncio.gather(first, second)
-    assert calls == ["PUT", "POST", "PUT", "POST"]
+    assert calls == ["PUT", "POST", "PUT", "POST"] * 2
     assert sheet.get_trip_split_entries.call_count == 2
 
 
@@ -227,3 +234,51 @@ def test_target_query(row, expected):
     assert trip_sheet_target(conn, 7) == expected
     assert "sheet_id IS NOT NULL" in str(conn.execute.call_args.args[0])
     assert conn.execute.call_args.args[1] == {"trip_id": 7}
+
+
+@pytest.mark.parametrize("stage", ["PUT", "POST"])
+async def test_summary_failure_preserves_bill_write(writing, monkeypatch, capsys, stage):
+    """A missing Summary tab or failed clear prints once after the bill write."""
+    requests = []
+    def respond(request):
+        requests.append(request)
+        failed = "'Summary'!" in request.url.path and request.method == stage
+        return httpx.Response(400 if failed else 200, text="missing\nSummary")
+    transport(monkeypatch, respond)
+    await sheet.refresh_trip_sheet(7)
+    assert len(requests) == (3 if stage == "PUT" else 4)
+    assert requests[1].url.path.endswith('/A6:J:clear')
+    assert capsys.readouterr().out == "Trip sheet not updated for trip 7: HTTP 400: missing Summary\n"
+
+
+def test_summary_two_currencies_help_and_counts():
+    """Counts use the payment engine; relatives and outside families stay separate."""
+    entries = [bill(splits={2: 100, 3: 200, 4: 300}),
+               bill('aud', currency='AUD', splits={2: 400})]
+    settlements = [payback(150, for_id=3), payback(200, for_id=4)]
+    families = {2: 'Blue', 3: 'Blue', 4: 'Red'}
+    rows = sheet.summary_rows('Beach', entries, settlements, families, NAMES, NOW)
+    assert all(len(r) == 5 for r in rows)
+    assert rows[0][0] == 'Beach ' + chr(183) + ' summary'
+    assert rows[1][0] == ('Updated 22 Nov 2026 21:05 SGT. Totals match /trip_bals; '
+                           'the first tab lists bills before netting.')
+    assert rows[3][0] == 'AUD'
+    payments = sheet.trip_payments(entries, families, settlements)
+    for currency in ['AUD', 'SGD']:
+        i = next(i for i, row in enumerate(rows) if row[0] == currency)
+        done = [s['cents'] for s in settlements if s['currency'] == currency]
+        left = [p.cents for cur, p in payments if cur == currency]
+        assert rows[i+1] == ['Paybacks done', len(done), sheet._number(sum(done)), '', '']
+        assert rows[i+2] == ['Still to settle', len(left), sheet._number(sum(left)), '', '']
+    assert ['Bob', 'Red family', 2.0, '', ''] in rows
+    assert ['Bob', 'Carol', 1.5, '', ''] in rows
+    assert rows[7:10] == [['Paid for another family', '', '', '', ''],
+                          ['None yet.', '', '', '', ''], ['', '', '', '', '']]
+
+
+def test_summary_empty_and_unknown_names():
+    rows = sheet.summary_rows('Beach', [], [], {}, {}, NOW)
+    assert rows[3] == ['No split bills on this trip yet.', '', '', '', '']
+    rows = sheet.summary_rows('Beach', [bill(splits={9: 100})],
+                              [payback(100, for_id=9)], {}, {}, NOW)
+    assert ['Person 2', 'Person 9', 1.0, '', ''] in rows
