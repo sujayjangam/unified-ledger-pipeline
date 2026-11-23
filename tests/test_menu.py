@@ -174,7 +174,7 @@ async def test_a_period_tap_shows_the_same_summary_as_the_command(monkeypatch, p
     query.answer.assert_awaited_once_with()
     edit = query.edit_message_text.await_args
     assert edit.args[0] == bot_core._category_text(period)
-    assert edit.kwargs["parse_mode"] == "Markdown"
+    assert edit.kwargs["parse_mode"] == "HTML"
 
     command = _update(ALICE)
     await getattr(bot_core, f"cat_{period}_command")(command, _context())

@@ -1,10 +1,11 @@
-"""Plain-text settle screens from an immutable ledger snapshot; no Telegram or I/O.
+"""Plain or HTML settle screens from an immutable ledger snapshot; no Telegram or I/O.
 
 Every redraw starts at the original reading. Derived option lists are stored by the
 bot only after a successful edit, so an index always means what the user saw.
 """
 
 from app.add_expense import format_money
+from app.services.tg_html import esc, b as bold, i as italic
 from app.services.settle import (
     SettleChoices, bill_share_options, card_people, match_bills, receiver_options, settle_up,
 )
@@ -76,12 +77,14 @@ def _everyday_currency(card: dict) -> str:
             or next((b.currency for b in owed), 'SGD'))
 
 
-def build_settle_card(card: dict) -> tuple[str, list[list[tuple[str, str]]]]:
+def build_settle_card(card: dict, *, html=False) -> tuple[str, list[list[tuple[str, str]]]]:
     """Render the original reading plus choices, returning text and label/data rows.
 
     This function never mutates its argument. The bot uses settle_card_state to retain
     the identical option lists after an edit succeeds. Names never enter callback data.
+    HTML is opt-in: other callers and all button labels keep plain text.
     """
+    text = esc if html else str
     card = settle_card_state(card)
     result, reading, names = card['result'], card['reading'], card['names']
     choices = card['choices']
@@ -113,14 +116,14 @@ def build_settle_card(card: dict) -> tuple[str, list[list[tuple[str, str]]]]:
         nav = ([('⬅️ Earlier', f'su:page:{page - 1}')] if page > 0 else []) + (
             [('More ➡️', f'su:page:{page + 1}')] if page < pages - 1 else [])
         title = f"Which bills does {giver}'s {paid} pay?" + (f" ({page + 1}/{pages})" if pages > 1 else '')
-        return title, rows + ([nav] if nav else []) + [back]
+        return text(title), rows + ([nav] if nav else []) + [back]
     if view == 'giver':
         buttons = [(names[p], f'su:person:{i}') for i, p in enumerate(card['giver_options'])]
-        return f"Who handed over the {paid}?", [buttons[i:i + 2] for i in range(0, len(buttons), 2)] + [back]
+        return text(f"Who handed over the {paid}?"), [buttons[i:i + 2] for i in range(0, len(buttons), 2)] + [back]
     if view == 'receiver':
         rows = [[(f'{names[p]} {format_money(cents, currency)}', f'su:receiver:{i}')]
                 for i, (p, cents) in enumerate(card['receiver_options'])]
-        return f"Who got {giver}'s {paid}?", rows + [back]
+        return text(f"Who got {giver}'s {paid}?"), rows + [back]
 
     lines = [f'{"👪 Family settle" if result.family else "🤝 Settle up"} · {scope}']
     if result.trip_id is None and (reading.family if choices.family is None else choices.family):
@@ -199,7 +202,20 @@ def build_settle_card(card: dict) -> tuple[str, list[list[tuple[str, str]]]]:
             if foreign:
                 rows.append([('Change amount cleared', 'su:amount')])
     if head is not None:
-        lines = _bounded(head, bill_lines, lines)
+        # Bound plain text before adding tags: markup consumes no visible budget.
+        plain = _bounded(head, bill_lines, lines)
+        if html:
+            title, scope_text = head[0].split(' · ', 1)
+            formatted_head = [title[:2] + bold(title[2:]) + ' · ' + esc(scope_text)]
+            formatted_head += [italic(line) if line.startswith('⚠️') else bold(line) for line in head[1:]]
+            middle = plain[len(head):len(plain) - len(lines)] if lines else plain[len(head):]
+            lines = formatted_head + [esc(line) for line in middle] + [italic(line) for line in lines]
+        else:
+            lines = plain
+    elif html:
+        title, scope_text = lines[0].split(' · ', 1)
+        lines = [title[:2] + bold(title[2:]) + ' · ' + esc(scope_text)] + [
+            italic(line) if line.startswith('⚠️') else esc(line) for line in lines[1:]]
     if card.get('outcome'):
         lines.append('✅ Payback saved.' if card['outcome'] == 'saved' else '❌ Cancelled.')
         rows = []

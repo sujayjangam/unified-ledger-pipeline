@@ -91,9 +91,10 @@ async def test_recent_lists_entries_with_a_delete_button_each(monkeypatch):
     get_page.assert_called_once_with(0, bot_core.RECENT_PAGE_SIZE)
     text = update.effective_message.reply_text.await_args.args[0]
     kwargs = update.effective_message.reply_text.await_args.kwargs
-    assert "parse_mode" not in kwargs  # raw descriptions must not break Markdown
-    assert "1. 18 Nov · item 1" in text and "5. 18 Nov · item 5" in text
-    assert "SGD 46.00 · logged by Bob" in text
+    assert kwargs["parse_mode"] == "HTML"
+    assert "1. <b>SGD 46.00</b> · 18 Nov" in text and "5. <b>SGD 46.00</b> · 18 Nov" in text
+    assert "<blockquote expandable>item 1\nLogged by Bob</blockquote>" in text
+    assert "<b>SGD 46.00</b>" in text
     rows = _buttons(kwargs["reply_markup"])
     assert rows[0] == [(f"🗑 {n}", f"recent:ask:0:id-{n}") for n in range(1, 6)]
     assert rows[1] == [("Older ▸", "recent:page:5")]
@@ -107,10 +108,11 @@ async def test_list_marks_transfers_trips_and_splits_and_shows_other_years(monke
     update, context, _ = _tap(None)
     await bot_core.recent_command(update, context)
     text = update.effective_message.reply_text.await_args.args[0]
-    assert "18 Nov · youtrip top up [Transfer]" in text
-    assert "01 Dec 2025 · dinner at hawker 🧳 ✂️" in text
+    assert "18 Nov [Transfer]\n<blockquote expandable>youtrip top up" in text
+    assert "01 Dec 2025 🧳\n<blockquote expandable>dinner at hawker\nsplit 3 ways</blockquote>" in text
+    assert "✂️" not in text
     # No sender recorded: no "logged by" rather than a guess.
-    assert text.splitlines()[-1] == "   SGD 46.00"
+    assert "Logged by" not in text.split("2. ", 1)[1]
 
 
 async def test_a_failed_read_is_an_error_never_no_entries(monkeypatch):
@@ -161,7 +163,7 @@ async def test_first_tap_asks_and_changes_nothing(monkeypatch):
 
     delete.assert_not_called()
     text = query.edit_message_text.await_args.args[0]
-    assert text.startswith("Delete this entry?")
+    assert text.startswith("<b>Delete this entry?</b>")
     assert "Bali trip · split 3 ways" in text and "Logged by Bob" in text
     assert "It leaves the totals and /trip_bals." in text
     rows = _buttons(query.edit_message_text.await_args.kwargs["reply_markup"])
@@ -186,7 +188,7 @@ async def test_yes_deletes_as_the_sender_and_offers_undo(monkeypatch):
 
     delete.assert_called_once_with(TID, 1)  # Alice's participant id, not her Telegram id
     query.answer.assert_awaited_once_with(bot_core.RECENT_DELETED_TOAST)
-    assert query.edit_message_text.await_args.args[0].startswith("🗑 Deleted: 18 Nov · dinner at hawker")
+    assert query.edit_message_text.await_args.args[0].startswith("<b>🗑 Deleted: 18 Nov · dinner at hawker")
     rows = _buttons(query.edit_message_text.await_args.kwargs["reply_markup"])
     assert rows == [[("↩ Undo", f"recent:undo:5:{TID}"), ("◂ Back to list", "recent:page:5")]]
 
@@ -202,7 +204,7 @@ async def test_a_delete_button_on_an_old_list_gets_a_toast_and_the_fresh_list(mo
 
     delete.assert_not_called()
     query.answer.assert_awaited_once_with(bot_core.RECENT_GONE_TOAST)
-    assert query.edit_message_text.await_args.args[0].startswith("📊 Recent entries")
+    assert query.edit_message_text.await_args.args[0].startswith("📊 <b>Recent entries</b>")
 
 
 @pytest.mark.parametrize("live, deleted", [({}, None), (_entry(), False)])
@@ -243,7 +245,7 @@ async def test_undo_restores_and_goes_back_to_the_list(monkeypatch, restored, to
 
     restore.assert_called_once_with(TID)
     query.answer.assert_awaited_once_with(toast)
-    assert query.edit_message_text.await_args.args[0].startswith("📊 Recent entries")
+    assert query.edit_message_text.await_args.args[0].startswith("📊 <b>Recent entries</b>")
 
 
 async def test_an_undo_that_committed_drops_its_button_when_the_list_fails(monkeypatch):
@@ -288,12 +290,12 @@ async def test_a_stranger_cannot_delete(monkeypatch):
 
 def test_an_id_too_long_for_a_button_gets_no_button():
     text, keyboard = bot_core._recent_list([_entry("x" * 60)], False, 0, {}, TODAY)
-    assert "1. 18 Nov" in text and keyboard is None
+    assert "1. <b>SGD 46.00</b> · 18 Nov" in text and keyboard is None
 
 
 def test_long_descriptions_are_cut_in_the_list():
-    text, _ = bot_core._recent_list([_entry(description="y" * 200)], False, 0, {}, TODAY)
-    assert ("y" * 59 + "…") in text and ("y" * 60) not in text
+    text, _ = bot_core._recent_list([_entry(description="y" * 400)], False, 0, {}, TODAY)
+    assert ("y" * 299 + "…") in text and ("y" * 300) not in text
 
 
 # --- the queries' SQL ---------------------------------------------------------------------

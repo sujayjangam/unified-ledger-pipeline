@@ -69,7 +69,7 @@ async def test_menu_and_back_use_only_snapshot(monkeypatch, directory):
     loader.assert_not_called()
     assert pending['account_id'] == 11
     assert query.answer.await_args.args == ('💳 Card B',)
-    assert query.edit_message_text.await_args.kwargs['parse_mode'] == 'Markdown'
+    assert query.edit_message_text.await_args.kwargs['parse_mode'] == 'HTML'
 
 
 async def test_current_account_only_closes_menu(monkeypatch, directory):

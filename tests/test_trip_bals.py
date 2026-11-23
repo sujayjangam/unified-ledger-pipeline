@@ -7,6 +7,8 @@ from dataclasses import replace
 from datetime import date
 from unittest.mock import AsyncMock, MagicMock
 
+from app.services.tg_html import to_plain, visible_len
+
 import pytest
 
 import app.bot_core as bot_core
@@ -58,10 +60,10 @@ async def test_command_shows_the_active_trip_straight_away(bals):
     bals["get_trip_split_entries"].assert_called_once_with(7)
     bals["_load_bals_choices"].assert_not_called()
     reply = update.effective_message.reply_text.await_args
-    assert reply.args[0] == "\n".join([
+    assert to_plain(reply.args[0]) == "\n".join([
         "🧳 Beach_Trip · 1–7 Dec", "AUD", "", "Lee family owes AUD 30.00",
         "Tan family is owed AUD 30.00", "", "2 payments to settle"])
-    assert "parse_mode" not in reply.kwargs
+    assert reply.kwargs["parse_mode"] == "HTML"
     assert _buttons(reply.kwargs["reply_markup"]) == {
         "All payments (2)": "bals:pay:7:AUD", "Other trip": "bals:page:0",
         "💱 All in SGD": "bals:sgd:7"}
@@ -76,7 +78,7 @@ async def test_command_with_trip_mode_off_shows_a_picker(bals):
     bals["_load_bals_choices"].assert_called_once_with(1, 0)
     bals["get_trip_split_entries"].assert_not_called()
     reply = update.effective_message.reply_text.await_args
-    assert reply.args[0] == "Which trip's balances?"
+    assert to_plain(reply.args[0]) == "Which trip's balances?"
     buttons = _buttons(reply.kwargs["reply_markup"])
     assert buttons == {"Beach_Trip · 1–7 Dec": "bals:show:7", "City Trip · 1–3 Jun": "bals:show:8"}
     assert all(len(data.encode()) < 64 for data in buttons.values())
@@ -87,7 +89,7 @@ async def test_command_with_no_trips_has_no_buttons(bals):
     update = _update(ALICE)
     await bot_core.trip_bals_command(update, _context())
     reply = update.effective_message.reply_text.await_args
-    assert reply.args[0] == "You're not on any trips yet." and reply.kwargs["reply_markup"] is None
+    assert to_plain(reply.args[0]) == "You're not on any trips yet." and reply.kwargs["reply_markup"] is None
 
 
 async def test_a_failed_entries_read_is_an_error_never_an_empty_trip(bals):
@@ -133,7 +135,7 @@ async def test_tapping_a_trip_shows_its_balances_and_answers_once(bals):
     query.answer.assert_awaited_once_with(None)
     text = query.edit_message_text.await_args.args[0]
     # With no families, every person is their own line.
-    assert "Alice is owed AUD 60.00" in text and "Bob owes AUD 30.00" in text and "Carol owes AUD 30.00" in text
+    assert "Alice is owed AUD 60.00" in to_plain(text) and "Bob owes AUD 30.00" in to_plain(text) and "Carol owes AUD 30.00" in to_plain(text)
     assert "2 payments to settle" in text and " pays " not in text
 
 
@@ -218,8 +220,8 @@ async def test_a_report_too_long_for_one_message_is_shortened_not_lost(bals, mon
     update = _update(ALICE)
     await bot_core.trip_bals_command(update, _context())
     text = update.effective_message.reply_text.await_args.args[0]
-    assert len(text) <= 90 and text.endswith(bot_core.BALS_CUT_SHORT)
-    assert text.startswith("🧳 Beach_Trip")
+    assert visible_len(text) <= 90 and text.endswith(bot_core.BALS_CUT_SHORT)
+    assert to_plain(text).startswith("🧳 Beach_Trip")
 
 
 async def test_simplified_report_notes_and_mark_paid_buttons(bals, monkeypatch, directory):
@@ -237,11 +239,11 @@ async def test_simplified_report_notes_and_mark_paid_buttons(bals, monkeypatch, 
     update, query = _tap('bals:pay:7:AUD')
     await bot_core.handle_bals_button(update, _context())
     reply = query.edit_message_text.await_args
-    assert reply.args[0] == (
+    assert to_plain(reply.args[0]) == (
         '🧳 Beach_Trip · AUD · to settle\n'
         'Tan family pays Alice AUD 510.00\nTan family pays Bob AUD 270.00\n'
         '💡 Tan family pays Alice the AUD 60.00 Bob owes, and pays Bob AUD 60.00 less.')
-    assert 'parse_mode' not in reply.kwargs
+    assert reply.kwargs["parse_mode"] == "HTML"
     assert _buttons(reply.kwargs['reply_markup']) == {
         '✅ Tan family → Alice · AUD 510.00': 'settle:new:7:1:51000',
         '✅ Tan family → Bob · AUD 270.00': 'settle:new:7:2:27000',

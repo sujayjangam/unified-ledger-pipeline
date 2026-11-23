@@ -222,7 +222,7 @@ async def test_payer_candidates_follow_trip_membership(monkeypatch, directory, m
     entry = context.user_data["pending_cards"][500]
     assert (entry["paid_by_participant_id"], entry["account_id"]) == (payer, account)
     text = status.edit_text.await_args.args[0]
-    assert f"Paid by:** {directory.participant(payer).display_name}" in text
+    assert f"Paid by: <b>{directory.participant(payer).display_name}" in text
     assert (PAYER_UNCLEAR_WARNING in text) is unclear
     buttons = status.edit_text.await_args.kwargs["reply_markup"].inline_keyboard[0]
     assert "Confirm" in buttons[0].text
@@ -262,17 +262,17 @@ async def test_confirm_preserves_payer_and_only_live_cards_warn(monkeypatch, suc
     assert save.call_args.kwargs["paid_by_participant_id"] == 2
     assert "payer_warning" not in save.call_args.kwargs
     text = query.edit_message_text.await_args.args[0]
-    assert "Paid by:** Bob" in text
+    assert "Paid by: <b>Bob" in text
     assert (PAYER_UNCLEAR_WARNING in text) is not success
     if not success:
-        assert "Paid by:** Bob\n" + PAYER_UNCLEAR_WARNING in text
+        assert text.endswith("<i>" + PAYER_UNCLEAR_WARNING + "</i>")
         assert "Confirm" in query.edit_message_text.await_args.kwargs["reply_markup"].inline_keyboard[0][0].text
 
 
 def test_paid_by_name_is_escaped_and_old_cards_fall_back():
-    assert r"Paid by:** A\_name" in bot_core._account_lines({"paid_by": "A_name"})
-    assert "Paid by:** Alice" in bot_core._account_lines({"account_owner": "Alice"})
-    assert "Paid by:** Unspecified" in bot_core._account_lines({})
+    assert r"Paid by: <b>A_name" in bot_core._account_lines({"paid_by": "A_name"})
+    assert "Paid by: <b>Alice" in bot_core._account_lines({"account_owner": "Alice"})
+    assert "Paid by: <b>Unspecified" in bot_core._account_lines({})
 
 
 def test_summaries_format_postgres_decimal_sums_through_format_cents():
@@ -281,6 +281,6 @@ def test_summaries_format_postgres_decimal_sums_through_format_cents():
     from decimal import Decimal
 
     period = bot_core.format_period_summary("Today", [("SGD", 2, Decimal("8000"))], [("SGD", 1, Decimal("1005"))])
-    assert "SGD: **80.00**" in period and "SGD: **10.05** (1 tx)" in period
+    assert "SGD: <b>80.00</b>" in period and "SGD: <b>10.05</b> (1 tx)" in period
     category = bot_core.format_category_summary("Today", [("Food", "SGD", 2, Decimal("8000"))])
-    assert "SGD: **80.00**" in category
+    assert "SGD: <b>80.00</b>" in category

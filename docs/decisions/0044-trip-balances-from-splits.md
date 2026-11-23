@@ -59,8 +59,8 @@ Three things were open:
   out and the reply says how many were, with a ⚠️ line.
 - **A failed read is never an empty answer.** `get_trip_split_entries` returns `None` when the
   query fails and an empty list when the trip has no split entries; the reply says which.
-- **Plain text.** The reply is sent with no `parse_mode`, so a name can't break it and it reads
-  the same when forwarded. Balances are written in words ("Lee family owes 30.00"), not signs.
+- **HTML.** Screens use HTML with every value escaped and a plain-text fallback if Telegram
+  rejects the formatting. Balances are written in words ("Lee family owes 30.00"), not signs.
   A report longer than Telegram's 4,096 characters is shortened, never refused: first the
   people under each family are left out, then whole lines are cut from the end, with a note
   saying so each time.

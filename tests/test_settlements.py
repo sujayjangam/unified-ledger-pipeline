@@ -429,7 +429,7 @@ async def test_each_saved_payback_sends_a_new_report_and_keeps_the_old(flow, mon
         async def send(**kwargs):
             # Sent below the card, only once it says the payback is saved.
             assert query.edit_message_text.await_args.args[0].endswith('✅ Payback saved.')
-            assert 'parse_mode' not in kwargs
+            assert kwargs["parse_mode"] == "HTML"
             return SimpleNamespace(message_id=report_id)
         flow.bot.send_message.side_effect = send
         await bot.handle_settle_button(update, flow)

@@ -359,5 +359,5 @@ async def test_the_saved_and_error_cards_show_the_account_and_owner(monkeypatch,
 
     text = query.edit_message_text.await_args.args[0]
     assert header in text
-    assert "**Account:** Cash" in text
-    assert "**Paid by:** Alice" in text
+    assert "Account: Cash" in text
+    assert "Paid by: <b>Alice" in text

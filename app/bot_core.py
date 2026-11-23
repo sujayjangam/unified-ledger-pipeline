@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from telegram import (
     BotCommand, Update, InlineKeyboardButton, InlineKeyboardMarkup, ForceReply, ReplyKeyboardMarkup,
 )
-from telegram.helpers import escape_markdown
+from app.services.tg_html import esc, b as bold, i as italic, quote, fold, to_plain, visible_len
 from telegram.error import BadRequest
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 import asyncio
@@ -191,25 +191,25 @@ async def handle_help_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 def format_period_summary(title: str, expenses: list, transfers: list) -> str:
     """Helper function to build a mobile-readable summary for any date range."""
-    lines = [f"{title}\n"]
+    lines = [f"{bold(title)}\n"]
     
     # 🛒 Calculate and format expenses
     tx_count = sum(count for _, count, _ in expenses) if expenses else 0
-    lines.append(f"🛒 **Expenses:** {tx_count} transactions")
+    lines.append(f"🛒 <b>Expenses:</b> {tx_count} transactions")
     
     if expenses:
         for curr, count, total_cents in expenses:
             # SUM over a BIGINT column comes back from Postgres as a Decimal, and money is
             # only ever formatted through format_cents (ADR-0004), never via a float.
-            lines.append(f"  • {curr}: **{format_cents(int(total_cents))}**")
+            lines.append(f"  • {esc(curr)}: <b>{format_cents(int(total_cents))}</b>")
     else:
         lines.append("  • No expenses.")
         
     # 🔄 Format transfers separately
-    lines.append("\n🔄 **Transfers:**")
+    lines.append("\n🔄 <b>Transfers:</b>")
     if transfers:
         for curr, count, total_cents in transfers:
-            lines.append(f"  • {curr}: **{format_cents(int(total_cents))}** ({count} tx)")
+            lines.append(f"  • {esc(curr)}: <b>{format_cents(int(total_cents))}</b> ({count} tx)")
     else:
         lines.append("  • No transfers.")
         
@@ -218,7 +218,7 @@ def format_period_summary(title: str, expenses: list, transfers: list) -> str:
 def format_category_summary(title: str, category_data: list) -> str:
     """Helper function to group category data by currency for mobile viewing."""
     if not category_data:
-        return f"{title}\n\nNo expenses found for this period. 🎉"
+        return f"{bold(title)}\n\nNo expenses found for this period. 🎉"
 
     # 1. Group the flat SQL data using a dictionary
     # Structure: { 'Food': [('SGD', 3, 4500), ('MYR', 1, 1500)] }
@@ -228,17 +228,17 @@ def format_category_summary(title: str, category_data: list) -> str:
             grouped_data[cat] = []
         grouped_data[cat].append((curr, count, total_cents))
 
-    lines = [f"{title}\n"]
+    lines = [f"{bold(title)}\n"]
 
     # 2. Build the visual text block
     for cat, currencies in grouped_data.items():
         # Calculate the total number of transactions for the whole category
         cat_tx_count = sum(c for _, c, _ in currencies)
-        lines.append(f"📁 **{cat}** ({cat_tx_count} tx)")
+        lines.append(f"📁 <b>{esc(cat)}</b> ({cat_tx_count} tx)")
 
         # List each currency total underneath the category header
         for curr, count, total_cents in currencies:
-            lines.append(f"  • {curr}: **{format_cents(int(total_cents))}**")
+            lines.append(f"  • {esc(curr)}: <b>{format_cents(int(total_cents))}</b>")
             
         lines.append("") # Blank line for readability
 
@@ -254,8 +254,7 @@ def format_category_summary(title: str, category_data: list) -> str:
 # Any household member may delete any entry. Every bot user is household (a database check),
 # so passing authorize() is the whole permission check.
 #
-# Sent as plain text (no parse_mode): descriptions are raw messages, and a stray _ or * in
-# one would otherwise break the whole reply.
+# HTML values are escaped; entity errors retry once as visible plain text.
 
 RECENT_PAGE_SIZE = 5
 RECENT_ERROR = "❌ Couldn't read the ledger, try again."
@@ -265,8 +264,7 @@ RECENT_GONE_TOAST = "That entry is already deleted."
 RECENT_DELETED_TOAST = "Deleted."
 RECENT_RESTORED_TOAST = "Restored."
 RECENT_ALREADY_LIVE_TOAST = "That entry is already back."
-# How much of a description a list line shows. The confirm screen shows more, so you can see
-# exactly what you are deleting.
+# Folded list details use the same description budget as the delete-confirm screen.
 _RECENT_LINE_DESC = 60
 _RECENT_CONFIRM_DESC = 300
 # Telegram refuses callback data over 64 bytes. Every id is a 36-character UUID today, which
@@ -290,7 +288,7 @@ def _short_date(iso: str, today) -> str:
 
 
 def _entry_title(entry: dict, today, desc_limit: int) -> str:
-    """'18 Nov · Dinner at hawker' plus markers: [Transfer], 🧳 tagged to a trip, ✂️ split."""
+    """'18 Nov · Dinner at hawker' plus [Transfer] and 🧳 trip markers."""
     title = f"{_short_date(entry['date'], today)} · {_short_text(entry['description'], desc_limit)}"
     # The bot records a transfer (a YouTrip top-up) as transaction_type 'Transfer', with
     # category 'YouTrip top-up'; only very old rows say 'Transfer' in the category.
@@ -298,8 +296,6 @@ def _entry_title(entry: dict, today, desc_limit: int) -> str:
         title += " [Transfer]"
     if entry.get("trip_name"):
         title += " 🧳"
-    if entry.get("split_count"):
-        title += " ✂️"
     return title
 
 
@@ -323,21 +319,41 @@ def _recent_list(entries: list, more: bool, offset: int, names: dict, today):
     if not entries:
         return RECENT_EMPTY, None
     first, last = offset + 1, offset + len(entries)
-    lines = [f"📊 Recent entries ({first}–{last})", ""]
+    lines = [f"📊 <b>Recent entries</b> ({first}–{last})", ""]
     delete_row = []
+    shown = 0
     for n, entry in enumerate(entries, first):
-        lines.append(f"{n}. {_entry_title(entry, today, _RECENT_LINE_DESC)}")
+        title = f"{n}. {bold(_entry_amount(entry))} · {esc(_short_date(entry['date'], today))}"
+        if "Transfer" in (entry.get("transaction_type"), entry.get("category")):
+            title += " [Transfer]"
+        if entry.get('trip_name'):
+            title += ' 🧳'
+        detail = _short_text(entry['description'], _RECENT_CONFIRM_DESC)
         who = _logged_by(entry, names)
-        lines.append(f"   {_entry_amount(entry)}" + (f" · logged by {who}" if who else ""))
+        notes = [f"Logged by {who}"] if who else []
+        if entry.get('split_count'):
+            notes.append(f"split {entry['split_count']} ways")
+        if notes:
+            detail += "\n" + " · ".join(notes)
+        group = title + "\n" + fold(detail)
+        # A folded entry is indivisible; do not leave a button for an omitted entry.
+        if visible_len("\n".join(lines + [group, BALS_CUT_SHORT])) > TELEGRAM_MESSAGE_LIMIT:
+            lines.append(BALS_CUT_SHORT)
+            break
+        lines.append(group)
+        shown += 1
         button = _recent_button(f"🗑 {n}", f"recent:ask:{offset}:{entry['transaction_id']}")
         if button:
             delete_row.append(button)
+    if shown:
+        lines[0] = f"📊 <b>Recent entries</b> ({first}–{offset + shown})"
     rows = [delete_row] if delete_row else []
     paging = []
     if offset > 0:
         paging.append(InlineKeyboardButton("◂ Newer", callback_data=f"recent:page:{max(0, offset - RECENT_PAGE_SIZE)}"))
-    if more:
-        paging.append(InlineKeyboardButton("Older ▸", callback_data=f"recent:page:{offset + RECENT_PAGE_SIZE}"))
+    if more or shown < len(entries):
+        next_offset = offset + (max(1, shown) if shown < len(entries) else RECENT_PAGE_SIZE)
+        paging.append(InlineKeyboardButton("Older ▸", callback_data=f"recent:page:{next_offset}"))
     if paging:
         rows.append(paging)
     return "\n".join(lines), (InlineKeyboardMarkup(rows) if rows else None)
@@ -345,18 +361,18 @@ def _recent_list(entries: list, more: bool, offset: int, names: dict, today):
 
 def _recent_confirm(entry: dict, offset: int, names: dict, today):
     """The second tap: the entry in full, and what deleting it changes."""
-    lines = ["Delete this entry?", "", _entry_title(entry, today, _RECENT_CONFIRM_DESC),
-             f"{_entry_amount(entry)} · {entry.get('category') or 'No category'}"]
+    lines = [bold("Delete this entry?"), "", esc(_entry_title(entry, today, _RECENT_CONFIRM_DESC)),
+             f"{bold(_entry_amount(entry))} · {esc(entry.get('category') or 'No category')}"]
     tags = []
     if entry.get("trip_name"):
         tags.append(f"{entry['trip_name']} trip")
     if entry.get("split_count"):
         tags.append(f"split {entry['split_count']} ways")
     if tags:
-        lines.append(" · ".join(tags))
+        lines.append(esc(" · ".join(tags)))
     who = _logged_by(entry, names)
     if who:
-        lines.append(f"Logged by {who}")
+        lines.append(esc(f"Logged by {who}"))
     # Only a split entry on a trip moves a trip balance; say /trip_bals only when it does.
     leaves = "the totals and /trip_bals" if entry.get("trip_name") and entry.get("split_count") else "the totals"
     lines += ["", f"It leaves {leaves}. You can undo it straight after."]
@@ -371,7 +387,7 @@ def _recent_confirm(entry: dict, offset: int, names: dict, today):
 def _recent_deleted(entry: dict, offset: int, today):
     """After a delete: what went, with Undo. Undo lasts until this message is redrawn; after
     that the entry never shows in /recent again (ADR-0050)."""
-    text = f"🗑 Deleted: {_entry_title(entry, today, _RECENT_LINE_DESC)}\n{_entry_amount(entry)}"
+    text = bold(f"🗑 Deleted: {_entry_title(entry, today, _RECENT_LINE_DESC)}") + "\n" + bold(_entry_amount(entry))
     keyboard = InlineKeyboardMarkup([[
         InlineKeyboardButton("↩ Undo", callback_data=f"recent:undo:{offset}:{entry['transaction_id']}"),
         InlineKeyboardButton("◂ Back to list", callback_data=f"recent:page:{offset}"),
@@ -406,7 +422,7 @@ async def recent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text(RECENT_ERROR)
         return
     text, keyboard = screen
-    await update.effective_message.reply_text(text, reply_markup=keyboard)
+    await _send_html(update.effective_message.reply_text, text, reply_markup=keyboard)
 
 
 def _parse_recent_callback(data: str):
@@ -517,7 +533,7 @@ async def handle_recent_button(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     text, keyboard = screen
     try:
-        await query.edit_message_text(text, reply_markup=keyboard)
+        await _send_html(query.edit_message_text, text, reply_markup=keyboard)
     except Exception as e:
         print(f"Could not redraw /recent: {e}")
     if changed_entry and changed_entry.get('split_count'):
@@ -530,8 +546,8 @@ async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     today_str = get_sgt_now().strftime('%Y-%m-%d')
     expenses, transfers = get_period_summary(today_str, today_str)
     
-    text = format_period_summary(f"📅 **Today's Summary** ({today_str})", expenses, transfers)
-    await update.message.reply_text(text, parse_mode="Markdown")
+    text = format_period_summary(f"📅 Today's Summary ({today_str})", expenses, transfers)
+    await _send_html(update.message.reply_text, text)
 
 async def week_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await authorize(update) is None:
@@ -545,8 +561,8 @@ async def week_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     expenses, transfers = get_period_summary(start_str, end_str)
     
-    text = format_period_summary(f"📆 **This Week** ({start_str} to {end_str})", expenses, transfers)
-    await update.message.reply_text(text, parse_mode="Markdown")
+    text = format_period_summary(f"📆 This Week ({start_str} to {end_str})", expenses, transfers)
+    await _send_html(update.message.reply_text, text)
 
 async def month_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await authorize(update) is None:
@@ -560,8 +576,8 @@ async def month_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     expenses, transfers = get_period_summary(start_str, end_str)
     
-    text = format_period_summary(f"🗓️ **This Month** ({start_str} to {end_str})", expenses, transfers)
-    await update.message.reply_text(text, parse_mode="Markdown")
+    text = format_period_summary(f"🗓️ This Month ({start_str} to {end_str})", expenses, transfers)
+    await _send_html(update.message.reply_text, text)
 
 # The category periods, in button order: callback key -> button label. The key is what a
 # "cat:<key>" button carries and what _category_text takes.
@@ -574,38 +590,38 @@ def _category_text(period: str) -> str:
     """The category summary for one period ("today", "week" or "month").
 
     One builder for the /cat_* commands and the "📊 By category" buttons, so a tap and a typed
-    command can never show different totals for the same period. Markdown, as before.
+    command can never show different totals for the same period. HTML, with escaped values.
     """
     today = get_sgt_now()
     end_str = today.strftime('%Y-%m-%d')
     if period == "today":
         cat_data = get_category_summary(end_str, end_str)
-        return format_category_summary(f"📊 **Today's Categories** ({end_str})", cat_data)
+        return format_category_summary(f"📊 Today's Categories ({end_str})", cat_data)
     if period == "week":
         start, title = get_week_start(today), "This Week's Categories"
     else:
         start, title = get_month_start(today), "This Month's Categories"
     start_str = start.strftime('%Y-%m-%d')
     cat_data = get_category_summary(start_str, end_str)
-    return format_category_summary(f"📊 **{title}** ({start_str} to {end_str})", cat_data)
+    return format_category_summary(f"📊 {title} ({start_str} to {end_str})", cat_data)
 
 
 async def cat_today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await authorize(update) is None:
         return
-    await update.message.reply_text(_category_text("today"), parse_mode="Markdown")
+    await _send_html(update.message.reply_text, _category_text("today"))
 
 
 async def cat_week_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await authorize(update) is None:
         return
-    await update.message.reply_text(_category_text("week"), parse_mode="Markdown")
+    await _send_html(update.message.reply_text, _category_text("week"))
 
 
 async def cat_month_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await authorize(update) is None:
         return
-    await update.message.reply_text(_category_text("month"), parse_mode="Markdown")
+    await _send_html(update.message.reply_text, _category_text("month"))
 
 
 async def category_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -641,19 +657,31 @@ async def handle_category_button(update: Update, context: ContextTypes.DEFAULT_T
     except Exception as e:
         print(f"Could not answer category tap: {e}")
     try:
-        await query.edit_message_text(text, parse_mode="Markdown")
+        await _send_html(query.edit_message_text, text)
     except Exception as e:
         # Nothing was changed, so a failed redraw (e.g. a double tap) loses nothing.
         print(f"Could not show category summary: {e}")
 
 # --- Confirmation-card state -------------------------------------------------------------
 #
-def _md(name: str) -> str:
-    """A name escaped for Telegram's Markdown, so a trip called "Beach_2026" shows as typed. An
-    unescaped _ or * starts a format that never closes, and Telegram then rejects the whole
-    message - on a card, that would stop every entry while the trip is on. Only for text sent with
-    parse_mode="Markdown"; button labels and toasts are plain text and need none."""
-    return escape_markdown(name, version=1)
+async def _send_html(send, *args, **kwargs):
+    """Retry only entity-parse failures, so formatting can never hide a card.
+
+    Keep the same bound send/edit and all routing/keyboard arguments on the retry.
+    Other BadRequests (including stale edits) retain their existing error handling.
+    """
+    try:
+        return await send(*args, parse_mode="HTML", **kwargs)
+    except BadRequest as exc:
+        message = str(exc).lower()
+        if "pars" not in message or "entit" not in message:
+            raise
+        print(f"Telegram HTML parse error; retrying plain text: {exc}")
+        if args:
+            args = (to_plain(args[0]), *args[1:])
+        else:
+            kwargs['text'] = to_plain(kwargs['text'])
+        return await send(*args, **kwargs)
 
 
 # The "/" menu, most used on a trip first (agreed 2026-11-21, #163). Telegram shows them in
@@ -761,7 +789,7 @@ TRIP_BANNER_WARNING = "⚠️ Couldn't update the pinned banner."
 def _trip_status(trip, today):
     """Use the same escaped status in the menu and the pinned reminder."""
     if trip:
-        return f"🧳 Trip mode is on: **{_md(trip.name)}** ({format_trip_dates(trip, today)})"
+        return f"🧳 Trip mode is on: <b>{esc(trip.name)}</b> ({format_trip_dates(trip, today)})"
     return "🏠 Trip mode is off."
 
 
@@ -817,7 +845,7 @@ async def trip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text(TRIP_CHANGE_ERROR)
         return
     db_done = time.perf_counter()
-    await update.effective_message.reply_text(status, parse_mode="Markdown", reply_markup=keyboard)
+    await _send_html(update.effective_message.reply_text, status, reply_markup=keyboard)
     print(f"/trip menu: auth {_ms(started, authed)}, db {_ms(authed, db_done)}, "
           f"send {_ms(db_done, time.perf_counter())}")
 
@@ -838,11 +866,10 @@ async def _remove_old_banner(bot, chat_id, message_id, previous) -> bool:
     except Exception as e:
         # Expected for a banner older than 48 hours; fall through to retiring it instead.
         print(f"Could not delete old trip banner, retiring it: {e}")
-    name = f" for **{_md(previous.name)}**" if previous else ""
+    name = f" for <b>{esc(previous.name)}</b>" if previous else ""
     try:
         await bot.unpin_chat_message(chat_id=chat_id, message_id=message_id)
-        await bot.edit_message_text(
-            chat_id=chat_id, message_id=message_id, text=f"🏠 Trip mode{name} ended.", parse_mode="Markdown")
+        await _send_html(bot.edit_message_text, chat_id=chat_id, message_id=message_id, text=f"🏠 Trip mode{name} ended.")
         return True
     except Exception as e:
         print(f"Could not retire old trip banner: {e}")
@@ -874,11 +901,7 @@ async def _update_trip_banner(bot, chat_id, participant_id, active, previous, to
     new_id = None
     if active:
         try:
-            message = await bot.send_message(
-                chat_id=chat_id,
-                text=_trip_status(active, today) + ". New entries are tagged to it. Send /trip to change.",
-                parse_mode="Markdown",
-            )
+            message = await _send_html(bot.send_message, chat_id=chat_id, text=_trip_status(active, today) + ". New entries are tagged to it. Send /trip to change.")
             new_id = message.message_id
             await bot.pin_chat_message(chat_id=chat_id, message_id=new_id, disable_notification=True)
         except Exception as e:
@@ -958,8 +981,7 @@ async def handle_trip_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         # An older menu tapped for the trip that is already on: collapse it like any other.
         try:
             # _trip_status, not the menu's status: no trip list was read for this tap.
-            await query.edit_message_text(
-                "✅ " + _trip_status(active, today), parse_mode="Markdown", reply_markup=None)
+            await _send_html(query.edit_message_text, "✅ " + _trip_status(active, today), reply_markup=None)
         except Exception as e:
             print(f"Could not redraw trip menu: {e}")
         return
@@ -974,7 +996,7 @@ async def handle_trip_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await query.edit_message_reply_markup(
                 reply_markup=_trip_keyboard(choices, active, offset, more, today))
         else:
-            await query.edit_message_text(status, parse_mode="Markdown", reply_markup=keyboard)
+            await _send_html(query.edit_message_text, status, reply_markup=keyboard)
     except Exception as e:
         # Telegram redraws cannot undo a committed switch or prevent its banner update.
         print(f"Could not redraw trip menu: {e}")
@@ -982,8 +1004,7 @@ async def handle_trip_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if changed:
         if not await _update_trip_banner(context.bot, int(sender.telegram_user_id), sender.id, active, previous, today):
             try:
-                await query.edit_message_text(
-                    status + "\n\n" + TRIP_BANNER_WARNING, parse_mode="Markdown", reply_markup=keyboard)
+                await _send_html(query.edit_message_text, status + "\n\n" + italic(TRIP_BANNER_WARNING), reply_markup=keyboard)
             except Exception as e:
                 print(f"Could not show trip banner warning: {e}")
     # Where the time goes, so slowness is measured rather than guessed (Cloud Run logs this too).
@@ -1050,16 +1071,16 @@ def _bals_picker(choices, offset: int, more: bool, today):
 
 
 def _cut_bals_lines(lines):
-    """Keep a prefix of whole lines, reserving space for the truncation notice."""
-    if len('\n'.join(lines)) <= TELEGRAM_MESSAGE_LIMIT:
+    """Keep whole line-groups (including folded quotes), reserving a truncation note."""
+    if visible_len('\n'.join(lines)) <= TELEGRAM_MESSAGE_LIMIT:
         return lines, len(lines)
     kept = []
     size = len(BALS_CUT_SHORT)
     for line in lines:
-        if size + len(line) + 1 > TELEGRAM_MESSAGE_LIMIT:
+        if size + visible_len(line) + 1 > TELEGRAM_MESSAGE_LIMIT:
             break
         kept.append(line)
-        size += len(line) + 1
+        size += visible_len(line) + 1
     return kept + [BALS_CUT_SHORT], len(kept)
 
 
@@ -1067,15 +1088,14 @@ def _bals_screen(trip: Trip, directory: Directory, today, currency=None, screen=
     """One screen of a trip's balances, for one currency: 'cur' (the main screen), 'pay'
     (all payments, with their "Mark paid" buttons) or 'pbk' (paybacks). ADR-0056.
 
-    Sent as plain text (no parse_mode), so a name with _ or * can't break it and it can be
-    forwarded as it is. Bills and paybacks are read fresh on every draw.
+    Sent as HTML with every value escaped and a plain-text fallback. Bills and paybacks are read fresh on every draw.
     get_trip_split_entries catches its own errors and returns None for a failed read, which
     is shown as an error and never as "nobody owes anything".
 
     The "Mark paid" callback keeps the payment's number in the whole trip_payments list (all
     currencies), so _new_settlement and buttons on older reports work unchanged.
     """
-    header = f"🧳 {trip.name} · {format_trip_dates(trip, today)}"
+    header = f"🧳 {bold(trip.name)} · {esc(format_trip_dates(trip, today))}"
     entries = get_trip_split_entries(trip.id)
     settlements = get_trip_settlements(trip.id)
     other = [InlineKeyboardButton("Other trip", callback_data="bals:page:0")]
@@ -1092,8 +1112,8 @@ def _bals_screen(trip: Trip, directory: Directory, today, currency=None, screen=
     selected = [(n, p) for n, (c, p) in enumerate(payments, 1) if c == currency]
     rows = []
     if screen == 'pay':
-        lines = [f"🧳 {trip.name} · {currency} · to settle",
-                 *trip_payment_lines(entries, names, families, currency, settlements)]
+        lines = [f"🧳 {bold(trip.name)} · {esc(currency)} · to settle",
+                 *trip_payment_lines(entries, names, families, currency, settlements, html=True)]
         lines, kept = _cut_bals_lines(lines)
         # The first body lines correspond one-to-one to selected payments. Position,
         # rather than matching text, keeps cut or duplicate names from enabling a button.
@@ -1101,11 +1121,11 @@ def _bals_screen(trip: Trip, directory: Directory, today, currency=None, screen=
                                       callback_data=f"settle:new:{trip.id}:{n}:{p.cents}")]
                 for n, p in selected[:max(0, kept - 1)]][:99]
     elif screen == 'pbk':
-        lines, _ = _cut_bals_lines([f"🧳 {trip.name} · {currency} · paybacks",
-                                   *trip_payback_lines(entries, names, families, currency, settlements)])
+        lines, _ = _cut_bals_lines([f"🧳 {bold(trip.name)} · {esc(currency)} · paybacks",
+                                   *trip_payback_lines(entries, names, families, currency, settlements, html=True)])
     else:
         lines, _ = _cut_bals_lines([header, *trip_balance_lines(
-            entries, names, families, settlements, currency)])
+            entries, names, families, settlements, currency, html=True)])
         if len(currencies) > 1:
             buttons = [InlineKeyboardButton(
                 ('✓ ' if c == currency else '') + f"{c} ({sum(cur == c for cur, _ in payments)})",
@@ -1146,7 +1166,7 @@ async def trip_bals_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text(BALS_ERROR)
         return
     text, keyboard = _bals_screen(trip, directory, today) if trip else _bals_picker(choices, 0, more, today)
-    message = await update.effective_message.reply_text(text, reply_markup=keyboard)
+    message = await _send_html(update.effective_message.reply_text, text, reply_markup=keyboard)
     _bounded_put(context.user_data.setdefault('bals_reports', {}), message.message_id, directory)
 
 
@@ -1204,7 +1224,7 @@ async def handle_bals_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except Exception as e:
         print(f"Could not answer balances tap: {e}")
     try:
-        await query.edit_message_text(text, reply_markup=keyboard)
+        await _send_html(query.edit_message_text, text, reply_markup=keyboard)
         _bounded_put(context.user_data.setdefault('bals_reports', {}), query.message.message_id, directory)
     except Exception as e:
         # Nothing was changed, so a failed redraw (or "message is not modified") loses nothing.
@@ -1349,8 +1369,8 @@ def _account_lines(transaction: dict) -> str:
     so no database read is needed.
     """
     return (
-        f"💳 **Account:** {transaction.get('payment_method', 'Unspecified')}\n"
-        f"👤 **Paid by:** {_md(transaction.get('paid_by') or transaction.get('account_owner') or 'Unspecified')}\n"
+        f"💳 Account: {esc(transaction.get('payment_method', 'Unspecified'))}\n"
+        f"👤 Paid by: {bold(transaction.get('paid_by') or transaction.get('account_owner') or 'Unspecified')}\n"
     )
 
 
@@ -1378,12 +1398,12 @@ def _split_lines(transaction: dict) -> str:
         # a payer (resolve_payment sets one), so the name is always there.
         row = rows[0]
         payer = transaction.get('paid_by') or transaction.get('account_owner')
-        return f"👥 **Split:** {_md(row['name'])} owes {_md(payer)} {format_cents(row['share_cents'])}\n"
+        return f"👥 Split: {esc(row['name'])} owes {esc(payer)} {format_cents(row['share_cents'])}\n"
     # Keep the unit on the pending snapshot so the saved receipt uses the same wording.
     by_count = 'count' in rows[0]
     unit = (transaction.get('split_menu') or {}).get('unit') or 'count'
-    heading = f"Split by {_md(unit)}" if by_count else "Split"
-    lines = [f"👥 **{heading} between {len(rows)}:**"]
+    heading = f"Split by {esc(unit)}" if by_count else "Split"
+    lines = [f"👥 {heading} between {len(rows)}:"]
     groups = {}
     for row in rows:
         groups.setdefault(row.get('family') or None, []).append(row)
@@ -1393,29 +1413,26 @@ def _split_lines(transaction: dict) -> str:
         labels.append(None)
     for label in labels:
         if label:
-            lines.append(_md(label))
+            lines.append(esc(label))
         for row in groups[label]:
             count = f"{row['count']}, " if by_count else ""
             suffix = (' ✏️' if row['set'] else " (what's left)") if 'set' in row else ''
-            lines.append(f" • {_md(row['name'])}: {count}{format_cents(row['share_cents'])}{suffix}")
+            lines.append(f" • {esc(row['name'])}: {count}{format_cents(row['share_cents'])}{suffix}")
     return "\n".join(lines) + "\n"
 
 
 def _live_split_lines(transaction: dict) -> str:
     """Keep reading warnings on live cards only, never on the saved receipt."""
-    return _split_lines(transaction) + "".join(f"{_md(warning)}\n" for warning in transaction.get('split_warnings') or ())
+    return _split_lines(transaction) + "".join(f"{italic(warning)}\n" for warning in transaction.get('split_warnings') or ())
 
 
 def _live_account_lines(transaction: dict) -> str:
-    """Show the payer warning below Paid by on live cards, never the saved card.
+    """Account lines for a live card; its payer footnote is appended after the body.
 
     This display-only warning never changes buttons or becomes a stored column.
     Escape it because payment rules can include participant and account names.
     """
-    lines = _account_lines(transaction)
-    if transaction.get('payer_warning'):
-        lines += f"{_md(transaction['payer_warning'])}\n"
-    return lines
+    return _account_lines(transaction)
 
 
 def _date_lines(transaction: dict) -> str:
@@ -1427,9 +1444,9 @@ def _date_lines(transaction: dict) -> str:
     flagged date can always still be saved (ADR-0030). .get() because an entry built any
     other way (older tests, a card stashed before this shipped) has no such key.
     """
-    lines = f"📅 **Date:** {transaction.get('date')}\n"
+    lines = f"📅 Date: {esc(transaction.get('date'))}\n"
     if transaction.get('date_warning'):
-        lines += f"⚠️ {transaction['date_warning']}\n"
+        lines += italic('⚠️ ' + transaction['date_warning']) + '\n'
     return lines
 
 
@@ -1464,8 +1481,8 @@ def _duplicate_banner(duplicate: dict, amount_text: str, sender_id: int, directo
         who = f"{amount_text} was logged {age}."
 
     return (
-        f"⚠️ **Possible duplicate.** {who}\n"
-        f"📝 **Earlier entry:** {duplicate.get('description')}\n\n"
+        italic("⚠️ Possible duplicate. " + who) + "\n"
+        + italic("📝 Earlier entry: " + str(duplicate.get('description'))) + "\n\n"
     )
 
 
@@ -1520,7 +1537,7 @@ def _people_keyboard(people, pick_prefix: str, back_data: str, marked_ids=(), pe
     Shared on purpose: "Paid by" and "Add split" use their own prefixes, and splits can mark
     more than one person. Each button sends `<pick_prefix>:<participant id>`,
     which stays far under Telegram's 64-byte limit however long a name is. People in
-    `marked_ids` get a ✅. Labels are plain text, so names need no Markdown escaping.
+    `marked_ids` get a ✅. Labels are plain text, so names need no HTML escaping.
     """
     buttons = [
         InlineKeyboardButton(("✅ " if p.id in marked_ids else "") + p.display_name,
@@ -1609,13 +1626,19 @@ def _trip_lines(transaction: dict) -> str:
     """The card's Trip line. Nothing when no trip was on, so everyday cards look as they always
     have. .get() because a card stashed before trips shipped has none of these keys."""
     if transaction.get('trip_warning'):
-        return f"{transaction['trip_warning']}\n"
+        return italic(transaction['trip_warning']) + '\n'
     offer = transaction.get('trip_offer')
     if not offer:
         return ""
     if transaction.get('trip_id'):
-        return f"🧳 **Trip:** {_md(offer['name'])}\n"
-    return "🧳 **Trip:** not a trip entry\n"
+        return f"🧳 Trip: {esc(offer['name'])}\n"
+    return "🧳 Trip: not a trip entry\n"
+
+
+def _payer_footnote(transaction: dict) -> str:
+    """Payer inference is a final footnote, absent on saved receipts."""
+    warning = transaction.get('payer_warning')
+    return "\n" + italic(warning) if warning else ""
 
 
 def _pending_card_text(transaction: dict) -> str:
@@ -1627,16 +1650,17 @@ def _pending_card_text(transaction: dict) -> str:
     banner = transaction.get('card_banner', "")
     if transaction.get('closed_account'):
         # Under the duplicate banner when both apply - one card, every reason to look twice.
-        banner += f"{CLOSED_CARD_WARNING}\n\n"
+        banner += italic(CLOSED_CARD_WARNING) + "\n\n"
     return banner + (
-        f"Please confirm your **{transaction.get('transaction_type', 'Expense')}**:\n\n"
-        f"💰 **Amount:** {_display_amount(transaction)}\n"
-        f"🏷️ **Category:** {transaction.get('category')}\n"
+        f"<b>Please confirm your {esc(transaction.get('transaction_type', 'Expense'))}</b>\n\n"
+        f"💰 Amount: {bold(_display_amount(transaction))}\n"
+        f"🏷️ Category: {esc(transaction.get('category'))}\n"
         f"{_live_account_lines(transaction)}"
         f"{_live_split_lines(transaction)}"
         f"{_trip_lines(transaction)}"
-        f"📝 **Notes:** {transaction.get('description', 'None')}\n"
+        f"{quote('📝 ' + str(transaction.get('description', 'None')))}\n"
         f"{_date_lines(transaction)}"
+        f"{_payer_footnote(transaction)}"
     )
 
 
@@ -1681,11 +1705,8 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # The V1 Gatekeeper to politely reject multiple expenses
     if len(transactions_list) > 1:
-        await status_msg.edit_text(
-            "⚠️ **Hold on!** I detected multiple expenses.\n\n"
-            "To keep the ledger perfectly accurate for V1, please send just **one expense at a time**. 🎙️",
-            parse_mode="Markdown"
-        )
+        await _send_html(status_msg.edit_text, "<i>⚠️ Hold on! I detected multiple expenses.</i>\n\n"
+            "To keep the ledger perfectly accurate for V1, please send just <b>one expense at a time</b>. 🎙️")
         return
 
     # Isolate the single approved transaction
@@ -1797,8 +1818,7 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # Send the clean summary with its buttons attached - Confirm/Cancel, or Save anyway/Cancel if
     # flagged, plus the trip toggle when a trip is on
-    await status_msg.edit_text(_pending_card_text(single_transaction), reply_markup=_keyboard_for(single_transaction),
-                               parse_mode="Markdown")
+    await _send_html(status_msg.edit_text, _pending_card_text(single_transaction), reply_markup=_keyboard_for(single_transaction))
 
     # Stash the transaction against *this card's* message_id, only once the card exists - the
     # button press that comes back carries the message_id and nothing else, so that is the
@@ -1833,7 +1853,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return # Stop execution if transcription fails
 
         # Update the user that we are moving to the next step
-        await status_msg.edit_text(f"📝 *Transcript:* {transcript_text}\n\n🧠 Extracting data...", parse_mode="Markdown")
+        await _send_html(status_msg.edit_text, f"📝 <b>Transcript:</b> {esc(transcript_text)}\n\n🧠 Extracting data...")
 
         # From here on a transcript is just text - identical to a typed message
         await process_expense_text(update, context, transcript_text, status_msg, directory)
@@ -2006,8 +2026,8 @@ async def _settle_message(update, context, raw_text, status_msg, directory):
                     card.update(clears_cents=cleared, fx_rate=rate[0], fx_rate_date=rate[1],
                                 fx_source='frankfurter', fx_pair=pair)
                     card = settle_card_state(card)
-        text, rows = build_settle_card(card)
-        await status_msg.edit_text(text, reply_markup=_su_markup(rows))
+        text, rows = build_settle_card(card, html=True)
+        await _send_html(status_msg.edit_text, text, reply_markup=_su_markup(rows))
         _bounded_put(context.user_data.setdefault('pending_settle_ups', {}), status_msg.message_id, card)
         if card['result'].needs_rate:
             await _su_prompt(update.effective_message, context, status_msg.message_id, card)
@@ -2051,7 +2071,7 @@ async def handle_settle_up_button(update: Update, context: ContextTypes.DEFAULT_
                 return
             # Only a button currently displayed can act. This also rejects negative
             # indexes and fabricated Confirm callbacks on unanswered questions.
-            _, displayed = build_settle_card(card)
+            _, displayed = build_settle_card(card, html=True)
             if query.data not in {data for row in displayed for _, data in row}:
                 return
             action = query.data.split(':')[1]
@@ -2064,8 +2084,8 @@ async def handle_settle_up_button(update: Update, context: ContextTypes.DEFAULT_
                 # Set the guard first: if answer() itself fails, it must not be retried.
                 answered = True
                 await query.answer()
-                text, rows = build_settle_card({**card, 'saving': True})
-                await query.edit_message_text(text, reply_markup=_su_markup(rows))
+                text, rows = build_settle_card({**card, 'saving': True}, html=True)
+                await _send_html(query.edit_message_text, text, reply_markup=_su_markup(rows))
                 result = card['result']
                 try:
                     add_settlement(from_id=result.giver_id, to_id=result.receiver_id, for_id=None,
@@ -2079,8 +2099,8 @@ async def handle_settle_up_button(update: Update, context: ContextTypes.DEFAULT_
                                    fx_source=card.get('fx_source'), needs_statement_check=result.paid_currency != result.currency)
                 except Exception as exc:
                     print(f'Could not save settle: {type(exc).__name__}')
-                    text, rows = build_settle_card(card)
-                    await query.edit_message_text(text + "\nCouldn't save. Try Confirm again.", reply_markup=_su_markup(rows))
+                    text, rows = build_settle_card(card, html=True)
+                    await _send_html(query.edit_message_text, text + "\nCouldn't save. Try Confirm again.", reply_markup=_su_markup(rows))
                     return
                 # Once persisted, resolve even if Telegram's final edit fails: retrying
                 # an old button must not create a second write or reopen the card.
@@ -2089,8 +2109,8 @@ async def handle_settle_up_button(update: Update, context: ContextTypes.DEFAULT_
                 # Saved: the amount prompt is now clutter. Only after a successful save,
                 # so a failed save (returned above) keeps it for another try.
                 await _clear_settle_prompt(context, query.message.chat_id, card_id)
-                text, _ = build_settle_card({**card, 'outcome': 'saved'})
-                await query.edit_message_text(text, reply_markup=None)
+                text, _ = build_settle_card({**card, 'outcome': 'saved'}, html=True)
+                await _send_html(query.edit_message_text, text, reply_markup=None)
                 # An everyday payback (no trip) has no /trip_bals to show.
                 if result.trip_id is not None:
                     await _send_fresh_balances(context, query.message.chat_id,
@@ -2099,8 +2119,8 @@ async def handle_settle_up_button(update: Update, context: ContextTypes.DEFAULT_
                     await _refresh_saved_trip_sheet(result.trip_id)
                 return
             if action == 'cancel':
-                text, _ = build_settle_card({**card, 'outcome': 'cancelled'})
-                await query.edit_message_text(text, reply_markup=None)
+                text, _ = build_settle_card({**card, 'outcome': 'cancelled'}, html=True)
+                await _send_html(query.edit_message_text, text, reply_markup=None)
                 pending.pop(card_id)
                 _mark_card_resolved(context, card_id, 'cancelled')
                 await _clear_settle_prompt(context, query.message.chat_id, card_id)
@@ -2148,8 +2168,8 @@ async def handle_settle_up_button(update: Update, context: ContextTypes.DEFAULT_
                 # dead, as the payer button's "no account fits" learned (show_alert).
                 toast, alert = str(exc), True
                 return
-            text, rows = build_settle_card(changed)
-            await query.edit_message_text(text, reply_markup=_su_markup(rows))
+            text, rows = build_settle_card(changed, html=True)
+            await _send_html(query.edit_message_text, text, reply_markup=_su_markup(rows))
             pending[card_id] = changed
             if changed['result'].needs_rate and changed.get('view') == 'card':
                 await _su_prompt(query.message, context, card_id, changed)
@@ -2213,9 +2233,8 @@ async def _settle_up_reply(update, context):
         # card stays as it was, with the error in a replacement prompt.
         try:
             changed = settle_card_state(changed)
-            text, rows = build_settle_card(changed)
-            await context.bot.edit_message_text(chat_id=chat_id, message_id=card_id,
-                                                text=text, reply_markup=_su_markup(rows))
+            text, rows = build_settle_card(changed, html=True)
+            await _send_html(context.bot.edit_message_text, chat_id=chat_id, message_id=card_id, text=text, reply_markup=_su_markup(rows))
         except SettleRefused as exc:
             await _su_prompt(message, context, card_id, card, str(exc), replied.message_id)
             return True
@@ -2245,10 +2264,10 @@ def _sgd_line_text(line, names, button=False):
     """The button and report use the same order and the same whole-cent amount."""
     owing, receiver = unit_name(line.from_unit, names), names[line.to_person]
     if line.sgd_cents == 0:
-        return f'{owing} and {receiver} are even'
+        return (f'{owing} and {receiver} are even' if button else esc(f'{owing} and {receiver} are even'))
     verb = '→' if button else 'pays'
     return f'{owing} {verb} {receiver} · {format_money(line.sgd_cents, "SGD")}' if button else (
-        f'{owing} {verb} {receiver} {format_money(line.sgd_cents, "SGD")}')
+        f'{esc(owing)} {verb} {esc(receiver)} {bold(format_money(line.sgd_cents, "SGD"))}')
 
 
 def _sgd_shortcut_notes(line, names):
@@ -2263,20 +2282,20 @@ def _sgd_screen(trip, directory, data=None):
     """Render stored agreements only; automatic lookups belong solely to the opening tap."""
     entries, paid, rates, payments, needed = data or _sgd_data(trip)
     names = {p.id: p.display_name for p in directory.participants}
-    lines = [f'🧳 {trip.name} · all in SGD']
+    lines = [f'🧳 {bold(trip.name)} · all in SGD']
     rows = [[InlineKeyboardButton(f'✏️ {c} rate', callback_data=f'sgd:rate:{trip.id}:{c}')
              for c in needed[i:i + 4]] for i in range(0, len(needed), 4)]
     for currency in needed:
-        lines.append(rate_display(currency, rates[currency], names) if currency in rates else
-                     f'⚠️ No {currency} rate yet. Tap ✏️ {currency} rate.')
+        lines.append(esc(rate_display(currency, rates[currency], names)) if currency in rates else
+                     italic(f'⚠️ No {currency} rate yet. Tap ✏️ {currency} rate.'))
     # A split bill with no payer is left out of trip_payments, so without this line the screen
     # could say "Everyone is settled" while that bill was never counted (Codex review, #171).
     # Same words as the main screen; put above the lines so the ✅ buttons still match them.
     no_payer = len(unit_balances(entries, dict(trip.families), paid).no_payer)
     if no_payer:
-        lines.append(NO_PAYER_LINE.format(count=no_payer,
+        lines.append(italic(NO_PAYER_LINE.format(count=no_payer,
                                           entries='entry has' if no_payer == 1 else 'entries have',
-                                          they='it is' if no_payer == 1 else 'they are'))
+                                          they='it is' if no_payer == 1 else 'they are')))
     lines.append('')
     offset = len(lines)
     suggestions = ()
@@ -2286,7 +2305,9 @@ def _sgd_screen(trip, directory, data=None):
         if not suggestions:
             lines.append('Everyone is settled.')
         # After the payment lines, so the ✅ buttons still match the lines they follow.
-        lines.extend(note for line in suggestions for note in _sgd_shortcut_notes(line, names))
+        notes = [note for line in suggestions for note in _sgd_shortcut_notes(line, names)]
+        if notes:
+            lines.append(fold('\n'.join(notes)))
     lines, kept = _cut_bals_lines(lines)
     rows.extend([InlineKeyboardButton('✅ ' + _sgd_line_text(line, names, True),
                                      callback_data=f'sgd:new:{trip.id}:{i}:{line.sgd_cents}')]
@@ -2323,7 +2344,7 @@ async def _open_sgd_screen(update, context):
         await query.answer(str(exc) if isinstance(exc, _SettlementUnavailable) else BALS_ERROR)
         return
     await query.answer()
-    await query.edit_message_text(text, reply_markup=keyboard)
+    await _send_html(query.edit_message_text, text, reply_markup=keyboard)
 
 
 def _sgd_prompt(trip, currency, row, names):
@@ -2410,7 +2431,7 @@ async def _send_fresh_sgd(context, chat_id, sender_id, trip_id, directory):
             if trip is None:
                 return
             text, keyboard = _sgd_screen(trip, directory)
-            sent = await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard)
+            sent = await _send_html(context.bot.send_message, chat_id=chat_id, text=text, reply_markup=keyboard)
             _bounded_put(context.user_data.setdefault('bals_reports', {}), sent.message_id, directory)
         except Exception as exc:
             print(f'Could not send fresh SGD balances: {type(exc).__name__}')
@@ -2433,7 +2454,7 @@ def _sgd_keyboard(card, people=False):
 def _sgd_card_text(card):
     """Explain the gross debts and retained reverse money behind the net cash transfer."""
     names, line = card['names'], card['line']
-    lines = ['💱 ' + _sgd_line_text(line, names)]
+    lines = ['💱 ' + bold(to_plain(_sgd_line_text(line, names)))]
     for part in line.parts:
         amount = format_money(part.cents_in_currency, part.currency)
         if part.currency != 'SGD':
@@ -2451,9 +2472,9 @@ def _sgd_card_text(card):
             amount = f'{amount} of what {debt}, passed on by {names[part.giver]}'
         elif part.payment.to_unit[1] != line.to_person:
             amount = f'{amount} that {debt}'
-        lines.append(amount)
-    lines.extend(_sgd_shortcut_notes(line, names))
-    lines.append('Paid by: ' + names.get(card['from_id'], 'Choose who paid'))
+        lines.append(esc(amount))
+    lines.extend(esc(note) for note in _sgd_shortcut_notes(line, names))
+    lines.append('Paid by: ' + esc(names.get(card['from_id'], 'Choose who paid')))
     return '\n'.join(lines)
 
 
@@ -2522,7 +2543,7 @@ async def _new_sgd_settlement(update, context):
         await query.answer(str(exc) if isinstance(exc, _SettlementUnavailable) else BALS_ERROR)
         return
     await query.answer()
-    sent = await query.message.reply_text(_sgd_card_text(card), reply_markup=_sgd_keyboard(card, payer is None))
+    sent = await _send_html(query.message.reply_text, _sgd_card_text(card), reply_markup=_sgd_keyboard(card, payer is None))
     _bounded_put(context.user_data.setdefault('pending_settlements', {}), sent.message_id, card)
 
 
@@ -2632,12 +2653,11 @@ async def _sgd_tap(query, context):
             _save_sgd_parts(card)
         except Exception as exc:
             print(f'Could not save SGD payback: {type(exc).__name__}')
-            await query.edit_message_text(_sgd_card_text(card) + "\nCouldn't save. Try Confirm again.",
-                                          reply_markup=_sgd_keyboard(card))
+            await _send_html(query.edit_message_text, _sgd_card_text(card) + "\nCouldn't save. Try Confirm again.", reply_markup=_sgd_keyboard(card))
             return
         pending.pop(message_id)
         _mark_card_resolved(context, message_id, 'saved')
-        await query.edit_message_text(_sgd_card_text(card) + '\n✅ Paid back.', reply_markup=None)
+        await _send_html(query.edit_message_text, _sgd_card_text(card) + '\n✅ Paid back.', reply_markup=None)
         await _send_fresh_sgd(context, query.message.chat_id, card['entered_by_participant_id'],
                               card['trip_id'], card['directory'])
         await _refresh_saved_trip_sheet(card['trip_id'])
@@ -2649,7 +2669,7 @@ async def _sgd_tap(query, context):
             await query.answer('Some of this is already saved. Tap Confirm to finish it.')
             return
         await query.answer()
-        await query.edit_message_text(_sgd_card_text(card) + '\n❌ Cancelled.', reply_markup=None)
+        await _send_html(query.edit_message_text, _sgd_card_text(card) + '\n❌ Cancelled.', reply_markup=None)
         pending.pop(message_id)
         _mark_card_resolved(context, message_id, 'cancelled')
         return
@@ -2668,7 +2688,7 @@ async def _sgd_tap(query, context):
         await query.answer(SETTLE_GONE)
         return
     await query.answer()
-    await query.edit_message_text(_sgd_card_text(changed), reply_markup=_sgd_keyboard(changed, action == 'who'))
+    await _send_html(query.edit_message_text, _sgd_card_text(changed), reply_markup=_sgd_keyboard(changed, action == 'who'))
     pending[message_id] = changed
 
 
@@ -2770,8 +2790,7 @@ async def _new_settlement(update, context):
     await query.answer(toast)
     if toast:
         return
-    message = await query.message.reply_text(settlement_card_text(card),
-                                            reply_markup=_settle_keyboard(card) if payer else _settle_people(card))
+    message = await _send_html(query.message.reply_text, settlement_card_text(card, html=True), reply_markup=_settle_keyboard(card) if payer else _settle_people(card))
     _bounded_put(context.user_data.setdefault('pending_settlements', {}), message.message_id, card)
 
 
@@ -2827,20 +2846,19 @@ async def _settle_tap(query, context):
         except Exception as e:
             print(f"Could not save payback: {e}")
             _bounded_put(pending, message_id, card)
-            await query.edit_message_text(settlement_card_text(card) + "\nCouldn't save. Try Confirm again.",
-                                          reply_markup=_settle_keyboard(card))
+            await _send_html(query.edit_message_text, settlement_card_text(card, html=True) + "\nCouldn't save. Try Confirm again.", reply_markup=_settle_keyboard(card))
             return
         # False from the writer means this key was saved before: it is still a success.
         _mark_card_resolved(context, message_id, 'saved')
         await _clear_settlement_prompt(context, query.message.chat_id, message_id)
-        await query.edit_message_text(settlement_card_text(card) + "\n✅ Payback saved.", reply_markup=None)
+        await _send_html(query.edit_message_text, settlement_card_text(card, html=True) + "\n✅ Payback saved.", reply_markup=None)
         await _send_fresh_balances(context, query.message.chat_id, card['entered_by_participant_id'],
                                    card['trip_id'], card['directory'], card['clears_currency'])
         await _refresh_saved_trip_sheet(card['trip_id'])
         return
     if action == 'cancel':
         await query.answer()
-        await query.edit_message_text(settlement_card_text(card) + "\n❌ Cancelled.", reply_markup=None)
+        await _send_html(query.edit_message_text, settlement_card_text(card, html=True) + "\n❌ Cancelled.", reply_markup=None)
         pending.pop(message_id)
         _mark_card_resolved(context, message_id, 'cancelled')
         await _clear_settlement_prompt(context, query.message.chat_id, message_id)
@@ -2863,7 +2881,7 @@ async def _settle_tap(query, context):
         return
     await query.answer()
     keyboard = _settle_people(changed) if action == 'who' else _settle_keyboard(changed)
-    await query.edit_message_text(settlement_card_text(changed), reply_markup=keyboard)
+    await _send_html(query.edit_message_text, settlement_card_text(changed, html=True), reply_markup=keyboard)
     pending[message_id] = changed  # Only remember what Telegram actually showed.
 
 
@@ -2900,8 +2918,7 @@ async def _settlement_reply(update, context) -> bool:
             await _settlement_prompt(message, context, card_id, side, str(e), replied.message_id)
             return True
         try:
-            await context.bot.edit_message_text(chat_id=message.chat_id, message_id=card_id,
-                                                text=settlement_card_text(changed), reply_markup=_settle_keyboard(changed))
+            await _send_html(context.bot.edit_message_text, chat_id=message.chat_id, message_id=card_id, text=settlement_card_text(changed, html=True), reply_markup=_settle_keyboard(changed))
         except Exception as exc:
             print(f'Payback amount redraw failed: {exc}')
             await _settlement_prompt(message, context, card_id, side,
@@ -2975,7 +2992,7 @@ async def _send_fresh_balances(context, chat_id, sender_id, trip_id, directory, 
                 # /trip_bals can be asked for again.
                 print('Could not read balances after a payback; no new report sent.')
                 return
-            sent = await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard)
+            sent = await _send_html(context.bot.send_message, chat_id=chat_id, text=text, reply_markup=keyboard)
         except Exception as exc:
             # The payback is already saved; a report failure must not disguise that success.
             print(f'Could not send fresh balances: {exc}')
@@ -3064,9 +3081,7 @@ async def _split_amounts_reply(update, context, directory) -> bool:
             error = str(e)
         else:
             try:
-                await context.bot.edit_message_text(
-                    chat_id=message.chat_id, message_id=card_id, text=_pending_card_text(changed),
-                    reply_markup=_keyboard_for(changed), parse_mode='Markdown')
+                await _send_html(context.bot.edit_message_text, chat_id=message.chat_id, message_id=card_id, text=_pending_card_text(changed), reply_markup=_keyboard_for(changed))
             except Exception as e:
                 print(f'❌ Split amounts redraw failed: {e}')
                 error = "⚠️ Couldn't change the split, try again."
@@ -3242,8 +3257,7 @@ async def _payer_tap(query, context: ContextTypes.DEFAULT_TYPE, message_id: int)
     # the new payer. If the redraw fails, the card still shows the old one, so the entry must
     # keep it too: Confirm saves exactly what the card showed. (Same order as the trip toggle.)
     try:
-        await query.edit_message_text(_pending_card_text(changed), reply_markup=_keyboard_for(changed),
-                                      parse_mode="Markdown")
+        await _send_html(query.edit_message_text, _pending_card_text(changed), reply_markup=_keyboard_for(changed))
     except Exception as e:
         print(f"❌ Paid-by redraw failed: {e}")
         await query.answer("⚠️ Couldn't change who paid, try again.")
@@ -3303,8 +3317,7 @@ async def _account_tap(query, context: ContextTypes.DEFAULT_TYPE, message_id: in
     changed = (dict(pending) if account.id == pending.get('account_id') else
                change_account(pending, pending['payer_menu']['directory'], account))
     try:
-        await query.edit_message_text(_pending_card_text(changed), reply_markup=_keyboard_for(changed),
-                                      parse_mode="Markdown")
+        await _send_html(query.edit_message_text, _pending_card_text(changed), reply_markup=_keyboard_for(changed))
     except Exception as e:
         print(f"❌ Change-card redraw failed: {e}")
         await query.answer("⚠️ Couldn't change card, try again.")
@@ -3389,7 +3402,7 @@ async def _split_tap(query, context: ContextTypes.DEFAULT_TYPE, message_id: int)
 
     keyboard = _keyboard_for(changed) if action in ('done', 'none') else _split_keyboard(changed)
     try:
-        await query.edit_message_text(_pending_card_text(changed), reply_markup=keyboard, parse_mode="Markdown")
+        await _send_html(query.edit_message_text, _pending_card_text(changed), reply_markup=keyboard)
     except Exception as e:
         # Telegram refuses identical redraws, including Done or opening an unchanged menu.
         # That still means the card already shows the copy we intend to keep.
@@ -3516,18 +3529,18 @@ async def _card_tap(query, context: ContextTypes.DEFAULT_TYPE, message_id: int):
             await _clear_split_prompt(context, query.message.chat_id, message_id)
             # Reconstruct the full summary message to keep it in the chat history
             updated_summary = (
-                f"✅ **Saved to Ledger!**\n\n"
-                f"💰 **Amount:** {_display_amount(transaction_to_save)}\n"
-                f"🏷️ **Category:** {transaction_to_save.get('category')}\n"
+                f"✅ <b>Saved to Ledger!</b>\n\n"
+                f"💰 Amount: {bold(_display_amount(transaction_to_save))}\n"
+                f"🏷️ Category: {esc(transaction_to_save.get('category'))}\n"
                 # The account stays on record in the chat after the buttons go (#92)
                 f"{_account_lines(transaction_to_save)}"
                 f"{_split_lines(transaction_to_save)}"
-                f"{_trip_lines(transaction_to_save)}"
-                f"📝 **Notes:** {transaction_to_save.get('description', 'None')}\n"
-                f"📅 **Date:** {transaction_to_save.get('date')}\n"
+                f"{_trip_lines({**transaction_to_save, 'trip_warning': None})}"
+                f"{quote('📝 ' + str(transaction_to_save.get('description', 'None')))}\n"
+                f"📅 Date: {esc(transaction_to_save.get('date'))}\n"
             )
             # Editing the text. By omitting 'reply_markup', Telegram automatically removes the buttons.
-            await query.edit_message_text(updated_summary, parse_mode="Markdown")
+            await _send_html(query.edit_message_text, updated_summary)
             if _owed_split(transaction_to_save):
                 await _refresh_saved_trip_sheet(transaction_to_save.get('trip_id'))
         else:
@@ -3541,21 +3554,22 @@ async def _card_tap(query, context: ContextTypes.DEFAULT_TYPE, message_id: int):
             retry_label = "⚠️ Save anyway" if _is_flagged(transaction_to_save) else "✅ Confirm"
             # CHANGED: Keep the summary visible even if the database fails, just change the header
             error_summary = (
-                f"❌ **Database Error! Could not save:**\n\n"
-                f"💰 **Amount:** {_display_amount(transaction_to_save)}\n"
-                f"🏷️ **Category:** {transaction_to_save.get('category')}\n"
+                f"❌ <b>Database Error! Could not save:</b>\n\n"
+                f"💰 Amount: {bold(_display_amount(transaction_to_save))}\n"
+                f"🏷️ Category: {esc(transaction_to_save.get('category'))}\n"
                 # The card is live again, so it shows the account a retry would save against
                 f"{_live_account_lines(transaction_to_save)}"
                 f"{_live_split_lines(transaction_to_save)}"
                 f"{_trip_lines(transaction_to_save)}"
-                f"📝 **Notes:** {transaction_to_save.get('description', 'None')}\n"
+                f"{quote('📝 ' + str(transaction_to_save.get('description', 'None')))}\n"
                 # Same date lines as the first card, ⚠️ included: this card is live again,
                 # so it should still say what was odd about the date being retried.
                 f"{_date_lines(transaction_to_save)}\n"
-                f"Tap **{retry_label}** to try again."
+                f"Tap {bold(retry_label)} to try again."
+                f"{_payer_footnote(transaction_to_save)}"
             )
             # _keyboard_for, not _confirm_keyboard: a flagged card gets its warning buttons back
-            await query.edit_message_text(error_summary, parse_mode="Markdown", reply_markup=_keyboard_for(transaction_to_save))
+            await _send_html(query.edit_message_text, error_summary, reply_markup=_keyboard_for(transaction_to_save))
 
     elif query.data == "cancel_save":
         # Same already-settled check as the confirm path, so a second tap on Cancel doesn't
@@ -3575,10 +3589,10 @@ async def _card_tap(query, context: ContextTypes.DEFAULT_TYPE, message_id: int):
         # A flagged card says which kind of cancel this was (#58). cancelled can be None (a card
         # from before a restart), which just gets the plain wording.
         if cancelled and cancelled.get('suspected_duplicate'):
-            cancel_text = "❌ **Duplicate transaction cancelled.** Nothing was saved to the Ledger."
+            cancel_text = "❌ <b>Duplicate transaction cancelled.</b> Nothing was saved to the Ledger."
         else:
-            cancel_text = "❌ **Cancelled.** Nothing was saved to the Ledger."
-        await query.edit_message_text(cancel_text, parse_mode="Markdown")
+            cancel_text = "❌ <b>Cancelled.</b> Nothing was saved to the Ledger."
+        await _send_html(query.edit_message_text, cancel_text)
 
     elif query.data == "trip_toggle":
         # Flips the pending entry between "tagged to the trip" and "not a trip entry", then redraws
@@ -3605,8 +3619,7 @@ async def _card_tap(query, context: ContextTypes.DEFAULT_TYPE, message_id: int):
         # keep it too: Confirm saves exactly what the card showed.
         toggled = {**pending, 'trip_id': new_trip_id}
         try:
-            await query.edit_message_text(_pending_card_text(toggled), reply_markup=_keyboard_for(toggled),
-                                          parse_mode="Markdown")
+            await _send_html(query.edit_message_text, _pending_card_text(toggled), reply_markup=_keyboard_for(toggled))
         except Exception as e:
             print(f"❌ Trip toggle redraw failed: {e}")
             await query.answer("⚠️ Couldn't change the trip, try again.")

@@ -179,8 +179,8 @@ the options turned down, and what it cost. The ones that shaped the system most:
   outside it are paid as one. Money goes back to the person who paid the bill. The list uses
   as few payments as it can, moving a debt only onto a line that already exists, and each
   shortcut gets a 💡 line saying what it moved
-  ([ADR-0051](docs/decisions/0051-debts-per-person-then-families.md)). It's plain text, so it
-  can be forwarded to the group.
+  ([ADR-0051](docs/decisions/0051-debts-per-person-then-families.md)). It uses HTML with escaped
+  values and a plain-text fallback, and can be forwarded to the group.
 - Paybacks: a "Mark paid" button for each payment, naming who pays whom and how much, opens a
   payback card, saved only on Confirm. You can type a different amount, and the money handed
   over can be in another currency. A payback is its own record, never spending. Paying more than is owed gets a warning

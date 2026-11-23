@@ -233,8 +233,8 @@ async def test_picking_a_person_redraws_the_card_and_changes_the_entry(monkeypat
 
     assert "Paid by Carol" in query.answer.await_args.args[0]
     reply = query.edit_message_text.await_args
-    assert "**Account:** Paid by someone else" in reply.args[0]
-    assert "**Paid by:** Carol" in reply.args[0]
+    assert "Account: Paid by someone else" in reply.args[0]
+    assert "Paid by: <b>Carol" in reply.args[0]
     # The card's own buttons are back, trip toggle included.
     assert _data(reply.kwargs["reply_markup"]) == [["confirm_save", "cancel_save"], ["trip_toggle"], ["split:menu"], ["payer:menu", "card:menu"]]
     # The same dict the cache holds was changed in place, and the trip tag was not touched.
@@ -255,7 +255,7 @@ async def test_confirm_saves_the_tapped_payer_and_account(monkeypatch, directory
     assert saves.call_args.kwargs["account_id"] == 11  # Bob's default, Card B
     assert saves.call_args.kwargs["entered_by_participant_id"] == 1  # Alice still logged it
     saved_card = query.edit_message_text.await_args.args[0]
-    assert "**Account:** Card B" in saved_card and "**Paid by:** Bob" in saved_card
+    assert "Account: Card B" in saved_card and "Paid by: <b>Bob" in saved_card
 
 
 async def test_closed_card_warning_follows_the_account(monkeypatch, directory):

@@ -220,8 +220,8 @@ Env vars (`.env.example` shows the format):
   and a page offset, every tap reads the database fresh, and there is no pending entry or card
   lock. The delete and undo queries change only a live or only a deleted row, so a second
   overlapping tap changes nothing and gets a toast. Delete takes a second tap; Undo lives on the
-  "Deleted" message until it is redrawn. Any household member may delete any entry. Plain
-  text, no `parse_mode`. A failed read is an error, never "no entries".
+  "Deleted" message until it is redrawn. Any household member may delete any entry. HTML with
+  every value escaped and a plain-text fallback. A failed read is an error, never "no entries".
 - `/trip_bals` ([ADR-0044](docs/decisions/0044-trip-balances-from-splits.md)) reads bills and
   settlements. It shows one currency per screen
   ([ADR-0056](docs/decisions/0056-trip-bals-one-currency-per-screen.md)): a main screen of one
@@ -267,7 +267,7 @@ Env vars (`.env.example` shows the format):
   Pure whole-cent maths in `app/services/balances.py` keeps currencies apart. It counts only entries tagged to the trip that have split rows. A failed read of bills or paybacks is shown as an error,
   never as "nobody owes anything". A split entry still with no payer after the fallback (account owner, else sender) is left out with a ⚠️ line,
   never guessed. A trip id from a button is loaded only through `member_trip`. The reply is
-  plain text with no `parse_mode`.
+  HTML with every value escaped and a plain-text fallback.
 - "💱 All in SGD" (`bals:sgd`, `sgd:` callbacks; #171, amendments to ADR-0051/0053/0056) is a
   view over `trip_payments`, never a second balance engine: `one_currency`
   (`app/services/one_currency.py`) converts each payment at the trip's stored rate and nets
@@ -312,7 +312,9 @@ Env vars (`.env.example` shows the format):
   up once when the message is read, never on a tap; a failed lookup asks for a typed amount
   and never blocks. The amount prompt and each reply are deleted once read, like split
   prompts; a refused reply gets a replacement prompt with the error under its fixed first
-  line, and a failed delete is only printed. Settle-screen money goes through `format_money` (built on `format_cents`).
+  line, and a failed delete is only printed. Settle screens use HTML with escaped values and a
+  plain-text fallback; service builders default to plain for non-Telegram callers. Money goes
+  through `format_money` (built on `format_cents`).
 - A trip with a `sheet_id` has its own Google Sheets workbook, one row per bill
   ([ADR-0059](docs/decisions/0059-live-sheet-per-trip.md)). `refresh_trip_sheet`
   (`app/services/trip_sheet.py`) rewrites its first tab after a confirmed split bill on the
