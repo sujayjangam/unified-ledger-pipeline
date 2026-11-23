@@ -23,6 +23,32 @@ def bill(transaction_id, payer, splits, currency='SGD'):
     return dict(transaction_id=transaction_id, paid_by=payer, splits=splits, currency=currency)
 
 
+def test_receiver_groups_order_totals_names_and_payers():
+    """Group totals outrank individual amounts; both name ties ignore case."""
+    names = {1: 'zebra', 2: 'alpha', 3: 'Beta', 4: 'zed', 5: 'amy', 6: 'Bob'}
+    entries = [bill('z', 1, {4: 300, 5: 100, 6: 100}),
+               bill('a', 2, {4: 400}), bill('b', 3, {4: 400})]
+    assert trip_payment_lines(entries, names, {}, 'SGD') == [
+        '', 'zebra is owed SGD 5.00', '  · SGD 3.00 from zed',
+        '  · SGD 1.00 from amy', '  · SGD 1.00 from Bob',
+        '', 'alpha is owed SGD 4.00', '  · SGD 4.00 from zed',
+        '', 'Beta is owed SGD 4.00', '  · SGD 4.00 from zed']
+
+
+def test_receiver_groups_html_escapes_names_and_matches_plain():
+    """Both receiver and payer names stay literal, including apparent HTML tags."""
+    from app.services.tg_html import to_plain
+
+    entries = [bill('a', 1, {2: 123, 3: 100})]
+    names = {1: '<Alice & Co>', 2: '<Bob>', 3: 'Carol'}
+    families = {3: '<Reds>'}
+    plain = trip_payment_lines(entries, names, families, 'SGD')
+    html = trip_payment_lines(entries, names, families, 'SGD', html=True)
+    assert html == ['', '<b>&lt;Alice &amp; Co&gt;</b> is owed <b>SGD 2.23</b>',
+                    '  · SGD 1.23 from &lt;Bob&gt;', '  · SGD 1.00 from &lt;Reds&gt; family']
+    assert [to_plain(line) for line in html] == plain
+
+
 def row_payback(transaction_id='lodging', for_id=3, cents=100, **changes):
     """Erin pays Alice on Carol's behalf, unless a case specifies otherwise."""
     result = dict(from_id=5, to_id=1, cents=cents, currency='SGD',
@@ -159,7 +185,8 @@ def test_only_joes_family_pays_ben():
                                                 ('A', 1, 150), ('B', 1, 150)]]
     assert trip_payments(entries, families) == expected
     assert trip_payments(reversed(entries), families) == expected
-    assert 'J family pays Ben SGD 2.00' in trip_payment_lines(entries, names, families, 'SGD')
+    assert trip_payment_lines(entries, names, families, 'SGD')[-3:] == [
+        '', 'Ben is owed SGD 2.00', '  · SGD 2.00 from J family']
     assert sum(unit_balances(entries, families).net['SGD'].values()) == 0
 
 
@@ -297,7 +324,8 @@ def test_exact_lines_group_credits_but_pay_people():
         'SGD', '', 'T family is owed SGD 900.00', 'U family owes SGD 800.00',
         'Erin owes SGD 100.00', '', '3 payments to settle']
     assert trip_payment_lines(entries, names, families, 'SGD') == [
-        'U family pays Bob SGD 700.00', 'U family pays Alice SGD 100.00', 'Erin pays Bob SGD 100.00']
+        '', 'Bob is owed SGD 800.00', '  · SGD 700.00 from U family', '  · SGD 100.00 from Erin',
+        '', 'Alice is owed SGD 100.00', '  · SGD 100.00 from U family']
 
 
 def test_owing_family_lists_total_and_lone_creditor_has_name():
@@ -410,8 +438,10 @@ def test_stable_numbering_and_payback_history():
     assert payments == [('IDR', Payment(('family', 'T'), ('person', 2), 20000)),
                         ('SGD', Payment(('family', 'T'), ('person', 2), 10000))]
     names = {1: 'Alice', 2: 'Bob'}
-    assert trip_payment_lines(entries, names, families, 'IDR', settlements) == ['T family pays Bob IDR 200.00']
-    assert trip_payment_lines(entries, names, families, 'SGD', settlements) == ['T family pays Bob SGD 100.00']
+    assert trip_payment_lines(entries, names, families, 'IDR', settlements) == [
+        '', 'Bob is owed IDR 200.00', '  · IDR 200.00 from T family']
+    assert trip_payment_lines(entries, names, families, 'SGD', settlements) == [
+        '', 'Bob is owed SGD 100.00', '  · SGD 100.00 from T family']
     lines = trip_payback_lines(entries, names, families, 'IDR', settlements)
     assert '• Alice paid Bob IDR 600.00 (as SGD 0.50), 27 May' in lines
     same = dict(settlements[0], paid_currency='IDR', paid_cents=60000)
@@ -437,7 +467,8 @@ def test_adr_0051_example():
         'SGD', '', 'Lee family owes SGD 300.00', 'Tan family is owed SGD 300.00',
         '', '2 payments to settle']
     assert trip_payment_lines(entries, TAN_LEE_NAMES, TAN_LEE, 'SGD') == [
-        'Lee family pays Alice SGD 250.00', 'Lee family pays Bob SGD 50.00',
+        '', 'Alice is owed SGD 250.00', '  · SGD 250.00 from Lee family',
+        '', 'Bob is owed SGD 50.00', '  · SGD 50.00 from Lee family',
         '💡 Lee family pays Alice the SGD 50.00 Bob owes, and pays Bob SGD 50.00 less.']
 
 
@@ -538,7 +569,8 @@ def test_simplified_tan_report_and_notes():
                                          ('family', 'Tan'), 2, 6000),)}
     report = trip_payment_lines(entries, SIMPLIFY_NAMES, SIMPLIFY_FAMILIES, 'AUD')
     assert report == [
-        'Tan family pays Alice AUD 510.00', 'Tan family pays Bob AUD 270.00',
+        '', 'Alice is owed AUD 510.00', '  · AUD 510.00 from Tan family',
+        '', 'Bob is owed AUD 270.00', '  · AUD 270.00 from Tan family',
         '💡 Tan family pays Alice the AUD 60.00 Bob owes, and pays Bob AUD 60.00 less.']
     assert open_bill_shares(entries, SIMPLIFY_FAMILIES) == {
         ('alice', 2): 6000, ('alice', 3): 22500, ('alice', 4): 22500,
@@ -552,7 +584,8 @@ def test_shortcut_of_inside_family_debt():
     families = {1: 'Lee', 2: 'Lee', 3: 'Ng', 4: 'Ng'}
     report = trip_payment_lines(entries, {1: 'Carol', 2: 'Dave', 3: 'Ian', 4: 'Jo'}, families, 'AUD')
     assert report == [
-        'Ng family pays Carol AUD 170.00', 'Ng family pays Dave AUD 30.00',
+        '', 'Carol is owed AUD 170.00', '  · AUD 170.00 from Ng family',
+        '', 'Dave is owed AUD 30.00', '  · AUD 30.00 from Ng family',
         '💡 Ng family pays Carol the AUD 50.00 Dave owes, and pays Dave AUD 50.00 less.']
 
 

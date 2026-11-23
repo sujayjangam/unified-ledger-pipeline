@@ -36,10 +36,11 @@ is tried on a Neon branch with a fictional trip-sized directory first.
    21 ms a round trip, down from 0.22 s
    ([#175](https://github.com/sujayjangam/unified-ledger-pipeline/issues/175),
    [ADR-0061](docs/decisions/0061-cloud-run-next-to-the-database.md)).
-4. Formatted bot screens: HTML with every value escaped and a plain-text fallback, so a
-   message with `_` or `*` can no longer stop a card showing
-   ([#143](https://github.com/sujayjangam/unified-ledger-pipeline/issues/143), in review). It
-   goes live only if it works on the test bot first.
+4. *(Done 2026-11-23.)* Formatted bot screens: HTML with every value escaped and a plain-text
+   fallback, so a message with `_` or `*` can no longer stop a card showing
+   ([#143](https://github.com/sujayjangam/unified-ledger-pipeline/issues/143)).
+5. "All payments" on `/trip_bals` grouped by who receives the money
+   ([#179](https://github.com/sujayjangam/unified-ledger-pipeline/issues/179), in review).
 
 Later: load a finished trip's hand-kept spreadsheet as real bills, and work out the trip from the
 message itself for costs logged before it starts.
@@ -292,7 +293,6 @@ message itself for costs logged before it starts.
 [#137](https://github.com/sujayjangam/unified-ledger-pipeline/issues/137) screen speed on a phone (before the freeze) ·
 [#134](https://github.com/sujayjangam/unified-ledger-pipeline/issues/134) settle-up redesign, with
 [#113](https://github.com/sujayjangam/unified-ledger-pipeline/issues/113) (PRs 1–3 merged; the `/trip_bals` button after the trip) ·
-[#143](https://github.com/sujayjangam/unified-ledger-pipeline/issues/143) bot screens hard to scan (after the trip) ·
 [#127](https://github.com/sujayjangam/unified-ledger-pipeline/issues/127) trip balances (both sub-issues and the offset rows shipped) ·
 [#132](https://github.com/sujayjangam/unified-ledger-pipeline/issues/132) early ADRs too long ·
 [#122](https://github.com/sujayjangam/unified-ledger-pipeline/issues/122) Python-only split reader (after the trip) ·

@@ -226,7 +226,8 @@ Env vars (`.env.example` shows the format):
   settlements. It shows one currency per screen
   ([ADR-0056](docs/decisions/0056-trip-bals-one-currency-per-screen.md)): a main screen of one
   line per family, with currency buttons, then "All payments" and "View paybacks" screens, all
-  read fresh on every tap. A "Mark paid" button names its payment, and its callback keeps the
+  read fresh on every tap. All payments is grouped by receiver.
+  A "Mark paid" button names its payment, and its callback keeps the
   payment's number in the whole `trip_payments` list, so payback cards and older reports work
   unchanged. "Paid on someone else's behalf" uses only what `_pay_back` really took off each debt
   (never the gross share, never money owed back to the giver), takes an offset row off the

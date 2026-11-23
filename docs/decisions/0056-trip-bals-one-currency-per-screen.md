@@ -63,6 +63,15 @@ buttons to 9 lines and 3 buttons (`tests/test_bals_screens.py`).
   SGD, so every currency's own screen reaches zero. Full lines only; part payments use a typed
   settle. The per-currency screens and the balance maths are unchanged.
 
+## Amended 2026-11-23: payments grouped by receiver (#179)
+
+- All payments shows each receiver's total, then `  · <amount> from <payer>` lines.
+  Receiver groups sort by total descending, then name ignoring case; payments within a
+  group sort by amount descending, then payer name ignoring case. Blank lines separate groups.
+- Buttons follow that display order but retain their numbers in the whole `trip_payments`
+  list across currencies. A button appears only if its payment line survives truncation.
+  Shortcut notes and the balance maths are unchanged.
+
 ## Rejected
 
 - **Converting every currency into one:** balances stay per currency with no FX conversion;

@@ -172,7 +172,8 @@ the options turned down, and what it cost. The ones that shaped the system most:
   while it's on. The card shows the trip, with a button to leave a single entry out of it.
 - `/trip_bals` shows who owes whom on a trip, worked out from the saved splits, one currency at
   a time: a line per family, how many payments are left, and a button per currency to switch.
-  "All payments" lists the payments that settle it, and "View paybacks" lists each payback,
+  "All payments" groups payments by receiver, with a total and amounts from each payer,
+  and "View paybacks" lists each payback,
   the bill shares it cleared, and what each person paid for other families
   ([ADR-0056](docs/decisions/0056-trip-bals-one-currency-per-screen.md)). Debts are worked out
   per person, so relatives who paid for each other settle up too; a family's debts to someone
