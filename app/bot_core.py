@@ -34,7 +34,7 @@ from app.services.participants import (
     NO_OUTSIDE_ACCOUNT_MESSAGE, PAYER_UNCLEAR_WARNING, OutsideAccountNotSetUp, read_payer,
     NO_OUTSIDE_ACCOUNT_TOAST, NO_PAYER_ACCOUNT_TOAST, PayerHasNoAccount, change_payer,
     PAYER_READ_AS_WARNING, second_reader_payer, change_account, OUTSIDE_PAYER_ACCOUNT_NAME,
-    drop_unsaid_top_up,
+    drop_unsaid_transfer,
 )
 from app.services.splits import (
     resolve_split, menu_people, split_groups, split_people, split_rows,
@@ -1748,8 +1748,8 @@ async def process_expense_text(update: Update, context: ContextTypes.DEFAULT_TYP
     second_payer = (second_reader_payer(single_transaction.get('payer_name'), candidates, sender, raw_text)
                     if reading.payer is None else None)
 
-    # A top-up the message never says is an ordinary expense (ADR-0062): Python's reading wins.
-    drop_unsaid_top_up(single_transaction, raw_text)
+    # A top-up or transfer the message never says is an ordinary expense (ADR-0062).
+    drop_unsaid_transfer(single_transaction, raw_text)
 
     # Which account paid, and whose it is (app/services/participants.py has the rules). A top-up
     # with no wallet set up is refused outright rather than guessed at: nothing is stashed, so

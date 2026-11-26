@@ -289,11 +289,17 @@ _PAYING_WORD = re.compile(
     r"footed|settled|sponsored|belanja)(?!\w)", re.IGNORECASE)
 
 
-# A top-up is kept only when the message says so: a top-up word or the wallet's name. The model
-# once read "Changed 500sgd to AUD for Carol" (cash from a money changer) as a YouTrip top-up,
-# which hid the split, payer and card buttons. Python answers this exactly (ADR-0062).
+# A top-up or transfer is kept only when the message says so (ADR-0062). The model once read
+# "Changed 500sgd to AUD for Carol" (cash from a money changer) as a YouTrip top-up, which hid
+# the split, payer and card buttons; a plain Transfer hides the split the same way. Whether
+# the words are there is something Python answers exactly.
 _TOP_UP_WORD = re.compile(
     r"(?<!\w)(?:top(?:s|ped|ping)?[\s-]*up|topup|youtrip)(?!\w)", re.IGNORECASE)
+# The model's Transfer is topping up a wallet, moving money between accounts, or paying a
+# credit card bill. A bare "bill" is an expense ("electricity bill"), so only a card's bill.
+_TRANSFER_WORD = re.compile(
+    r"(?<!\w)(?:transfer\w*|move[sd]?|moving|sen[dt]|sends|sending|withdr[ae]w\w*|atm|deposit\w*|"
+    r"(?:credit[\s-]*)?card[\s-]*bill|cc[\s-]*bill|credit[\s-]*card)(?!\w)", re.IGNORECASE)
 
 
 def says_top_up(message: str) -> bool:
@@ -302,12 +308,23 @@ def says_top_up(message: str) -> bool:
     return _TOP_UP_WORD.search(message) is not None
 
 
-def drop_unsaid_top_up(transaction: dict, message: str) -> dict:
-    """A model top-up the message never says becomes an ordinary expense under "Other", so
-    resolve_payment reads its card like any other and the card gets its buttons. Mutates and
-    returns the dict. Only ever downgrades: Python never makes a top-up the model didn't read."""
-    if transaction.get("category") == "YouTrip top-up" and not says_top_up(message):
-        transaction["category"] = "Other"
+def says_transfer(message: str) -> bool:
+    """True when the message has a word about moving money between accounts ("transfer",
+    "moved", "withdrew", "credit card bill") or a top-up word."""
+    return says_top_up(message) or _TRANSFER_WORD.search(message) is not None
+
+
+def drop_unsaid_transfer(transaction: dict, message: str) -> dict:
+    """Undo a money movement the message never says. A top-up with no top-up word becomes an
+    expense under "Other"; a Transfer with no transfer word becomes an expense in its own
+    category. Either way resolve_payment reads its card like any other and the card gets its
+    buttons. Mutates and returns the dict. Only ever downgrades: Python never makes a top-up or
+    transfer the model didn't read."""
+    if transaction.get("category") == "YouTrip top-up":
+        if not says_top_up(message):
+            transaction["category"] = "Other"
+            transaction["transaction_type"] = "Expense"
+    elif transaction.get("transaction_type") == "Transfer" and not says_transfer(message):
         transaction["transaction_type"] = "Expense"
     return transaction
 

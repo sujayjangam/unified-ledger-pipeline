@@ -19,7 +19,7 @@ import pytest
 import app.bot_core as bot_core
 from app.services.participants import CLOSED_CARD_WARNING, NO_WALLET_MESSAGE, DirectoryError
 from app.services.participants import NO_OUTSIDE_ACCOUNT_MESSAGE, PAYER_UNCLEAR_WARNING
-from app.services.participants import drop_unsaid_top_up, says_top_up
+from app.services.participants import drop_unsaid_transfer, says_top_up, says_transfer
 from app.services.trips import Trip
 
 # Fictional Telegram IDs, matching the fixture: Alice is 111111, Bob is 222222.
@@ -311,6 +311,36 @@ def test_not_a_top_up(message):
     assert not says_top_up(message)
 
 
-def test_drop_unsaid_top_up_never_makes_a_top_up():
-    t = drop_unsaid_top_up({"category": "Food", "transaction_type": "Expense"}, "top up youtrip 50")
+def test_drop_unsaid_transfer_never_makes_a_top_up():
+    t = drop_unsaid_transfer({"category": "Food", "transaction_type": "Expense"}, "top up youtrip 50")
     assert t["category"] == "Food"
+
+
+async def test_unsaid_transfer_becomes_an_expense_with_a_split_button(monkeypatch, directory):
+    """A Transfer the message never says keeps its category and gets its split button."""
+    context, _, _ = await _show_card(monkeypatch, directory, ALICE, "Changed 500sgd to AUD for Carol",
+                                     category="Other", transaction_type="Transfer")
+    pending = next(iter(context.user_data["pending_cards"].values()))
+    assert pending["category"] == "Other" and pending["transaction_type"] == "Expense"
+    data = [b.callback_data for row in bot_core._keyboard_for(pending).inline_keyboard for b in row]
+    assert {"split:menu", "payer:menu", "card:menu"} <= set(data)
+
+
+@pytest.mark.parametrize("message", [
+    "transferred 200 to savings", "moved 100 to Card B", "withdrew 300 cash", "ATM 200",
+    "paid credit card bill 900", "sent 50 to Bob", "card bill 450", "cc bill 300", "top up youtrip 50", "deposit 100",
+])
+def test_says_transfer(message):
+    assert says_transfer(message)
+
+
+@pytest.mark.parametrize("message", [
+    "Changed 500sgd to AUD for Carol", "electricity bill 120", "movie tickets 30", "dinner 80",
+])
+def test_not_a_transfer(message):
+    assert not says_transfer(message)
+
+
+def test_a_said_transfer_stays_a_transfer():
+    t = drop_unsaid_transfer({"category": "Other", "transaction_type": "Transfer"}, "transferred 200 to Card B")
+    assert t["transaction_type"] == "Transfer"
