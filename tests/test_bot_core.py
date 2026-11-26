@@ -19,6 +19,7 @@ import pytest
 import app.bot_core as bot_core
 from app.services.participants import CLOSED_CARD_WARNING, NO_WALLET_MESSAGE, DirectoryError
 from app.services.participants import NO_OUTSIDE_ACCOUNT_MESSAGE, PAYER_UNCLEAR_WARNING
+from app.services.participants import drop_unsaid_top_up, says_top_up
 from app.services.trips import Trip
 
 # Fictional Telegram IDs, matching the fixture: Alice is 111111, Bob is 222222.
@@ -140,7 +141,7 @@ async def test_topup_without_a_wallet_is_refused_and_nothing_is_pending(monkeypa
     unfunded = replace(directory, accounts=tuple(
         replace(a, funded_by_account_id=None) if a.name == "YouTrip" else a for a in directory.accounts
     ))
-    context, status_msg, _ = await _show_card(monkeypatch, unfunded, ALICE, category="YouTrip top-up")
+    context, status_msg, _ = await _show_card(monkeypatch, unfunded, ALICE, "top up youtrip 50", category="YouTrip top-up")
 
     status_msg.edit_text.assert_awaited_once_with(NO_WALLET_MESSAGE)
     assert not context.user_data.get("pending_cards")
@@ -284,3 +285,32 @@ def test_summaries_format_postgres_decimal_sums_through_format_cents():
     assert "SGD: <b>80.00</b>" in period and "SGD: <b>10.05</b> (1 tx)" in period
     category = bot_core.format_category_summary("Today", [("Food", "SGD", 2, Decimal("8000"))])
     assert "SGD: <b>80.00</b>" in category
+
+
+# --- a top-up the message never says (ADR-0062) ---
+
+async def test_unsaid_topup_becomes_an_expense_with_every_button(monkeypatch, directory):
+    """A money changer isn't a wallet top-up: the card gets its split, payer and card buttons."""
+    context, _, _ = await _show_card(monkeypatch, directory, ALICE, "Changed 500sgd to AUD for Carol",
+                                     category="YouTrip top-up", transaction_type="Transfer")
+    pending = next(iter(context.user_data["pending_cards"].values()))
+    assert pending["category"] == "Other" and pending["transaction_type"] == "Expense"
+    data = [b.callback_data for row in bot_core._keyboard_for(pending).inline_keyboard for b in row]
+    assert {"split:menu", "payer:menu", "card:menu"} <= set(data)
+
+
+@pytest.mark.parametrize("message", [
+    "top up youtrip 200", "Topup 200", "topped-up 50", "topping up 30", "youtrip 100", "TOP UP 20",
+])
+def test_says_top_up(message):
+    assert says_top_up(message)
+
+
+@pytest.mark.parametrize("message", ["Changed 500sgd to AUD for Carol", "topography book 20", "stop up 5"])
+def test_not_a_top_up(message):
+    assert not says_top_up(message)
+
+
+def test_drop_unsaid_top_up_never_makes_a_top_up():
+    t = drop_unsaid_top_up({"category": "Food", "transaction_type": "Expense"}, "top up youtrip 50")
+    assert t["category"] == "Food"

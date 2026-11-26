@@ -289,6 +289,29 @@ _PAYING_WORD = re.compile(
     r"footed|settled|sponsored|belanja)(?!\w)", re.IGNORECASE)
 
 
+# A top-up is kept only when the message says so: a top-up word or the wallet's name. The model
+# once read "Changed 500sgd to AUD for Carol" (cash from a money changer) as a YouTrip top-up,
+# which hid the split, payer and card buttons. Python answers this exactly (ADR-0062).
+_TOP_UP_WORD = re.compile(
+    r"(?<!\w)(?:top(?:s|ped|ping)?[\s-]*up|topup|youtrip)(?!\w)", re.IGNORECASE)
+
+
+def says_top_up(message: str) -> bool:
+    """True when the message has a top-up word ("top up", "topped-up", "topup") or names the
+    wallet."""
+    return _TOP_UP_WORD.search(message) is not None
+
+
+def drop_unsaid_top_up(transaction: dict, message: str) -> dict:
+    """A model top-up the message never says becomes an ordinary expense under "Other", so
+    resolve_payment reads its card like any other and the card gets its buttons. Mutates and
+    returns the dict. Only ever downgrades: Python never makes a top-up the model didn't read."""
+    if transaction.get("category") == "YouTrip top-up" and not says_top_up(message):
+        transaction["category"] = "Other"
+        transaction["transaction_type"] = "Expense"
+    return transaction
+
+
 def mentions_paying(message: str) -> bool:
     """True when the message has a word about someone paying ("paid", "covered", "treat")."""
     return _PAYING_WORD.search(message) is not None

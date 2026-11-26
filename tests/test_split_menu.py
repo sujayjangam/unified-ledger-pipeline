@@ -104,7 +104,7 @@ def _ids(pending):
 
 
 @pytest.mark.parametrize('fields,offered', [
-    ({}, True), ({'category': 'YouTrip top-up'}, False),
+    ({}, True), ({'category': 'YouTrip top-up', 'message': 'top up youtrip 30'}, False),
     ({'transaction_type': 'Transfer'}, False), ({'amount': 0}, False),
 ])
 async def test_button_only_on_splittable_cards(monkeypatch, directory, fields, offered):
