@@ -108,6 +108,11 @@ Env vars (`.env.example` shows the format):
   ([ADR-0030](docs/decisions/0030-llm-reads-dates-python-resolves.md),
   [ADR-0031](docs/decisions/0031-last-week-from-message-text.md)). A year counts only if the
   message says it (`says_year`). The date warning never blocks a save and is never stored.
+- A model top-up counts only if the message has a top-up word or names the wallet, and a
+  model Transfer only if it has a transfer word (`says_transfer`); otherwise it is an expense
+  (a top-up's category becomes "Other"). `drop_unsaid_transfer` runs before `resolve_payment`
+  and only downgrades, never makes a top-up or transfer
+  ([ADR-0062](docs/decisions/0062-top-up-read-from-message-text.md)).
 - `resolve_payment` never guesses: no open wallet or funding card for a YouTrip top-up → refuse the
   entry (`WalletNotSetUp`); an outside payer with no open "Paid by someone else" account → refuse
   it too (`OutsideAccountNotSetUp`).

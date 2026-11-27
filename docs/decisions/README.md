@@ -69,6 +69,7 @@ supersedes the old one rather than editing history.
 | [0059](0059-live-sheet-per-trip.md) | Each trip can have its own Google Sheet, rewritten after every change to its split bills or paybacks | Accepted | 2026-11-22 |
 | [0060](0060-bot-reads-in-autocommit.md) | The bot's reads run in autocommit, and the settle card's loads share one connection | Accepted | 2026-11-22 |
 | [0061](0061-cloud-run-next-to-the-database.md) | The bot runs on Cloud Run in us-east4, next to the database | Accepted | 2026-11-22 |
+| [0062](0062-top-up-read-from-message-text.md) | A top-up or transfer counts only when the message says so | Accepted | 2026-11-26 |
 
 ## Writing a new one
 

@@ -48,6 +48,9 @@ is tried on a Neon branch with a fictional trip-sized directory first.
 
 7. *(Done 2026-11-23.)* The trip sheet shows shares that cancel each other as cleared, with the agreed Summary wording
    (#182), plus debts inside a family on the main `/trip_bals` screen (#183).
+8. *(Done 2026-11-26, on a branch.)* A top-up or transfer counts only when the message says
+   so, so a money-changer entry gets its split, payer and card buttons
+   ([ADR-0062](docs/decisions/0062-top-up-read-from-message-text.md)).
 
 Later: load a finished trip's hand-kept spreadsheet as real bills, and work out the trip from the
 message itself for costs logged before it starts.
