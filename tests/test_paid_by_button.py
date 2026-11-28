@@ -218,7 +218,7 @@ async def test_back_restores_the_card_buttons_unchanged(monkeypatch, directory):
     context, pending = await _card(monkeypatch, directory)
     query = await _press(context, "payer:back")
     markup = query.edit_message_reply_markup.await_args.kwargs["reply_markup"]
-    assert _data(markup) == [["confirm_save", "cancel_save"], ["split:menu"], ["payer:menu", "card:menu"]]
+    assert _data(markup) == [["confirm_save", "cancel_save"], ["split:menu"], ["categ:menu"], ["payer:menu", "card:menu"]]
     assert pending["paid_by_participant_id"] == 1
 
 
@@ -236,7 +236,7 @@ async def test_picking_a_person_redraws_the_card_and_changes_the_entry(monkeypat
     assert "Account: Paid by someone else" in reply.args[0]
     assert "Paid by: <b>Carol" in reply.args[0]
     # The card's own buttons are back, trip toggle included.
-    assert _data(reply.kwargs["reply_markup"]) == [["confirm_save", "cancel_save"], ["trip_toggle"], ["split:menu"], ["payer:menu", "card:menu"]]
+    assert _data(reply.kwargs["reply_markup"]) == [["confirm_save", "cancel_save"], ["trip_toggle"], ["split:menu"], ["categ:menu"], ["payer:menu", "card:menu"]]
     # The same dict the cache holds was changed in place, and the trip tag was not touched.
     assert context.user_data["pending_cards"][500] is pending
     assert (pending["account_id"], pending["paid_by_participant_id"], pending["trip_id"]) == (15, 3, 7)

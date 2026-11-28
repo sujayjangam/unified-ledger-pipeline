@@ -311,7 +311,7 @@ async def test_active_trip_is_on_pending_entry_and_card(monkeypatch, directory, 
     reply = card.edit_text.await_args
     assert "🧳 Trip: Beach Trip" in reply.args[0]
     rows = reply.kwargs["reply_markup"].inline_keyboard
-    assert len(rows) == 4  # Confirm/Cancel, the trip toggle, "Add split", "Change who paid"
+    assert len(rows) == 5  # Confirm/Cancel, the trip toggle, "Add split", "Change category", "Change who paid"
     assert rows[0][0].text == confirm
     assert [b.callback_data for b in rows[0]] == ["confirm_save", "cancel_save"]
     assert [(b.text, b.callback_data) for b in rows[1]] == [("🏠 Not trip", "trip_toggle")]
@@ -329,7 +329,7 @@ async def test_no_trip_or_failed_lookup_has_no_toggle(monkeypatch, directory, fa
     assert "Trip:" not in reply.args[0]
     assert (bot_core.TRIP_UNKNOWN_WARNING in reply.args[0]) is fails
     rows = reply.kwargs["reply_markup"].inline_keyboard
-    assert len(rows) == 3  # Confirm/Cancel, "Add split" and "Change who paid": no trip toggle
+    assert len(rows) == 4  # Confirm/Cancel, "Add split", "Change category", "Change who paid": no trip toggle
     assert "trip_toggle" not in [b.callback_data for row in rows for b in row]
     loader.assert_called_once_with(1)
 
@@ -355,7 +355,7 @@ async def test_trip_toggle_round_trip_uses_only_pending_snapshot(monkeypatch, cl
         reply = query.edit_message_text.await_args
         assert f"🧳 Trip: {line}" in reply.args[0]
         rows = reply.kwargs["reply_markup"].inline_keyboard
-        assert len(rows) == 2
+        assert len(rows) == 3  # Confirm/Cancel, the trip toggle, "Change category"
         assert rows[1][0].text == label
         assert rows[1][0].callback_data == "trip_toggle"
         assert rows[0][0].text == ("⚠️ Save anyway" if closed else "✅ Confirm")

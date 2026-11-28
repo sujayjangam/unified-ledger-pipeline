@@ -68,7 +68,7 @@ load_dotenv()
 
 # NOW it is safe to import  custom services because the environment is ready (load_dotenv() already ran)
 from app.services.transcription import transcribe_audio # noqa: E402 - load_dotenv() is required before this import
-from app.services.extraction import extract_transactions # noqa: E402 - load_dotenv() is required before this import
+from app.services.extraction import ExpenseCategory, extract_transactions # noqa: E402 - load_dotenv() is required before this import
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
@@ -1526,6 +1526,11 @@ def _keyboard_for(transaction: dict) -> InlineKeyboardMarkup:
         if len(transaction.get('split') or ()) >= 2:
             row.append(InlineKeyboardButton("✏️ Set amounts", callback_data="split:amounts"))
         rows.append(row)
+    if transaction.get('category') != TOP_UP_CATEGORY:
+        # Opens the category list (handle_category_change). The model picks the category from the
+        # words alone, so a typo or a venue name ("brunch at Locked In" typed as "bunch") can
+        # land in "Other", and only a person can say what it was.
+        rows.append([InlineKeyboardButton("🏷️ Change category", callback_data="categ:menu")])
     if transaction.get('payer_menu'):
         # Opens the list of people (handle_payer_button). Absent on a YouTrip top-up, and on a
         # card stashed before this button shipped.
@@ -1569,6 +1574,27 @@ def _card_keyboard(transaction: dict) -> InlineKeyboardMarkup:
                for a in _card_accounts(transaction)]
     rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
     rows.append([InlineKeyboardButton("⬅ Back", callback_data="card:back")])
+    return InlineKeyboardMarkup(rows)
+
+
+TOP_UP_CATEGORY = "YouTrip top-up"
+
+
+def _card_categories() -> tuple:
+    """The categories the "Change category" menu offers: every ExpenseCategory but the top-up,
+    in the enum's order. A top-up is decided by the message's words and moves money into the
+    wallet (ADR-0062), so a tap never makes one, and a top-up card has no button."""
+    return tuple(c.value for c in ExpenseCategory if c.value != TOP_UP_CATEGORY)
+
+
+def _category_keyboard(transaction: dict) -> InlineKeyboardMarkup:
+    """Categories two per row, the current one marked, replacing Confirm/Cancel until a pick."""
+    # The value itself is the callback data: the longest, "Accommodation", is far under 64 bytes.
+    buttons = [InlineKeyboardButton(("✓ " if c == transaction.get('category') else "") + c,
+                                    callback_data=f"categ:set:{c}")
+               for c in _card_categories()]
+    rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
+    rows.append([InlineKeyboardButton("⬅ Back", callback_data="categ:back")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -3336,6 +3362,62 @@ async def _account_tap(query, context: ContextTypes.DEFAULT_TYPE, message_id: in
     await query.answer(f"💳 {account.name}")
 
 
+async def handle_category_change(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Open, close or pick from the category menu on a pending card, under the card's lock.
+
+    Follows the "Change card" rules: toast only on resolved cards, answer once and last, never
+    load the directory, redraw from a copy and change the pending entry only after the redraw
+    worked. Only the category changes; split, payer and card stay as they are.
+    """
+    query = update.callback_query
+    message_id = query.message.message_id
+    async with _card_lock(context, message_id):
+        await _category_tap(query, context, message_id)
+
+
+async def _category_tap(query, context: ContextTypes.DEFAULT_TYPE, message_id: int):
+    """Apply one category-menu tap while holding the card lock; publish state after redraw."""
+    outcome = _card_outcome(context, message_id)
+    if outcome == "saved":
+        await query.answer("✅ Already saved to the ledger.")
+        return
+    if outcome == "cancelled":
+        await query.answer("❌ This entry was cancelled.")
+        return
+    pending = context.user_data.get('pending_cards', {}).get(message_id)
+    if pending is None or pending.get('category') == TOP_UP_CATEGORY:
+        await query.answer("⚠️ This entry can't be changed now.")
+        return
+
+    if query.data in ("categ:menu", "categ:back"):
+        keyboard = _category_keyboard(pending) if query.data == "categ:menu" else _keyboard_for(pending)
+        try:
+            await query.edit_message_reply_markup(reply_markup=keyboard)
+        except Exception as e:
+            print(f"❌ Category menu redraw failed: {e}")
+            await query.answer("⚠️ Couldn't update the buttons, try again.")
+            return
+        await query.answer()
+        return
+
+    category = next((c for c in _card_categories() if query.data == f"categ:set:{c}"), None)
+    if category is None:
+        await query.answer("⚠️ This button is no longer supported. Please send the entry again.")
+        return
+    changed = {**pending, 'category': category}
+    try:
+        await _send_html(query.edit_message_text, _pending_card_text(changed), reply_markup=_keyboard_for(changed))
+    except Exception as e:
+        print(f"❌ Change-category redraw failed: {e}")
+        await query.answer("⚠️ Couldn't change category, try again.")
+        return
+    if context.user_data.get('pending_cards', {}).get(message_id) is not pending:
+        await query.answer("⏳ This entry is already being saved or was cancelled.")
+        return
+    pending.update(changed)
+    await query.answer(f"🏷️ {category}")
+
+
 async def handle_split_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """The split menu on a pending card: open it, tick people or a family, remove, or close.
 
@@ -3694,6 +3776,7 @@ def get_application():
     app.add_handler(CallbackQueryHandler(handle_settle_up_button, pattern=r"^su:"))
     app.add_handler(CallbackQueryHandler(handle_payer_button, pattern=r"^payer:"))
     app.add_handler(CallbackQueryHandler(handle_card_button, pattern=r"^card:"))
+    app.add_handler(CallbackQueryHandler(handle_category_change, pattern=r"^categ:"))
     app.add_handler(CallbackQueryHandler(handle_split_button, pattern=r"^split:"))
     app.add_handler(CallbackQueryHandler(handle_help_button, pattern=r"^help:"))
     app.add_handler(CallbackQueryHandler(handle_recent_button, pattern=r"^recent:"))

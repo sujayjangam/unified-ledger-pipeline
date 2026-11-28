@@ -142,6 +142,9 @@ the options turned down, and what it cost. The ones that shaped the system most:
 - A "Change card" button lists the open accounts to tap. An owned card makes its owner the
   payer; Cash or the wallet keeps the payer, or the sender if the payer is outside the
   household ([ADR-0057](docs/decisions/0057-change-card-button.md)).
+- A "Change category" button lists the categories to tap, for when the model reads a typo or a
+  place name as "Other". Not on a YouTrip top-up
+  ([ADR-0063](docs/decisions/0063-change-category-button.md)).
 
 **Splits**
 

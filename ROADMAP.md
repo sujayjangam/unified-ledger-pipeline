@@ -80,6 +80,11 @@ message itself for costs logged before it starts.
 
 **Recently shipped**, newest first. Each PR and ADR has the full story.
 
+- **2026-11-28: a "Change category" button on the expense card**
+  ([ADR-0063](docs/decisions/0063-change-category-button.md)). A typo or a café's name ("bunch
+  at Locked In") came back as "Other", and the only fix was Cancel and resend. Now the card
+  lists the categories to tap. No migration.
+
 - **2026-11-22: "All in SGD" on `/trip_bals`**
   ([#171](https://github.com/sujayjangam/unified-ledger-pipeline/issues/171), amendments to
   ADR-0051, ADR-0053 and ADR-0056). A trip in several currencies couldn't be settled in one:

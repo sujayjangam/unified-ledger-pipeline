@@ -143,6 +143,9 @@ Env vars (`.env.example` shows the format):
   household payer (else the sender), and the tapped card becomes `base_account_id`, so a later
   payer tap starts from it. The menu (`_card_accounts`) is the open accounts in the snapshot,
   never "Paid by someone else", and a tap is checked against that same list.
+- The "Change category" button (`handle_category_change`, ADR-0063) follows the same rules and
+  changes only `category`. The menu (`_card_categories`) is every `ExpenseCategory` but the
+  YouTrip top-up, which only the message's words make; no button on a top-up card.
 - A split is read by the model and worked out by Python
   ([ADR-0039](docs/decisions/0039-splits-read-by-the-model-worked-out-by-python.md)). The model
   returns only a `split_reference` (who and how many), never a share. `resolve_split` matches
